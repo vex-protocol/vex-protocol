@@ -1,6 +1,6 @@
 {
-    "name": "types-js",
-    "version": "0.7.0",
+    "name": "@vex-chat/types-js",
+    "version": "0.7.1",
     "description": "Types for vex",
     "main": "./dist/index.js",
     "author": "Extra <extrahash@protonmail.com>",
@@ -34,5 +34,8 @@
     },
     "dependencies": {
         "tweetnacl": "^1.0.3"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com/"
     }
 }
