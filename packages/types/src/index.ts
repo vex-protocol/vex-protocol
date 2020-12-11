@@ -181,6 +181,7 @@ export namespace XTypes {
             publicKey: string;
             fingerprint: string;
             lastUsed: Date;
+            verified: boolean;
         }
     }
 }
