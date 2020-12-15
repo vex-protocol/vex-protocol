@@ -141,6 +141,7 @@ export namespace XTypes {
         export interface IServer {
             serverID: string;
             name: string;
+            icon?: string;
         }
 
         export interface IChannel {
