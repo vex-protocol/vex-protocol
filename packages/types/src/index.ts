@@ -109,6 +109,7 @@ export namespace XTypes {
             cipher: Uint8Array;
             nonce: Uint8Array;
             extra: Uint8Array;
+            group?: Uint8Array;
         }
 
         export enum MailType {
