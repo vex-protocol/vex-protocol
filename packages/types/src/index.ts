@@ -137,6 +137,7 @@ export namespace XTypes {
             nonce: string;
             extra: string;
             time: Date;
+            group?: string;
         }
 
         export interface IServer {
