@@ -110,7 +110,7 @@ export namespace XTypes {
             cipher: Uint8Array;
             nonce: Uint8Array;
             extra: Uint8Array;
-            group?: Uint8Array;
+            group: Uint8Array | null;
         }
 
         export enum MailType {
@@ -139,7 +139,7 @@ export namespace XTypes {
             nonce: string;
             extra: string;
             time: Date;
-            group?: string;
+            group: string | null;
         }
 
         export interface IServer {
