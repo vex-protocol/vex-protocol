@@ -83,6 +83,7 @@ export namespace XTypes {
 
         export interface INotifyMsg extends IBaseMsg {
             event: string;
+            data?: any;
         }
 
         // resources attach to success message
