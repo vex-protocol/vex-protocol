@@ -129,6 +129,7 @@ export namespace XTypes {
         }
 
         export interface IMail {
+            mailID: string;
             mailType: WS.MailType;
             header: string;
             recipient: string;
