@@ -103,6 +103,7 @@ export namespace XTypes {
 
         // mail resource
         export interface IMail {
+            mailID: string;
             mailType: MailType;
             sender: string;
             recipient: string;
