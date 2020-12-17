@@ -156,7 +156,7 @@ export namespace XTypes {
         }
 
         export interface IPermission {
-            permissionID?: string;
+            permissionID: string;
             userID: string;
             resourceID: string;
             resourceType: string;
