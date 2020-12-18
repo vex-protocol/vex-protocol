@@ -58,6 +58,7 @@ export namespace XTypes {
 
         export interface IErrMsg extends IBaseMsg {
             error: string;
+            data?: any;
         }
 
         export interface IChallMsg extends IBaseMsg {
