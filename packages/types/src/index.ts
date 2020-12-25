@@ -125,6 +125,7 @@ export namespace XTypes {
             signKey: string;
             username: string;
             lastSeen: Date;
+            avatar: string | null;
         }
 
         export interface IMail {
