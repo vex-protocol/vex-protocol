@@ -58,6 +58,7 @@ export namespace XTypes {
 
         export interface IErrMsg extends IBaseMsg {
             error: string;
+            data?: any;
         }
 
         export interface IChallMsg extends IBaseMsg {
@@ -83,6 +84,7 @@ export namespace XTypes {
 
         export interface INotifyMsg extends IBaseMsg {
             event: string;
+            data?: any;
         }
 
         // resources attach to success message
@@ -103,12 +105,14 @@ export namespace XTypes {
 
         // mail resource
         export interface IMail {
+            mailID: string;
             mailType: MailType;
             sender: string;
             recipient: string;
             cipher: Uint8Array;
             nonce: Uint8Array;
             extra: Uint8Array;
+            group: Uint8Array | null;
         }
 
         export enum MailType {
@@ -129,6 +133,7 @@ export namespace XTypes {
         }
 
         export interface IMail {
+            mailID: string;
             mailType: WS.MailType;
             header: string;
             recipient: string;
@@ -137,11 +142,13 @@ export namespace XTypes {
             nonce: string;
             extra: string;
             time: Date;
+            group: string | null;
         }
 
         export interface IServer {
             serverID: string;
             name: string;
+            icon?: string;
         }
 
         export interface IChannel {
@@ -151,7 +158,7 @@ export namespace XTypes {
         }
 
         export interface IPermission {
-            permissionID?: string;
+            permissionID: string;
             userID: string;
             resourceID: string;
             resourceType: string;
