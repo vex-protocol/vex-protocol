@@ -36,6 +36,11 @@ export namespace XTypes {
             nonce: string;
         }
 
+        export interface IFileResponse {
+            details: XTypes.SQL.IFile;
+            data: Buffer;
+        }
+
         export interface IRegKey {
             key: string;
             time: Date;
