@@ -30,6 +30,12 @@ export namespace XTypes {
 
     // types for the HTTP API
     export namespace HTTP {
+        export interface IFilePayload {
+            owner: string;
+            signed: string;
+            nonce: string;
+        }
+
         export interface IRegKey {
             key: string;
             time: Date;
@@ -142,6 +148,12 @@ export namespace XTypes {
             extra: string;
             time: Date;
             group: string | null;
+        }
+
+        export interface IFile {
+            fileID: string;
+            owner: string;
+            nonce: string;
         }
 
         export interface IServer {
