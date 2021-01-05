@@ -1,5 +1,5 @@
 {
-    "name": "@vex-chat/types-js",
+    "name": "@vex-chat/types",
     "version": "0.8.1",
     "description": "Types for vex",
     "main": "./dist/index.js",
@@ -34,8 +34,5 @@
     },
     "dependencies": {
         "tweetnacl": "^1.0.3"
-    },
-    "publishConfig": {
-        "registry": "https://npm.pkg.github.com/"
     }
 }

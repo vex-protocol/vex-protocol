@@ -42,9 +42,16 @@ export namespace XTypes {
             data: Buffer;
         }
 
-        export interface IRegKey {
+        export enum TokenScopes {
+            Register,
+            File,
+            Avatar,
+        }
+
+        export interface IActionToken {
             key: string;
             time: Date;
+            scope: TokenScopes;
         }
 
         export interface IRegPayload {
