@@ -56,6 +56,7 @@ export namespace XTypes {
 
         export interface IRegPayload {
             username: string;
+            passwordHash: string;
             signKey: string;
             preKey: string;
             preKeySignature: string;
@@ -148,7 +149,6 @@ export namespace XTypes {
             username: string;
             lastSeen: Date;
             passwordHash: string;
-            devices: IDevice[];
         }
 
         export interface IDevice {
