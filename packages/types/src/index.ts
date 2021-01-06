@@ -145,9 +145,15 @@ export namespace XTypes {
         // universal
         export interface IUser {
             userID: string;
-            signKey: string;
             username: string;
             lastSeen: Date;
+            passwordHash: string;
+        }
+
+        export interface IDevice {
+            deviceID: string;
+            owner: string;
+            signKey: string;
         }
 
         export interface IMail {
