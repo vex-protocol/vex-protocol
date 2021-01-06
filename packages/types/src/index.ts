@@ -148,6 +148,7 @@ export namespace XTypes {
             username: string;
             lastSeen: Date;
             passwordHash: string;
+            devices: IDevice[];
         }
 
         export interface IDevice {
