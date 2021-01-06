@@ -118,6 +118,7 @@ export namespace XTypes {
 
         // prekey resource
         export interface IPreKeys {
+            deviceID: string;
             publicKey: Uint8Array;
             signature: Uint8Array;
             index: number;
