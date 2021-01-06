@@ -56,7 +56,7 @@ export namespace XTypes {
 
         export interface IRegPayload {
             username: string;
-            passwordHash: string;
+            password: string;
             signKey: string;
             preKey: string;
             preKeySignature: string;
