@@ -199,6 +199,7 @@ export namespace XTypes {
         export interface IIdentityKeys {
             keyID: string;
             userID: string;
+            deviceID: string;
             privateKey?: string;
             publicKey: string;
         }
@@ -206,6 +207,7 @@ export namespace XTypes {
         export interface IPreKeys {
             keyID: string;
             userID: string;
+            deviceID: string;
             index: number;
             privateKey?: string;
             publicKey: string;
@@ -215,6 +217,7 @@ export namespace XTypes {
         export interface ISession {
             sessionID: string;
             userID: string;
+            deviceID: string;
             mode: "initiator" | "receiver";
             SK: string;
             publicKey: string;
