@@ -47,6 +47,7 @@ export namespace XTypes {
             Register,
             File,
             Avatar,
+            Device,
         }
 
         export interface IActionToken {
