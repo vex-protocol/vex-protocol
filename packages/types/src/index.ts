@@ -140,6 +140,7 @@ export namespace XTypes {
         export enum MailType {
             initial,
             subsequent,
+            forward,
         }
     }
 
