@@ -172,6 +172,7 @@ export namespace XTypes {
             extra: string;
             time: Date;
             group: string | null;
+            forward: boolean;
         }
 
         export interface IFile {
