@@ -15,7 +15,6 @@ export namespace XTypes {
             keyPair: nacl.BoxKeyPair;
             signature: Uint8Array;
             index?: number;
-            identity: string;
         }
 
         export interface ISession {
