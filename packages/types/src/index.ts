@@ -135,12 +135,12 @@ export namespace XTypes {
             nonce: Uint8Array;
             extra: Uint8Array;
             group: Uint8Array | null;
+            forward: boolean;
         }
 
         export enum MailType {
             initial,
             subsequent,
-            forward,
         }
     }
 
