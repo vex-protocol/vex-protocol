@@ -137,6 +137,7 @@ export namespace XTypes {
             group: Uint8Array | null;
             forward: boolean;
             authorID: string;
+            readerID: string;
         }
 
         export enum MailType {
