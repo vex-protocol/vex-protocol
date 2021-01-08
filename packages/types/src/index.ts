@@ -136,6 +136,7 @@ export namespace XTypes {
             extra: Uint8Array;
             group: Uint8Array | null;
             forward: boolean;
+            authorID: string;
         }
 
         export enum MailType {
@@ -173,6 +174,7 @@ export namespace XTypes {
             time: Date;
             group: string | null;
             forward: boolean;
+            authorID: string;
         }
 
         export interface IFile {
