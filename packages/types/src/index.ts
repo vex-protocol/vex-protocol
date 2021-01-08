@@ -176,6 +176,7 @@ export namespace XTypes {
             group: string | null;
             forward: boolean;
             authorID: string;
+            readerID: string;
         }
 
         export interface IFile {
