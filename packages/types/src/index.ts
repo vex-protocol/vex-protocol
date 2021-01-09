@@ -161,6 +161,8 @@ export namespace XTypes {
             deviceID: string;
             owner: string;
             signKey: string;
+            name: string;
+            lastLogin: string;
         }
 
         export interface IMail {
