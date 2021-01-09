@@ -55,7 +55,7 @@ export namespace XTypes {
             scope: TokenScopes;
         }
 
-        export interface IRegPayload {
+        export interface IDevicePayload {
             username: string;
             password: string;
             signKey: string;
@@ -63,6 +63,7 @@ export namespace XTypes {
             preKeySignature: string;
             preKeyIndex: number;
             signed: string;
+            deviceName: string;
         }
     }
 
