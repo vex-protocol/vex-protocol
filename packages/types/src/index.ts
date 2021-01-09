@@ -92,6 +92,7 @@ export namespace XTypes {
             type: "response";
             signed: Uint8Array;
             userID: string;
+            password: string;
         }
 
         export interface IReceiptMsg extends IBaseMsg {
