@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/types",
-    "version": "0.7.21",
+    "version": "0.10.4",
     "description": "Types for vex",
     "main": "./dist/index.js",
     "author": "Extra <extrahash@protonmail.com>",
@@ -11,7 +11,8 @@
         "prepack": "yarn build",
         "prettier": "node ./node_modules/prettier/bin-prettier.js '**/*.{ts,tsx,json,md}' --tab-width 4 --trailing-comma es5 --ignore-path .gitignore  --arrow-parens always --write",
         "lint": "./node_modules/tslint/bin/tslint src/**/*.ts{,x}",
-        "lint-fix": "./node_modules/tslint/bin/tslint src/**/*.ts{,x} --fix"
+        "lint-fix": "./node_modules/tslint/bin/tslint src/**/*.ts{,x} --fix",
+        "prepublish": "yarn build"
     },
     "devDependencies": {
         "husky": "^3.1.0",

@@ -34,6 +34,7 @@ export namespace XTypes {
             owner: string;
             signed: string;
             nonce: string;
+            file: Buffer;
         }
 
         export interface IFileResponse {
@@ -41,18 +42,28 @@ export namespace XTypes {
             data: Buffer;
         }
 
-        export interface IRegKey {
-            key: string;
-            time: Date;
+        export enum TokenScopes {
+            Register,
+            File,
+            Avatar,
+            Device,
         }
 
-        export interface IRegPayload {
+        export interface IActionToken {
+            key: string;
+            time: Date;
+            scope: TokenScopes;
+        }
+
+        export interface IDevicePayload {
             username: string;
+            password: string;
             signKey: string;
             preKey: string;
             preKeySignature: string;
             preKeyIndex: number;
             signed: string;
+            deviceName: string;
         }
     }
 
@@ -80,7 +91,6 @@ export namespace XTypes {
         export interface IRespMsg extends IBaseMsg {
             type: "response";
             signed: Uint8Array;
-            userID: string;
         }
 
         export interface IReceiptMsg extends IBaseMsg {
@@ -109,6 +119,7 @@ export namespace XTypes {
 
         // prekey resource
         export interface IPreKeys {
+            deviceID: string;
             publicKey: Uint8Array;
             signature: Uint8Array;
             index: number;
@@ -124,6 +135,9 @@ export namespace XTypes {
             nonce: Uint8Array;
             extra: Uint8Array;
             group: Uint8Array | null;
+            forward: boolean;
+            authorID: string;
+            readerID: string;
         }
 
         export enum MailType {
@@ -137,10 +151,18 @@ export namespace XTypes {
         // universal
         export interface IUser {
             userID: string;
-            signKey: string;
             username: string;
             lastSeen: Date;
-            avatar: string | null;
+            passwordHash: string;
+            passwordSalt: string;
+        }
+
+        export interface IDevice {
+            deviceID: string;
+            owner: string;
+            signKey: string;
+            name: string;
+            lastLogin: string;
         }
 
         export interface IMail {
@@ -154,6 +176,9 @@ export namespace XTypes {
             extra: string;
             time: Date;
             group: string | null;
+            forward: boolean;
+            authorID: string;
+            readerID: string;
         }
 
         export interface IFile {
@@ -185,6 +210,7 @@ export namespace XTypes {
         export interface IIdentityKeys {
             keyID: string;
             userID: string;
+            deviceID: string;
             privateKey?: string;
             publicKey: string;
         }
@@ -192,6 +218,7 @@ export namespace XTypes {
         export interface IPreKeys {
             keyID: string;
             userID: string;
+            deviceID: string;
             index: number;
             privateKey?: string;
             publicKey: string;
@@ -201,6 +228,7 @@ export namespace XTypes {
         export interface ISession {
             sessionID: string;
             userID: string;
+            deviceID: string;
             mode: "initiator" | "receiver";
             SK: string;
             publicKey: string;
