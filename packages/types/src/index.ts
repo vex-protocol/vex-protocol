@@ -170,7 +170,7 @@ export namespace XTypes {
             inviteID: string;
             serverID: string;
             owner: string;
-            expiration: number;
+            expiration: string;
         }
 
         export interface IMail {
