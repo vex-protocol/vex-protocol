@@ -165,6 +165,13 @@ export namespace XTypes {
             lastLogin: string;
         }
 
+        export interface IInvite {
+            inviteID: string;
+            serverID: string;
+            owner: string;
+            expiration: number;
+        }
+
         export interface IMail {
             mailID: string;
             mailType: WS.MailType;
