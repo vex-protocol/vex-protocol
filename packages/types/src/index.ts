@@ -34,7 +34,7 @@ export namespace XTypes {
             owner: string;
             signed: string;
             nonce: string;
-            file: Buffer;
+            file?: string;
         }
 
         export interface IFileResponse {
