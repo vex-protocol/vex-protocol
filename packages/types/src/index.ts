@@ -193,6 +193,7 @@ export namespace XTypes {
         export interface IEmoji {
             emojiID: string;
             owner: string;
+            name: string;
         }
 
         export interface IFile {
