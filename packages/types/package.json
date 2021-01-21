@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/types",
-    "version": "0.10.11",
+    "version": "0.10.12",
     "description": "Types for vex",
     "main": "./dist/index.js",
     "author": "Extra <extrahash@protonmail.com>",
