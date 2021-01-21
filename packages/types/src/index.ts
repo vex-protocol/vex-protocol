@@ -48,6 +48,7 @@ export namespace XTypes {
             Avatar,
             Device,
             Invite,
+            Emoji,
         }
 
         export interface IActionToken {
@@ -187,6 +188,11 @@ export namespace XTypes {
             forward: boolean;
             authorID: string;
             readerID: string;
+        }
+
+        export interface IEmoji {
+            emojiID: string;
+            owner: string;
         }
 
         export interface IFile {
