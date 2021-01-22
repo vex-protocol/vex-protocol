@@ -78,6 +78,7 @@ export namespace XTypes {
 
         export interface ISucessMsg extends IBaseMsg {
             data: any;
+            timestamp?: string;
         }
 
         export interface IErrMsg extends IBaseMsg {
