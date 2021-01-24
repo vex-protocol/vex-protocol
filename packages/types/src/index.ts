@@ -59,7 +59,6 @@ export namespace XTypes {
 
         export interface IDevicePayload {
             username: string;
-            password: string;
             signKey: string;
             preKey: string;
             preKeySignature: string;
