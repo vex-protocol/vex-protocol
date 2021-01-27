@@ -176,6 +176,7 @@ export namespace XTypes {
             signKey: string;
             name: string;
             lastLogin: string;
+            deleted: boolean;
         }
 
         export interface IInvite {
