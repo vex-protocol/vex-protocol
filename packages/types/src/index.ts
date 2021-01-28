@@ -157,6 +157,12 @@ export namespace XTypes {
             initial,
             subsequent,
         }
+
+        export enum SocketAuthErrors {
+            BadSignature,
+            InvalidToken,
+            UserNotRegistered,
+        }
     }
 
     // Database types
