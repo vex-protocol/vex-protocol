@@ -49,6 +49,7 @@ export namespace XTypes {
             Device,
             Invite,
             Emoji,
+            Connect,
         }
 
         export interface IActionToken {
