@@ -1,47 +1,48 @@
 {
-    "name": "@vex-chat/types",
-    "version": "0.10.17",
-    "description": "Types for vex",
-    "main": "./dist/index.js",
-    "author": "Extra <extrahash@protonmail.com>",
-    "license": "AGPL-3.0-or-later",
-    "scripts": {
-        "start": "node ./dist/index.js",
-        "build": "rm -rf ./dist/*; node ./node_modules/typescript/bin/tsc",
-        "prepack": "yarn build",
-        "prettier": "node ./node_modules/prettier/bin-prettier.js '**/*.{ts,tsx,json,md}' --tab-width 4 --trailing-comma es5 --ignore-path .gitignore  --arrow-parens always --write",
-        "lint": "./node_modules/tslint/bin/tslint src/**/*.ts{,x}",
-        "lint-fix": "./node_modules/tslint/bin/tslint src/**/*.ts{,x} --fix",
-        "prepublish": "yarn build"
-    },
-    "devDependencies": {
-        "husky": "^3.1.0",
-        "lint-staged": "^9.5.0",
-        "prettier": "^1.19.1",
-        "tslint": "^5.20.1",
-        "tslint-config-prettier": "^1.18.0",
-        "typescript": "^3.7.2"
-    },
-    "lint-staged": {
-        "src/**/*.{ts}": [
-            "./node_modules/tslint/bin/tslint -c tslint.json --fix",
-            "git add"
-        ]
-    },
-    "husky": {
-        "hooks": {
-            "pre-commit": "yarn prettier; git add --all; lint-staged"
-        }
-    },
-    "dependencies": {
-        "tweetnacl": "^1.0.3"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vex-chat/types-js.git"
-    },
-    "bugs": {
-        "url": "https://github.com/vex-chat/types-js/issues"
-    },
-    "homepage": "https://github.com/vex-chat/types-js#readme"
+  "name": "@vex-chat/types",
+  "version": "0.11.0",
+  "description": "Types for vex",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "author": "Extra <extrahash@protonmail.com>",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "scripts": {
+    "start": "node ./dist/index.js",
+    "build": "rimraf dist && tsc",
+    "prepack": "yarn build",
+    "prettier": "prettier '**/*.{ts,tsx,json,md}' --ignore-path .gitignore --write",
+    "lint": "eslint src/**/*.ts",
+    "lint-fix": "eslint src/**/*.ts --fix",
+    "push": "yarn build && yalc push",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.2.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.7.0"
+  },
+  "lint-staged": {
+    "src/**/*.{ts}": [
+      "eslint --fix"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vex-chat/types-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vex-chat/types-js/issues"
+  },
+  "homepage": "https://github.com/vex-chat/types-js#readme"
 }
