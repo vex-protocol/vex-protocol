@@ -1,0 +1,1 @@
+yarn prettier && git add --all && npx lint-staged
