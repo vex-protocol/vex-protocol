@@ -6,7 +6,6 @@
   "types": "./dist/index.d.ts",
   "author": "Extra <extrahash@protonmail.com>",
   "license": "AGPL-3.0-or-later",
-  "private": true,
   "scripts": {
     "start": "node ./dist/index.js",
     "build": "rimraf dist && tsc",
@@ -21,6 +20,7 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.8",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
