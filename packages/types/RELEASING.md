@@ -73,13 +73,3 @@ npx changeset publish          # publishes as @latest
 
 - `NPM_TOKEN` — npm access token with publish permission for `@vex-chat` scope
 - `GITHUB_TOKEN` — provided automatically by GitHub Actions
-
-## Local Development
-
-You can still use `yalc` for local cross-repo development:
-
-```bash
-yarn push   # builds and pushes to yalc for local consumers
-```
-
-When publishing for real, changesets handles versioning — yalc is just for local dev loops.

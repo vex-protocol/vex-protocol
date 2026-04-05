@@ -1,14 +1,14 @@
-const ts = require("@typescript-eslint/eslint-plugin");
-const parser = require("@typescript-eslint/parser");
+import ts from "@typescript-eslint/eslint-plugin";
+import parser from "@typescript-eslint/parser";
 
-module.exports = [
+export default [
     {
         files: ["**/*.ts"],
         languageOptions: { parser },
         plugins: { "@typescript-eslint": ts },
         rules: {
-            "@typescript-eslint/interface-name-prefix": "off", 
-            "@typescript-eslint/no-explicit-any": "off"
-        }
-    }
+            "@typescript-eslint/interface-name-prefix": "off",
+            "@typescript-eslint/no-explicit-any": "off",
+        },
+    },
 ];

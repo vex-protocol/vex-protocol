@@ -1,4 +1,4 @@
-import nacl from "tweetnacl";
+import type nacl from "tweetnacl";
 
 // ==========================================
 // CRYPTO TYPES
