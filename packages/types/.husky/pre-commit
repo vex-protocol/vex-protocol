@@ -1,1 +1,1 @@
-yarn prettier && git add --all && npx lint-staged
+npm run prettier && git add --all && npx lint-staged
