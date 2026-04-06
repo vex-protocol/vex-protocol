@@ -16,7 +16,8 @@
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "node ./dist/index.js",
-    "build": "rimraf dist && tsc",
+    "build": "tsc",
+    "build:clean": "rimraf dist && tsc",
     "prepack": "npm run build",
     "prettier": "prettier '**/*.{ts,tsx,json,md}' --ignore-path .gitignore --write",
     "lint": "eslint src/**/*.ts",
