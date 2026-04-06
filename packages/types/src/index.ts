@@ -55,7 +55,7 @@ export interface IFilePayload {
 
 export interface IFileResponse {
   details: IFileSQL;
-  data: Buffer;
+  data: Uint8Array;
 }
 
 export interface IDevicePayload {
