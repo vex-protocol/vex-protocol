@@ -175,13 +175,20 @@ export interface KeyStore {
 }
 
 // ==========================================
-// DATABASE TYPES (SQL / Knex)
+// PUBLIC API TYPES (returned to clients)
 // ==========================================
 
 export interface IUser {
   userID: string;
   username: string;
   lastSeen: Date;
+}
+
+// ==========================================
+// DATABASE TYPES (SQL / Knex — server only)
+// ==========================================
+
+export interface IUserRecord extends IUser {
   passwordHash: string;
   passwordSalt: string;
 }
