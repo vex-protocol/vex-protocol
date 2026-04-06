@@ -157,6 +157,24 @@ export interface IMailWS {
 }
 
 // ==========================================
+// IDENTITY PERSISTENCE (App-level)
+// ==========================================
+
+export interface StoredCredentials {
+  username: string;
+  deviceID: string;
+  deviceKey: string; // hex Ed25519 secret key
+  preKey?: string;
+  token?: string;
+}
+
+export interface KeyStore {
+  load(username?: string): Promise<StoredCredentials | null>;
+  save(creds: StoredCredentials): Promise<void>;
+  clear(username: string): Promise<void>;
+}
+
+// ==========================================
 // DATABASE TYPES (SQL / Knex)
 // ==========================================
 
