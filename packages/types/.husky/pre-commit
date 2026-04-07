@@ -1,1 +1,1 @@
-npm run prettier && git add --all && npx lint-staged
+npm run format && git add --all && npx lint-staged
