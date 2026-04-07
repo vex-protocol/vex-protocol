@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/types",
-    "version": "1.0.0-rc.2",
+    "version": "1.0.1",
     "description": "Types for vex",
     "type": "module",
     "sideEffects": false,
