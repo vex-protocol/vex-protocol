@@ -4,5 +4,9 @@
     "initialVersions": {
         "@vex-chat/types": "0.11.0"
     },
-    "changesets": ["flatten-namespace", "modernize-toolchain"]
+    "changesets": [
+        "flatten-namespace",
+        "modernize-toolchain",
+        "platform-adapters"
+    ]
 }
