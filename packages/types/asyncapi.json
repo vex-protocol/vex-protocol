@@ -1,0 +1,558 @@
+{
+    "asyncapi": "3.0.0",
+    "info": {
+        "title": "Vex Protocol",
+        "version": "1.0.1",
+        "description": "Real-time encrypted chat protocol for vex.wtf.\nMessages are serialized using msgpack over WebSocket.",
+        "license": {
+            "name": "AGPL-3.0-or-later"
+        },
+        "contact": {
+            "name": "Vex Protocol",
+            "url": "https://github.com/vex-protocol/types-js"
+        },
+        "tags": [
+            {
+                "name": "auth",
+                "description": "Authentication and session management"
+            },
+            {
+                "name": "messaging",
+                "description": "Real-time message exchange"
+            }
+        ]
+    },
+    "servers": {
+        "production": {
+            "host": "api.vex.wtf",
+            "protocol": "wss",
+            "description": "Production WebSocket endpoint",
+            "security": [
+                {
+                    "$ref": "#/components/securitySchemes/bearerAuth"
+                }
+            ]
+        }
+    },
+    "channels": {
+        "chat": {
+            "address": "/ws",
+            "title": "Main WebSocket channel",
+            "description": "Bidirectional channel for all real-time communication.\nMessages are encoded as msgpack binary frames.",
+            "messages": {
+                "auth": {
+                    "$ref": "#/components/messages/Auth"
+                },
+                "response": {
+                    "$ref": "#/components/messages/Response"
+                },
+                "resource": {
+                    "$ref": "#/components/messages/Resource"
+                },
+                "receipt": {
+                    "$ref": "#/components/messages/Receipt"
+                },
+                "ping": {
+                    "$ref": "#/components/messages/Ping"
+                },
+                "challenge": {
+                    "$ref": "#/components/messages/Challenge"
+                },
+                "authorized": {
+                    "$ref": "#/components/messages/Authorized"
+                },
+                "success": {
+                    "$ref": "#/components/messages/Success"
+                },
+                "error": {
+                    "$ref": "#/components/messages/Error"
+                },
+                "notify": {
+                    "$ref": "#/components/messages/Notify"
+                },
+                "pong": {
+                    "$ref": "#/components/messages/Pong"
+                }
+            },
+            "bindings": {
+                "ws": {
+                    "method": "GET",
+                    "headers": {
+                        "type": "object",
+                        "properties": {
+                            "Authorization": {
+                                "type": "string",
+                                "description": "Bearer token"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "operations": {
+        "auth": {
+            "action": "send",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Authentication",
+            "description": "Send a JWT bearer token to authenticate the WebSocket session.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/auth"
+                }
+            ]
+        },
+        "response": {
+            "action": "send",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Auth response",
+            "description": "Send a signed challenge response to complete device-key authentication.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/response"
+                }
+            ]
+        },
+        "resource": {
+            "action": "send",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Resource operation",
+            "description": "Send a CRUD operation targeting a specific resource type (mail, preKeys, etc.).",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/resource"
+                }
+            ]
+        },
+        "receipt": {
+            "action": "send",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Mail receipt",
+            "description": "Send a receipt acknowledging that a mail message has been received and processed.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/receipt"
+                }
+            ]
+        },
+        "ping": {
+            "action": "send",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Keepalive ping",
+            "description": "Send a keepalive ping to prevent the WebSocket connection from timing out.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/ping"
+                }
+            ]
+        },
+        "receiveChallenge": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Auth challenge",
+            "description": "Receive a challenge nonce from the server that must be signed with the device key.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/challenge"
+                }
+            ]
+        },
+        "receiveAuthorized": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Auth success",
+            "description": "Receive confirmation that the WebSocket session has been successfully authenticated.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/authorized"
+                }
+            ]
+        },
+        "receiveSuccess": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Operation success",
+            "description": "Receive the server response for a successfully completed resource operation.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/success"
+                }
+            ]
+        },
+        "receiveError": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Operation error",
+            "description": "Receive an error response when a resource operation fails.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/error"
+                }
+            ]
+        },
+        "receiveNotify": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Server notification",
+            "description": "Receive a server-initiated push notification for events like new mail, server changes, or permission updates.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/notify"
+                }
+            ]
+        },
+        "receivePong": {
+            "action": "receive",
+            "channel": {
+                "$ref": "#/channels/chat"
+            },
+            "summary": "Keepalive pong",
+            "description": "Receive a pong response from the server confirming the connection is alive.",
+            "messages": [
+                {
+                    "$ref": "#/channels/chat/messages/pong"
+                }
+            ]
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        },
+        "messages": {
+            "Auth": {
+                "name": "auth",
+                "title": "Authentication",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "token": {
+                            "type": "string",
+                            "description": "JWT Bearer token"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "auth"
+                        }
+                    },
+                    "required": [
+                        "token",
+                        "type"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Initial authentication message with JWT token"
+                }
+            },
+            "Response": {
+                "name": "response",
+                "title": "Auth response",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "response"
+                        },
+                        "signed": {
+                            "description": "Signed response bytes"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "signed"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Signed challenge response for device authentication"
+                }
+            },
+            "Resource": {
+                "name": "resource",
+                "title": "Resource operation",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "resource"
+                        },
+                        "action": {
+                            "type": "string",
+                            "description": "CRUD action"
+                        },
+                        "data": {
+                            "description": "Resource payload"
+                        },
+                        "resourceType": {
+                            "type": "string",
+                            "description": "Resource type"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "action",
+                        "resourceType"
+                    ],
+                    "additionalProperties": false,
+                    "description": "CRUD operation on a resource (mail, preKeys, etc.)"
+                }
+            },
+            "Receipt": {
+                "name": "receipt",
+                "title": "Mail receipt",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "receipt"
+                        },
+                        "nonce": {
+                            "description": "Mail nonce being acknowledged"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "nonce"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Acknowledge receipt of a mail message"
+                }
+            },
+            "Ping": {
+                "name": "ping",
+                "title": "Keepalive ping",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "const": "ping"
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Client keepalive ping"
+                }
+            },
+            "Challenge": {
+                "name": "challenge",
+                "title": "Auth challenge",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "challenge"
+                        },
+                        "challenge": {
+                            "description": "Challenge nonce bytes"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "challenge"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server sends a challenge nonce for device authentication"
+                }
+            },
+            "Authorized": {
+                "name": "authorized",
+                "title": "Auth success",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "const": "authorized"
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server confirms authentication succeeded"
+                }
+            },
+            "Success": {
+                "name": "success",
+                "title": "Operation success",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "success"
+                        },
+                        "data": {
+                            "description": "Response payload"
+                        },
+                        "timestamp": {
+                            "description": "Server timestamp",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "data"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server response to a successful resource operation"
+                }
+            },
+            "Error": {
+                "name": "error",
+                "title": "Operation error",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "error"
+                        },
+                        "data": {
+                            "description": "Error context"
+                        },
+                        "error": {
+                            "type": "string",
+                            "description": "Error message"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "error"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server response to a failed operation"
+                }
+            },
+            "Notify": {
+                "name": "notify",
+                "title": "Server notification",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "transmissionID": {
+                            "type": "string",
+                            "description": "Unique transmission identifier"
+                        },
+                        "type": {
+                            "type": "string",
+                            "const": "notify"
+                        },
+                        "data": {
+                            "description": "Event payload"
+                        },
+                        "event": {
+                            "type": "string",
+                            "description": "Notification event type"
+                        }
+                    },
+                    "required": [
+                        "transmissionID",
+                        "type",
+                        "event"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server push notification (new mail, server change, permission update)"
+                }
+            },
+            "Pong": {
+                "name": "pong",
+                "title": "Keepalive pong",
+                "contentType": "application/msgpack",
+                "payload": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "const": "pong"
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Server keepalive pong response"
+                }
+            }
+        }
+    }
+}

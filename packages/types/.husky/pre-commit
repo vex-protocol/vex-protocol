@@ -1,1 +1,1 @@
-npm run format && git add --all && npx lint-staged
+npx lint-staged

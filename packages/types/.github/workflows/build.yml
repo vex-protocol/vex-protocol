@@ -3,21 +3,219 @@ name: Build
 on:
     pull_request:
         branches: [master]
+    # Needed so the `CI OK` aggregator job name appears in the branch
+    # protection dropdown — GitHub only populates that list from runs on
+    # the protected branch.
+    push:
+        branches: [master]
+
+concurrency:
+    group: build-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+env:
+    npm_config_save_exact: "true"
+    npm_config_engine_strict: "true"
 
 jobs:
+    # ── Parallel checks — each job independent, each reports its own status ──
+
     build:
+        name: Build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
-
-            - name: Install mise
-              uses: jdx/mise-action@v3.5.1
-
-            - name: Install dependencies
-              run: npm ci
-
-            - name: Build
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: tsc
               run: npm run build
 
-            - name: Package
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: ESLint
+              run: npm run lint
+            - name: Prettier
+              run: npm run format:check
+            - name: npm-package-json-lint
+              run: npx npm-package-json-lint .
+
+    types:
+        name: Types
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: Type tests
+              run: npm run test:types
+            - name: Type coverage
+              run: npx type-coverage
+
+    package:
+        name: Package
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: Build
+              run: npm run build
+            - name: publint
+              run: npm run lint:pkg
+            - name: Are The Types Wrong?
+              run: npm run lint:types
+            - name: API Extractor
+              run: npm run lint:api
+            - name: npm pack
               run: npm pack
+            - name: Upload tarball
+              uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+              with:
+                  name: package-tarball-${{ github.sha }}
+                  path: "*.tgz"
+                  retention-days: 14
+
+    specs:
+        name: Specs
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: Specs drift detection
+              run: npm run specs:check
+            - name: Spectral lint
+              run: npm run lint:specs
+
+    supply-chain:
+        name: Supply Chain
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: License check
+              run: npm run license:check
+            - name: npm audit
+              run: npm audit --audit-level=high
+            - name: Socket security scan
+              if: github.event.pull_request.head.repo.full_name == github.repository
+              run: npx @socketsecurity/cli@latest ci
+              env:
+                  SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
+
+    changeset:
+        name: Changeset
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: Check for changeset
+              run: |
+                  OLD=$(git show origin/master:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+                  NEW=$(node -pe "require('./package.json').version")
+                  if [ "$OLD" = "$NEW" ]; then
+                      npx changeset status --since=origin/master
+                  else
+                      echo "package.json version bumped ($OLD → $NEW) — skipping changeset check."
+                  fi
+
+    # ── Stage 3: single aggregator — the only required status check ────────
+
+    ci-ok:
+        name: CI OK
+        if: always()
+        needs:
+            - build
+            - lint
+            - types
+            - package
+            - specs
+            - supply-chain
+            - changeset
+        runs-on: ubuntu-latest
+        steps:
+            - name: Fail if any upstream job failed, was skipped, or cancelled
+              if: >-
+                  ${{ contains(needs.*.result, 'failure')
+                      || contains(needs.*.result, 'cancelled')
+                      || contains(needs.*.result, 'skipped') }}
+              run: |
+                  echo "One or more CI jobs did not succeed:"
+                  echo '${{ toJSON(needs) }}'
+                  exit 1
+            - name: All checks passed
+              run: echo "All CI jobs succeeded."

@@ -1,0 +1,16 @@
+extends:
+    - spectral:oas
+    - spectral:asyncapi
+
+rules:
+    # Schemas are registered in components for documentation but are inlined
+    # by zod-to-openapi rather than referenced via $ref.  This is by design.
+    oas3-unused-component: off
+
+    # AsyncAPI 3.0.0 is the target version; upgrading to 3.1.0 is tracked
+    # separately and not a linting concern.
+    asyncapi-latest-version: off
+
+    # Contact email is not applicable for an open-source project that uses
+    # a GitHub repository URL for support.
+    asyncapi-info-contact-properties: off
