@@ -1,19 +1,26 @@
 # @vex-chat/types
 
-## 1.0.0-rc.2
+## 1.0.1
 
-### Minor Changes
+### Patch Changes
 
-- Add platform adapter types and unify tooling.
+- Platform adapter types, sourcemaps, tarball hygiene, and tooling cleanup.
 
-    **New types**:
-    - `IUser` / `IUserRecord` split — `IUser` is the public-facing shape, `IUserRecord` extends it with DB fields
-    - `KeyStore` and `StoredCredentials` interfaces for platform-agnostic key storage
+    **Type surface** (runtime-safe, but may require type updates in consumers):
+    - `BaseMsg.data` changed from `Buffer` to `Uint8Array`. `Buffer` is Node-only and blocked browser consumers; `Uint8Array` is a supertype of `Buffer` at runtime, so existing Node callers keep working, but code that was typed against `Buffer` needs updating.
+    - `IUser` / `IUserRecord` split — `IUser` is the public-facing shape (`userID`, `username`, `lastSeen`); `IUserRecord` extends it with DB-only fields (`passwordHash`, `passwordSalt`). Previously conflated.
+    - New `KeyStore` interface (`load` / `save` / `clear`) and `StoredCredentials` interface (`username`, `deviceID`, `deviceKey`, `preKey?`, `token?`) for platform-agnostic key storage.
+    - Sourcemaps (`.js.map` + `.d.ts.map`) now ship in `dist/`.
+
+    **Packaging**:
+    - Added `files: ["dist"]` — the published tarball is now limited to `dist/` + `LICENSE` + `README.md` + `package.json`. Previously leaked `CHANGELOG.md`, `RELEASING.md`, `eslint.config.js`, `mise.toml`, `.husky/`, and `.changeset/`.
 
     **Tooling**:
-    - Strict tsconfig (es2024 target, full strict flags)
-    - Unified formatting: prettier 4-space tabs, eslint flat config, removed tslint
-    - Consistent scripts: `format`, `format:check`, `lint`, `lint:fix`
+    - Strict tsconfig (es2024 target, full strict flags).
+    - Unified formatting: prettier 4-space tabs, eslint flat config, removed tslint.
+    - `build` no longer `rimraf`s first (preserves hardlinks / incremental builds). `build:clean` added for full rebuilds.
+    - Scripts renamed for consistency: `format` / `format:check` (was `prettier`), `lint:fix` (was `lint-fix`).
+    - `lint-staged` glob fixed from `src/**/*.{ts}` to `*.ts` and now also runs prettier.
 
 ## 1.0.0-rc.1
 
