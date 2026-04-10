@@ -2,7 +2,7 @@
     "asyncapi": "3.0.0",
     "info": {
         "title": "Vex Protocol",
-        "version": "1.0.1",
+        "version": "2.0.0",
         "description": "Real-time encrypted chat protocol for vex.wtf.\nMessages are serialized using msgpack over WebSocket.",
         "license": {
             "name": "AGPL-3.0-or-later"
