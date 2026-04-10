@@ -49,6 +49,13 @@ jobs:
             - name: Check dependency licenses
               run: npm run license:check
 
+            # Regenerates specs and fails if they drift from what's
+            # committed. Gates the release because no workflow runs on
+            # the Version Packages PR itself (changesets/action creates
+            # it with GITHUB_TOKEN, which can't trigger other workflows).
+            - name: Specs drift
+              run: npm run specs:check
+
             # TODO(@dream): switch from NPM_TOKEN to npm trusted publishing
             # once a security key is available on the npmjs.com account.
             # Trusted publishing replaces the NPM_TOKEN entirely — the

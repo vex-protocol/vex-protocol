@@ -7,8 +7,9 @@ The release pipeline is fully automated via [Changesets](https://github.com/chan
 
 1. A feature branch lands a code change **and** a changeset file in `.changeset/<slug>.md`. The changeset file declares the semver bump (`patch`/`minor`/`major`) and a user-facing summary — nothing else.
 2. The changeset file is written either:
-    - **Automatically** by `.github/workflows/auto-changeset.yml`, which runs Claude on every PR and generates a changeset if one is missing, **or**
+    - **Automatically** by `.github/workflows/auto-changeset.yml`, which runs Claude on every human PR and generates a changeset if one is missing, **or**
     - **Manually** by a human in `.changeset/<slug>.md` if they want to control the wording.
+    - **Dependabot PRs are exempt** — they merge without a changeset and get bundled into the next human-authored release. See "Dependabot PRs" below.
 3. PR merges to `master`.
 4. `.github/workflows/release.yml` runs `changesets/action`. If there are pending changesets, it opens a `chore: version packages` PR that:
     - bumps `package.json` version
@@ -60,6 +61,22 @@ Treat these as **outputs**, not sources. The source of truth is listed in parent
 | `package-lock.json`      | `package.json` + registry                       | `npm install` / `npm ci` |
 | `api/types.api.md`       | public type surface                             | `npm run lint:api`       |
 | `dist/`                  | `src/`                                          | `npm run build`          |
+
+## Dependabot PRs
+
+Dependabot PRs are deliberately treated as second-class citizens by the release flow:
+
+- `build.yml`'s `Check for changeset` step skips when `github.actor == 'dependabot[bot]'`, so dependabot PRs don't fail CI on the missing-changeset check.
+- `auto-changeset.yml` does not run on bot-authored PRs (the `user.type != 'Bot'` filter).
+- Merged dependabot PRs land on master with **no corresponding `.changeset/*.md` file**, so `release.yml` sees nothing to process for that merge alone. The dep bumps get silently bundled into the next human-authored release whenever the next real changeset ships.
+
+**Why not auto-generate one?** Three stacked GitHub constraints make it not worth the complexity for this project:
+
+1. Dependabot PRs can't access regular repository secrets (including `ANTHROPIC_API_KEY`) — dependabot secrets are a separate bucket. Claude can't run on them.
+2. Dependabot PRs get a read-only `GITHUB_TOKEN`, so a sibling workflow can't write a changeset back to the PR branch without a PAT.
+3. Even a successful PAT-authored push would need to re-trigger `build.yml` on the new head sha, which requires the push to _also_ be authored by a PAT — otherwise branch protection blocks the merge.
+
+**If a dep bump deserves its own CHANGELOG entry** (e.g., a `zod` prod-dep upgrade that's user-visible), write a manual `.changeset/<slug>.md` as an extra commit on the dependabot PR before merging. That's the one case where hand-writing a changeset is expected.
 
 ## If you're unsure
 
