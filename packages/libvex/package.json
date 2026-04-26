@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/libvex",
-    "version": "5.3.1",
+    "version": "5.4.0",
     "description": "Library for communicating with xchat server.",
     "type": "module",
     "sideEffects": false,
