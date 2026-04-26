@@ -1441,6 +1441,14 @@ export class Client {
     }
 
     /**
+     * Triggers an immediate inbox sync by fetching `/mail` once.
+     * Useful on mobile foreground resume where background work may pause.
+     */
+    public async syncInboxNow(): Promise<void> {
+        await this.getMail();
+    }
+
+    /**
      * Delete all local data — message history, encryption sessions, and prekeys.
      * Closes the client afterward. Credentials (keychain) must be cleared by the consumer.
      */
