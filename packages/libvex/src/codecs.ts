@@ -73,6 +73,58 @@ export const DeviceChallengeCodec = createCodec(
     }),
 );
 
+export const DeviceRegistrationResultCodec = createCodec(
+    z.union([
+        DeviceSchema,
+        z.object({
+            challenge: z.string(),
+            expiresAt: z.string(),
+            requestID: z.string(),
+            status: z.literal("pending_approval"),
+        }),
+    ]),
+);
+
+export const PendingDeviceRequestCodec = createCodec(
+    z.object({
+        approvedDeviceID: z.string().optional(),
+        createdAt: z.string(),
+        deviceName: z.string(),
+        error: z.string().optional(),
+        expiresAt: z.string(),
+        requestID: z.string(),
+        signKey: z.string(),
+        status: z.union([
+            z.literal("approved"),
+            z.literal("expired"),
+            z.literal("pending"),
+            z.literal("rejected"),
+        ]),
+        username: z.string(),
+    }),
+);
+
+export const PendingDeviceRequestArrayCodec = createCodec(
+    z.array(
+        z.object({
+            approvedDeviceID: z.string().optional(),
+            createdAt: z.string(),
+            deviceName: z.string(),
+            error: z.string().optional(),
+            expiresAt: z.string(),
+            requestID: z.string(),
+            signKey: z.string(),
+            status: z.union([
+                z.literal("approved"),
+                z.literal("expired"),
+                z.literal("pending"),
+                z.literal("rejected"),
+            ]),
+            username: z.string(),
+        }),
+    ),
+);
+
 export const WhoamiCodec = createCodec(
     z.object({
         exp: z.number(),

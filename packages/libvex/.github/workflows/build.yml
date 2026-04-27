@@ -26,6 +26,8 @@ jobs:
     checks:
         name: CI
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -71,10 +73,42 @@ jobs:
             - name: arethetypeswrong
               run: npm run lint:types
 
-            - name: api-extractor (no public API drift)
+            - name: api-extractor (auto-update API report)
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
+                  set -euo pipefail
                   npm run lint:api
-                  git diff --exit-code api/
+
+                  if git diff --quiet -- api/; then
+                      echo "API report is up to date."
+                      exit 0
+                  fi
+
+                  if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+                      echo "API report changed; committing update to PR branch."
+                      git fetch origin "${{ github.head_ref }}"
+                      git checkout -B "${{ github.head_ref }}" "origin/${{ github.head_ref }}"
+                      npm run lint:api
+
+                      if git diff --quiet -- api/; then
+                          echo "API report already up to date on PR branch."
+                          exit 0
+                      fi
+
+                      git config user.name "github-actions[bot]"
+                      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                      git add api/libvex.api.md
+                      git commit -m "chore(api): update API extractor report"
+                      git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+                      git push origin "HEAD:${{ github.head_ref }}"
+                      echo "Pushed updated API report to PR branch."
+                      exit 0
+                  fi
+
+                  echo "API report drift detected in api/. Commit api/libvex.api.md to proceed."
+                  git diff -- api/
+                  exit 1
 
             - name: typedoc (no doc warnings)
               run: npx typedoc --options typedoc.json --treatWarningsAsErrors

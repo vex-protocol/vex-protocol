@@ -64,7 +64,7 @@
     },
     "packageManager": "npm@10.9.2",
     "scripts": {
-        "preinstall": "npx only-allow npm",
+        "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.startsWith('npm/')){console.error('Only npm is supported for this repository.');process.exit(1)}\"",
         "build": "rimraf dist && tsc -p tsconfig.build.json",
         "format": "prettier --write .",
         "format:check": "prettier --check .",

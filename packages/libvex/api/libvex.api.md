@@ -74,6 +74,7 @@ export class Client {
     sending: Map<string, Device>;
     servers: Servers;
     sessions: Sessions;
+    syncInboxNow(): Promise<void>;
     toString(): string;
     users: Users;
     whoami(): Promise<{
@@ -87,6 +88,10 @@ export interface ClientEvents {
     closed: () => void;
     connected: () => void;
     decryptingMail: () => void;
+    deviceRequest: (update: {
+        requestID: string;
+        status: Extract<PendingDeviceApprovalStatus, "approved" | "pending" | "rejected">;
+    }) => void;
     disconnect: () => void;
     fileProgress: (progress: FileProgress) => void;
     message: (message: Message) => void;
@@ -118,9 +123,16 @@ export function createCodec<T extends z.ZodType>(schema: T): {
 export { Device }
 
 // @public (undocumented)
+export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
+
+// @public (undocumented)
 export interface Devices {
+    approveRequest: (requestID: string) => Promise<Device>;
     delete: (deviceID: string) => Promise<void>;
-    register: () => Promise<Device | null>;
+    getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
+    listRequests: () => Promise<PendingDeviceRequest[]>;
+    register: () => Promise<DeviceRegistrationResult | null>;
+    rejectRequest: (requestID: string) => Promise<void>;
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
 }
 
@@ -226,6 +238,43 @@ export const msgpack: {
     decode: (data: Uint8Array) => unknown;
     encode: (value: unknown) => Uint8Array;
 };
+
+// @public (undocumented)
+export type PendingDeviceApprovalStatus = "approved" | "expired" | "pending" | "rejected";
+
+// @public (undocumented)
+export interface PendingDeviceRegistration {
+    // (undocumented)
+    challenge: string;
+    // (undocumented)
+    expiresAt: string;
+    // (undocumented)
+    requestID: string;
+    // (undocumented)
+    status: "pending_approval";
+}
+
+// @public (undocumented)
+export interface PendingDeviceRequest {
+    // (undocumented)
+    approvedDeviceID?: string | undefined;
+    // (undocumented)
+    createdAt: string;
+    // (undocumented)
+    deviceName: string;
+    // (undocumented)
+    error?: string | undefined;
+    // (undocumented)
+    expiresAt: string;
+    // (undocumented)
+    requestID: string;
+    // (undocumented)
+    signKey: string;
+    // (undocumented)
+    status: PendingDeviceApprovalStatus;
+    // (undocumented)
+    username: string;
+}
 
 export { Permission }
 

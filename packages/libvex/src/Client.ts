@@ -202,6 +202,7 @@ import {
     DeviceArrayCodec,
     DeviceChallengeCodec,
     DeviceCodec,
+    DeviceRegistrationResultCodec,
     EmojiArrayCodec,
     EmojiCodec,
     FileSQLCodec,
@@ -209,6 +210,8 @@ import {
     InviteCodec,
     KeyBundleCodec,
     OtkCountCodec,
+    PendingDeviceRequestArrayCodec,
+    PendingDeviceRequestCodec,
     PermissionArrayCodec,
     PermissionCodec,
     ServerArrayCodec,
@@ -264,6 +267,33 @@ export interface Channels {
  */
 export type { Device } from "@vex-chat/types";
 
+export type PendingDeviceApprovalStatus =
+    | "approved"
+    | "expired"
+    | "pending"
+    | "rejected";
+
+export interface PendingDeviceRequest {
+    approvedDeviceID?: string | undefined;
+    createdAt: string;
+    deviceName: string;
+    error?: string | undefined;
+    expiresAt: string;
+    requestID: string;
+    signKey: string;
+    status: PendingDeviceApprovalStatus;
+    username: string;
+}
+
+export interface PendingDeviceRegistration {
+    challenge: string;
+    expiresAt: string;
+    requestID: string;
+    status: "pending_approval";
+}
+
+export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
+
 /**
  * ClientOptions are the options you can pass into the client.
  */
@@ -298,10 +328,18 @@ export interface ClientOptions {
  * @ignore
  */
 export interface Devices {
+    /** Approves a pending device registration request as the current device. */
+    approveRequest: (requestID: string) => Promise<Device>;
     /** Deletes one of the account's devices (except the currently active one). */
     delete: (deviceID: string) => Promise<void>;
+    /** Fetches one pending registration request by ID for the current user. */
+    getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
+    /** Lists pending/processed registration requests for the current user. */
+    listRequests: () => Promise<PendingDeviceRequest[]>;
+    /** Rejects a pending device registration request as the current device. */
+    rejectRequest: (requestID: string) => Promise<void>;
     /** Registers the current key material as a new device. */
-    register: () => Promise<Device | null>;
+    register: () => Promise<DeviceRegistrationResult | null>;
     /** Fetches one device by ID. */
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
 }
@@ -476,6 +514,14 @@ const mailInboxEntry = z.tuple([
     MailWSSchema,
     z.string(),
 ]);
+const deviceRequestNotifyData = z.object({
+    requestID: z.string(),
+    status: z.union([
+        z.literal("approved"),
+        z.literal("pending"),
+        z.literal("rejected"),
+    ]),
+});
 
 /**
  * Event signatures emitted by {@link Client}.
@@ -492,6 +538,14 @@ export interface ClientEvents {
     decryptingMail: () => void;
     /** WebSocket connection lost. */
     disconnect: () => void;
+    /** Device approval queue changed (pending/approved/rejected). */
+    deviceRequest: (update: {
+        requestID: string;
+        status: Extract<
+            PendingDeviceApprovalStatus,
+            "approved" | "pending" | "rejected"
+        >;
+    }) => void;
     /** Progress update for a file upload or download. */
     fileProgress: (progress: FileProgress) => void;
     /** A direct or group message was sent or received. */
@@ -748,7 +802,11 @@ export class Client {
      * Device management methods.
      */
     public devices: Devices = {
+        approveRequest: this.approveDeviceRequest.bind(this),
         delete: this.deleteDevice.bind(this),
+        getRequest: this.getDeviceRegistrationRequest.bind(this),
+        listRequests: this.listDeviceRegistrationRequests.bind(this),
+        rejectRequest: this.rejectDeviceRequest.bind(this),
         register: this.registerDevice.bind(this),
         retrieve: this.getDeviceByID.bind(this),
     };
@@ -2086,6 +2144,36 @@ export class Client {
         await this.http.delete(this.getHost() + "/channel/" + channelID);
     }
 
+    private async approveDeviceRequest(requestID: string): Promise<Device> {
+        const req = await this.getDeviceRegistrationRequest(requestID);
+        if (!req) {
+            throw new Error("Device approval request not found.");
+        }
+        if (req.status !== "pending") {
+            throw new Error(
+                "Device approval request is not pending: " + req.status,
+            );
+        }
+        const signed = XUtils.encodeHex(
+            await xSignAsync(
+                XUtils.decodeUTF8(requestID),
+                this.signKeys.secretKey,
+            ),
+        );
+        const response = await this.http.post(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests/" +
+                requestID +
+                "/approve",
+            msgpack.encode({ signed }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeAxios(DeviceCodec, response.data);
+    }
+
     private async deleteDevice(deviceID: string): Promise<void> {
         if (deviceID === this.getDevice().deviceID) {
             throw new Error("You can't delete the device you're logged in to.");
@@ -2097,6 +2185,52 @@ export class Client {
                 this.getUser().userID +
                 "/devices/" +
                 deviceID,
+        );
+    }
+
+    private async getDeviceRegistrationRequest(
+        requestID: string,
+    ): Promise<null | PendingDeviceRequest> {
+        try {
+            const response = await this.http.get(
+                this.prefixes.HTTP +
+                    this.host +
+                    "/user/" +
+                    this.getUser().userID +
+                    "/devices/requests/" +
+                    requestID,
+            );
+            return decodeAxios(PendingDeviceRequestCodec, response.data);
+        } catch (err: unknown) {
+            if (isAxiosError(err) && err.response?.status === 404) {
+                return null;
+            }
+            throw err;
+        }
+    }
+
+    private async listDeviceRegistrationRequests(): Promise<
+        PendingDeviceRequest[]
+    > {
+        const response = await this.http.get(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests",
+        );
+        return decodeAxios(PendingDeviceRequestArrayCodec, response.data);
+    }
+
+    private async rejectDeviceRequest(requestID: string): Promise<void> {
+        await this.http.post(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests/" +
+                requestID +
+                "/reject",
         );
     }
 
@@ -2556,6 +2690,13 @@ export class Client {
                 await this.getMail();
                 this.fetchingMail = false;
                 break;
+            case "deviceRequest": {
+                const parsed = deviceRequestNotifyData.safeParse(msg.data);
+                if (parsed.success) {
+                    this.emitter.emit("deviceRequest", parsed.data);
+                }
+                break;
+            }
             case "permission":
                 this.emitter.emit(
                     "permission",
@@ -3283,7 +3424,7 @@ export class Client {
         return decodeAxios(PermissionCodec, res.data);
     }
 
-    private async registerDevice(): Promise<Device | null> {
+    private async registerDevice(): Promise<DeviceRegistrationResult | null> {
         while (!this.xKeyRing) {
             await sleep(100);
         }
@@ -3336,7 +3477,7 @@ export class Client {
             msgpack.encode(devMsg),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(DeviceCodec, res.data);
+        return decodeAxios(DeviceRegistrationResultCodec, res.data);
     }
 
     private async respond(msg: ChallMsg) {
@@ -3444,8 +3585,13 @@ export class Client {
                 await this.populateKeyRing();
 
                 const newDevice = await this.registerDevice();
-                if (newDevice) {
+                if (newDevice && "deviceID" in newDevice) {
                     device = newDevice;
+                } else if (newDevice && "status" in newDevice) {
+                    throw new Error(
+                        "Device registration requires approval from an existing device. requestID=" +
+                            newDevice.requestID,
+                    );
                 } else {
                     throw new Error("Error registering device.");
                 }
@@ -3699,13 +3845,15 @@ export class Client {
             }
             let lastErr: unknown;
             let failCount = 0;
+            // One logical DM fan-outs to multiple recipient devices. Reuse a
+            // single mailID so local/UI dedupe treats it as one message.
+            const messageMailID = uuid.v4();
             for (const device of deviceList) {
-                const mailID = uuid.v4();
                 try {
                     if (libvexDebugDmEnabled()) {
                         debugLibvexDm("sendMessage: sendMail start", {
                             recipientDevice: device.deviceID,
-                            mailID,
+                            mailID: messageMailID,
                         });
                     }
                     await this.sendMail(
@@ -3713,7 +3861,7 @@ export class Client {
                         userEntry,
                         XUtils.decodeUTF8(message),
                         null,
-                        mailID,
+                        messageMailID,
                         false,
                     );
                     if (libvexDebugDmEnabled()) {
