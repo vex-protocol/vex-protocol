@@ -50,7 +50,7 @@ import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
 export const JWT_EXPIRY = "7d";
-export const DEVICE_AUTH_JWT_EXPIRY = "1h";
+export const DEVICE_AUTH_JWT_EXPIRY = "7d";
 const DEVICE_CHALLENGE_EXPIRY = 1000 * 60; // 60 seconds
 
 // 3-19 chars long
