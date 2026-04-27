@@ -126,6 +126,70 @@ import { startStressWebServer } from "./stress-web-server.ts";
 /** libvex / `ws` attach many `"message"` handlers; default (10) spams MaxListenersExceededWarning. */
 EventEmitter.defaultMaxListeners = 100;
 
+type StressCryptoProfile = "fips" | "tweetnacl";
+
+let resolvedStressCryptoProfile:
+    | Promise<StressCryptoProfile>
+    | StressCryptoProfile
+    | null = null;
+
+function parseStressCryptoProfile(raw: string): null | StressCryptoProfile {
+    if (raw === "fips" || raw === "tweetnacl") {
+        return raw;
+    }
+    return null;
+}
+
+function readCryptoProfileField(data: unknown): null | string {
+    if (typeof data !== "object" || data === null) {
+        return null;
+    }
+    if (!("cryptoProfile" in data)) {
+        return null;
+    }
+    const profile = data["cryptoProfile"];
+    return typeof profile === "string" ? profile : null;
+}
+
+async function resolveStressCryptoProfile(
+    host: string,
+): Promise<StressCryptoProfile> {
+    const env = process.env["SPIRE_STRESS_CRYPTO_PROFILE"]?.trim();
+    if (env !== undefined && env.length > 0) {
+        const parsed = parseStressCryptoProfile(env);
+        if (parsed === null) {
+            throw new Error(
+                `SPIRE_STRESS_CRYPTO_PROFILE must be "tweetnacl" or "fips" (received "${env}")`,
+            );
+        }
+        return parsed;
+    }
+
+    if (resolvedStressCryptoProfile !== null) {
+        return await Promise.resolve(resolvedStressCryptoProfile);
+    }
+
+    resolvedStressCryptoProfile = (async (): Promise<StressCryptoProfile> => {
+        const base = httpStatusBase(host);
+        const res = await axios.get<unknown>(`${base}/status`);
+        const profileRaw = readCryptoProfileField(res.data);
+        if (profileRaw === null) {
+            throw new Error(
+                "Could not determine Spire crypto profile from GET /status.",
+            );
+        }
+        const parsed = parseStressCryptoProfile(profileRaw);
+        if (parsed === null) {
+            throw new Error(
+                `Unknown Spire crypto profile from /status: "${profileRaw}"`,
+            );
+        }
+        return parsed;
+    })();
+
+    return await resolvedStressCryptoProfile;
+}
+
 /**
  * Hard exit after `main()` so the harness always quits even when stray libuv handles
  * remain (idle HTTP keep-alive, native sockets, etc.). Does not run if `main()` never settles.
@@ -145,6 +209,29 @@ function sleepMs(ms: number): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+/**
+ * Minimum required success rate for counted HTTP-ish operations.
+ * - Accepts fraction (`0.8`) or percent (`80`).
+ * - Default `1` preserves legacy behavior (any failure => exit 1).
+ */
+function minOkRateRequired(): number {
+    const raw = process.env["SPIRE_STRESS_MIN_OK_RATE"]?.trim();
+    if (raw === undefined || raw === "") {
+        return 1;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return 1;
+    }
+    if (parsed <= 1) {
+        return parsed;
+    }
+    if (parsed <= 100) {
+        return parsed / 100;
+    }
+    return 1;
 }
 
 /** Upper bound on `Client.close()` so a wedged libvex client cannot hang the harness forever. */
@@ -377,7 +464,9 @@ async function bootstrapClient(
         const bootCtx: TelemetryTouchCtx = { burst, phase };
 
         const devKeyRaw = process.env["DEV_API_KEY"]?.trim();
+        const cryptoProfile = await resolveStressCryptoProfile(host);
         const createOpts: ClientOptions = {
+            cryptoProfile,
             dbFolder,
             host,
             inMemoryDb: true,
@@ -396,6 +485,7 @@ async function bootstrapClient(
             {
                 inputs: {
                     dbFolder: basename(dbFolder),
+                    cryptoProfile,
                     host,
                     inMemoryDb: true,
                     unsafeHttp: true,
@@ -1349,7 +1439,18 @@ async function main(): Promise<void> {
             }
         }
 
-        if (httpFailureTotal(lastHttpStats) > 0) {
+        const failures = httpFailureTotal(lastHttpStats);
+        const totalCounted = lastHttpStats.ok + failures;
+        const minOkRate = minOkRateRequired();
+        const okRate = totalCounted > 0 ? lastHttpStats.ok / totalCounted : 1;
+
+        if (totalCounted > 0 && okRate < minOkRate) {
+            process.stderr.write(
+                `[stress] success-rate gate failed: ok=${String(lastHttpStats.ok)}/${String(totalCounted)} (${(okRate * 100).toFixed(1)}%) < required ${(minOkRate * 100).toFixed(1)}%\n`,
+            );
+            // Distinct from generic run failures (exit 1): this is an explicit quality gate breach.
+            process.exitCode = 3;
+        } else if (failures > 0) {
             process.exitCode = 1;
         }
 

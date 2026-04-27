@@ -181,7 +181,7 @@ export const initApp = (
     ) => void,
 ) => {
     // INIT ROUTERS
-    const userRouter = getUserRouter(db, tokenValidator);
+    const userRouter = getUserRouter(db, tokenValidator, notify);
     const fileRouter = getFileRouter(db);
     const avatarRouter = getAvatarRouter();
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);

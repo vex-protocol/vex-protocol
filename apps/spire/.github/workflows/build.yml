@@ -140,15 +140,17 @@ jobs:
                   echo "Timed out waiting for Spire /healthz"
                   exit 1
 
-            # Informational only: does not fail the job (see continue-on-error). Default conc=25 in stress-cli-sweep.
+            # Informational only via stress:cli --informational (exit 0 on stress failures).
             - name: stress:cli (default matrix, informational)
-              continue-on-error: true
+              env:
+                  SPIRE_STRESS_MIN_OK_RATE: "0.8"
               run: >-
                   npm run stress:cli --
                   --host 127.0.0.1:16777
+                  --informational
 
-            - name: Spire logs on failure
-              if: failure()
+            - name: Spire logs (tail)
+              if: always()
               run: docker logs "${{ env.SPIRE_CONTAINER_NAME }}" 2>&1 | tail -n 200 || true
 
             - name: Tear down Spire container
@@ -237,13 +239,15 @@ jobs:
                   echo "$s" | grep -qE '"cryptoProfile":"fips"'
 
             - name: stress:cli (default matrix, informational)
-              continue-on-error: true
+              env:
+                  SPIRE_STRESS_MIN_OK_RATE: "0.8"
               run: >-
                   npm run stress:cli --
                   --host 127.0.0.1:16777
+                  --informational
 
-            - name: Spire logs on failure
-              if: failure()
+            - name: Spire logs (tail)
+              if: always()
               run: docker logs "${{ env.SPIRE_CONTAINER_NAME }}" 2>&1 | tail -n 200 || true
 
             - name: Tear down Spire container

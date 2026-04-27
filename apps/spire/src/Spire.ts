@@ -838,6 +838,7 @@ export class Spire extends EventEmitter {
 
                 if (
                     regKey &&
+                    regKey.length === 16 &&
                     this.validateToken(
                         uuidStringify(regKey),
                         TokenScopes.Register,
@@ -888,14 +889,28 @@ export class Spire extends EventEmitter {
                         }
                         res.send(msgpack.encode(censorUser(user)));
                     }
+                } else if (regKey && regKey.length !== 16) {
+                    res.status(400).send({
+                        error: "Invalid registration token payload.",
+                    });
                 } else {
                     res.status(400).send({
                         error: "Invalid or no token supplied.",
                     });
                 }
-            } catch (_err: unknown) {
-                // debugger: registration error
-                res.sendStatus(500);
+            } catch (err: unknown) {
+                const requestId = crypto.randomUUID();
+                const message =
+                    err instanceof Error ? err.message : String(err);
+                console.error(
+                    `[spire] /register failed requestId=${requestId} profile=${this.cryptoProfile} message=${message}`,
+                );
+                if (err instanceof Error && err.stack) {
+                    console.error(err.stack);
+                }
+                res.status(500).json({
+                    error: `Registration failed. requestId=${requestId}`,
+                });
             }
         });
 

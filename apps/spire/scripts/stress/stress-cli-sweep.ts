@@ -234,6 +234,7 @@ function printHelp(): void {
             "  --load immediate|paced  SPIRE_STRESS_LOAD_MODE (default immediate; legacy: continuous|burst)",
             "  --burst-gap-ms <n>    SPIRE_STRESS_BURST_GAP_MS when load=paced",
             "  --host <host:port>    SPIRE_STRESS_HOST",
+            "  --informational       always exit 0 for stress failures (exit 2 still reserved for unreachable target)",
             "  --stop-on-fail        stop the matrix early if a child exits with code 1 (harness saw HTTP failures)",
             "  -v, --verbose         set SPIRE_STRESS_VERBOSE=1 on the child (noisier per-wall stderr)",
             "  -h, --help",
@@ -356,7 +357,7 @@ async function main(): Promise<void> {
             rows.push(
                 `${String(combo)}\t${String(c)}\t${String(n)}\t${String(code)}`,
             );
-            if (opts.stopOnFail && code === 1) {
+            if (opts.stopOnFail && !opts.informational && code === 1) {
                 process.stderr.write(
                     "\nstress:cli: stopping (--stop-on-fail) after exit code 1.\n",
                 );
@@ -413,7 +414,23 @@ async function main(): Promise<void> {
 
     process.stderr.write("\n" + rows.join("\n") + "\n\n");
     process.stderr.write(`stress:cli: worst exit code ${String(worst)}\n`);
-    process.exit(worst <= 1 ? worst : worst === 2 ? 2 : 1);
+    if (opts.informational && worst === 1) {
+        process.stderr.write(
+            "stress:cli: informational mode enabled; forcing final exit code 0.\n",
+        );
+    }
+    if (worst === 2) {
+        process.exit(2);
+    }
+    if (opts.informational) {
+        // Informational mode only suppresses generic stress failures (exit 1).
+        // Keep non-1 codes hard-failing (e.g. explicit quality-gate breaches).
+        if (worst <= 1) {
+            process.exit(0);
+        }
+        process.exit(1);
+    }
+    process.exit(worst <= 1 ? worst : 1);
 }
 
 void main().catch((err: unknown) => {
