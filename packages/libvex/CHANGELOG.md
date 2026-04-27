@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 5.5.0
+
+### Minor Changes
+
+- 0a9865c: `Client` now exposes a `syncInboxNow(): Promise<void>` method that triggers an immediate `/mail` fetch. Call it on mobile foreground resume (or any other moment where the background poll may have been paused) to pull in pending messages without waiting for the next scheduled tick.
+
 ## 5.4.0
 
 ### Minor Changes
