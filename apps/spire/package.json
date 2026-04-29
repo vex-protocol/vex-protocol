@@ -1,0 +1,125 @@
+{
+    "name": "@vex-chat/spire",
+    "version": "1.0.4",
+    "description": "Vex server implementation in NodeJS.",
+    "type": "module",
+    "files": [
+        "dist",
+        "src",
+        "LICENSE",
+        "LICENSE-COMMERCIAL",
+        "LICENSING.md",
+        "CLA.md"
+    ],
+    "author": "Extra <extrahash@protonmail.com>",
+    "license": "AGPL-3.0-or-later",
+    "engines": {
+        "node": ">=24.0.0",
+        "npm": ">=10.0.0"
+    },
+    "packageManager": "npm@10.9.2",
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "scripts": {
+        "preinstall": "npx only-allow npm",
+        "postinstall": "npm rebuild better-sqlite3",
+        "rebuild:sqlite": "npm rebuild better-sqlite3",
+        "start": "node --experimental-strip-types src/run.ts",
+        "restart": "pm2 restart spire && pm2 logs spire",
+        "build": "tsc && node scripts/clean-dist-tests.mjs",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "copyright:check": "node scripts/copyright-headers.mjs --check",
+        "copyright:apply": "node scripts/copyright-headers.mjs",
+        "lint": "eslint src/ scripts/stress/",
+        "lint:fix": "eslint src/ scripts/stress/ --fix",
+        "prepare": "husky || true",
+        "test": "vitest run",
+        "stress:web": "node --experimental-strip-types scripts/stress/spire-stress.ts",
+        "stress:cli": "node --experimental-strip-types scripts/stress/stress-cli-sweep.ts",
+        "stress:repo-manifest": "node --experimental-strip-types scripts/stress/stress-repo-manifest.ts",
+        "stress:docs-pack": "node --experimental-strip-types scripts/stress/stress-docs-pack.ts",
+        "stress:llm-triage": "node --experimental-strip-types scripts/stress/stress-llm-triage.ts",
+        "gen-spk": "node scripts/gen-spk.js",
+        "gen-spk-fips": "node scripts/gen-spk-fips.js",
+        "docs": "node ./scripts/generate-docs.js",
+        "service:status-monitor": "node ./services/status-monitor/index.js",
+        "service:status-monitor:clear-history": "node ./services/status-monitor/clear-history.js",
+        "service:deploy-hook": "node ./services/deploy-hook/index.js",
+        "monitor": "node ./services/status-monitor/index.js"
+    },
+    "devDependencies": {
+        "@changesets/cli": "2.30.0",
+        "@socketsecurity/cli": "1.1.84",
+        "@types/better-sqlite3": "7.6.13",
+        "@types/cors": "2.8.19",
+        "@types/express": "5.0.6",
+        "@types/jsonwebtoken": "9.0.10",
+        "@types/morgan": "1.9.10",
+        "@types/multer": "2.1.0",
+        "@types/node": "25.6.0",
+        "@types/ws": "8.18.1",
+        "@vex-chat/libvex": "5.3.1",
+        "@vitest/eslint-plugin": "1.6.15",
+        "axios": "1.15.0",
+        "eslint": "10.2.0",
+        "eslint-config-prettier": "10.1.8",
+        "eslint-plugin-n": "17.24.0",
+        "eslint-plugin-perfectionist": "5.8.0",
+        "husky": "9.1.7",
+        "lint-staged": "16.4.0",
+        "npm-package-json-lint": "10.2.1",
+        "prettier": "3.8.2",
+        "type-coverage": "2.29.7",
+        "typedoc": "0.28.18",
+        "typescript": "6.0.2",
+        "typescript-eslint": "8.58.1",
+        "vitest": "4.1.4"
+    },
+    "typeCoverage": {
+        "atLeast": 95,
+        "ignoreCatch": true
+    },
+    "lint-staged": {
+        "*.ts": [
+            "eslint --fix",
+            "prettier --write"
+        ],
+        "*.{yml,yaml}": [
+            "prettier --write"
+        ]
+    },
+    "overrides": {
+        "@types/ws": "8.18.1",
+        "@types/readable-stream": "4.0.11",
+        "lodash": "4.18.1",
+        "minimatch": "10.2.5",
+        "uuid": "14.0.0"
+    },
+    "dependencies": {
+        "@asyncapi/web-component": "2.6.5",
+        "@scalar/express-api-reference": "0.9.7",
+        "@vex-chat/crypto": "2.1.2",
+        "@vex-chat/types": "2.0.0",
+        "argon2": "0.44.0",
+        "better-sqlite3": "11.10.0",
+        "cors": "2.8.6",
+        "dotenv": "17.4.1",
+        "express": "5.2.1",
+        "express-rate-limit": "8.3.2",
+        "file-type": "22.0.1",
+        "helmet": "8.1.0",
+        "jsonwebtoken": "9.0.3",
+        "kysely": "0.28.16",
+        "morgan": "1.10.1",
+        "msgpackr": "1.11.8",
+        "multer": "2.1.1",
+        "parse-duration": "2.1.6",
+        "tweetnacl": "1.0.3",
+        "uuid": "14.0.0",
+        "ws": "8.20.0",
+        "zod": "4.3.6"
+    }
+}
