@@ -1,6 +1,10 @@
 services:
     spire:
-        build: .
+        # Build context is the monorepo root so the Dockerfile can resolve
+        # workspace:^ deps for @vex-chat/{types,crypto,libvex}.
+        build:
+            context: ../..
+            dockerfile: apps/spire/Dockerfile
         read_only: true
         tmpfs:
             - /tmp

@@ -1,0 +1,50 @@
+# Build context is the monorepo root; this dockerignore is paired with
+# apps/spire/Dockerfile (BuildKit reads <dockerfile>.dockerignore).
+
+# Don't ship node_modules — pnpm install rebuilds in the build stage.
+**/node_modules
+**/.pnpm-store
+
+# Build artefacts — rebuilt in the build stage.
+**/dist
+**/.tsbuildinfo
+
+# VCS / agents / editor / CI metadata.
+.git
+.gitignore
+.github
+.husky
+.vscode
+.changeset
+.beads
+.claude
+
+# Per-package runtime data (spire's writable dirs at apps/spire/{files,avatars,emoji}).
+apps/spire/files
+apps/spire/avatars
+apps/spire/emoji
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+
+# env files (per-package + root) — only .env.example ships.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Tests.
+**/src/__tests__
+**/*.test.ts
+**/*.test.tsx
+
+# Local docs / typedoc output.
+**/docs
+
+# Logs.
+**/*.log
+
+# Stale spire vendor tarball (workspace:^ replaces it).
+apps/spire/vendor
+
+# Per-package generated API reports — not needed for runtime.
+**/api/*.api.md

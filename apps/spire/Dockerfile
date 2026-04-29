@@ -1,12 +1,36 @@
+# Build context is the MONOREPO ROOT (see docker-compose.yml: context: ../..).
+# This Dockerfile lives in apps/spire/ but operates on the whole workspace
+# so it can resolve `workspace:^` deps for @vex-chat/{types,crypto,libvex}.
+
 # ── Build stage ──────────────────────────────────────────────────────────
 FROM node:24-alpine AS build
 
-# argon2 compiles native C code via node-gyp
+# argon2 + better-sqlite3 compile native code via node-gyp.
 RUN apk add --no-cache python3 make g++
 
-WORKDIR /build
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Pin pnpm via corepack (matches packageManager field in root package.json).
+RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+
+WORKDIR /repo
+COPY . .
+
+# Install spire's full dep graph (devDeps included so we can build).
+# onlyBuiltDependencies (argon2, better-sqlite3, esbuild, msgpackr-extract)
+# is honored — postinstall scripts run for those, ignored for the rest.
+RUN pnpm install --filter @vex-chat/spire... --frozen-lockfile
+
+# Build types -> crypto -> libvex (their `files: [...]` arrays include
+# `dist/` and that's what consumers — including spire — actually import).
+# Topo order is automatic with `pnpm -r build` on the filtered subset.
+RUN pnpm --filter @vex-chat/spire^... build
+
+# `pnpm deploy` produces a flat /out with a real node_modules (workspace
+# siblings materialized as packages, not symlinks) + spire's `files: [...]`
+# contents. Result looks like a standalone `npm install`'d project.
+# --prod skips devDependencies. --legacy uses the older deploy semantics
+# that ship the package's source via `files: [...]` rather than expecting
+# a "publish" subdir.
+RUN pnpm --filter @vex-chat/spire deploy --prod --legacy /out
 
 # ── Runtime stage ────────────────────────────────────────────────────────
 FROM node:24-alpine
@@ -16,12 +40,13 @@ RUN deluser --remove-home node \
  && addgroup -g 1000 spire && adduser -u 1000 -G spire -s /bin/sh -D spire
 
 WORKDIR /app
-COPY --from=build /build/node_modules ./node_modules
-COPY package.json ./
-COPY src ./src
+COPY --from=build /out /app
+
+# spire's package.json `files: [...]` doesn't include deploy/ (it's runtime
+# helper scripts, not shipped on npm) — copy them in separately.
 RUN mkdir -p /app/deploy
-COPY --chown=spire:spire deploy/resolve-spire-listen-port.sh \
-    deploy/spire-container-health.sh \
+COPY --chown=spire:spire apps/spire/deploy/resolve-spire-listen-port.sh \
+    apps/spire/deploy/spire-container-health.sh \
     /app/deploy/
 RUN chmod +x /app/deploy/resolve-spire-listen-port.sh /app/deploy/spire-container-health.sh
 
