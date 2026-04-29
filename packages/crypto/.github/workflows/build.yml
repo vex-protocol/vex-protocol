@@ -1,0 +1,116 @@
+name: Build
+
+on:
+    pull_request:
+        branches: [master]
+
+concurrency:
+    group: build-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+env:
+    npm_config_save_exact: "true"
+    npm_config_engine_strict: "true"
+
+jobs:
+    # One runner: a single `npm ci`, then every check in sequence. Slower than a
+    # job matrix, but no redundant installs.
+    ci:
+        name: CI
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  # Full history: changeset check compares to origin/master.
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci --ignore-scripts
+
+            - name: tsc
+              run: npm run build
+
+            - name: ESLint
+              run: npm run lint
+
+            - name: Prettier
+              run: npm run format:check
+
+            - name: npm-package-json-lint
+              run: npx npm-package-json-lint .
+
+            - name: Typecheck (tsc --noEmit)
+              run: npm run test:types
+
+            - name: Type coverage
+              run: npx type-coverage
+
+            - name: Vitest (core)
+              run: npm run test:core
+
+            - name: Vitest (async API, tweetnacl + FIPS)
+              run: npm run test:async-api
+
+            - name: publint
+              run: npm run lint:pkg
+
+            - name: Are The Types Wrong?
+              run: npm run lint:types
+
+            - name: API Extractor
+              run: npm run lint:api
+
+            - name: typedoc (no doc warnings)
+              run: npx typedoc --options typedoc.json --treatWarningsAsErrors
+
+            - name: npm pack
+              run: npm pack
+
+            - name: Upload tarball
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: package-tarball-${{ github.sha }}
+                  path: "*.tgz"
+                  retention-days: 14
+
+            - name: License check
+              run: npm run license:check
+
+            - name: npm audit
+              run: npm audit --audit-level=high
+
+            - name: Socket security scan
+              if: github.event.pull_request.head.repo.full_name == github.repository
+              run: npx @socketsecurity/cli@latest ci
+              env:
+                  SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
+
+            # Dependabot PRs merge without a changeset; they can't access
+            # ANTHROPIC_API_KEY (dependabot secrets are isolated) so
+            # auto-changeset can't run on them, and they don't need their
+            # own release entry — dep bumps get bundled into the next
+            # human-authored release. See AGENTS.md.
+            - name: Check for changeset
+              if: github.actor != 'dependabot[bot]'
+              run: |
+                  OLD=$(git show origin/master:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+                  NEW=$(node -pe "require('./package.json').version")
+                  if [ "$OLD" = "$NEW" ]; then
+                      npx changeset status --since=origin/master
+                  else
+                      echo "package.json version bumped ($OLD → $NEW) — skipping changeset check."
+                  fi

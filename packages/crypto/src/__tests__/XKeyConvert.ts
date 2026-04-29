@@ -1,0 +1,74 @@
+/**
+ * Copyright (c) 2020-2026 Vex Heavy Industries LLC
+ * Licensed under AGPL-3.0. See LICENSE for details.
+ * Commercial licenses available at vex.wtf
+ */
+
+import type nacl from "tweetnacl";
+
+import { XKeyConvert, XUtils } from "../index.js";
+
+const ed25519Keys = {
+    private:
+        "f69c92fbb224e1d75c5dffb5e40946e6106baa89ad73dbb6ef0bec2d8562d8a28d0538a45bce3d6fd43cd80a247da063c67cd01da2e263758567a51db5b1f7c6",
+    public: "8d0538a45bce3d6fd43cd80a247da063c67cd01da2e263758567a51db5b1f7c6",
+};
+
+const convertedX25519Keys = {
+    private: "10ed501acc2125730c294aa4b78eac989588d031015d1c77a75ea98aa7744b7a",
+    public: "55c4ca5a1d8e2859e186f36564cc41c9c9882ed9dbc01be8ec9a36b106eeee5b",
+};
+
+test("convertKeyPair", () => {
+    const keys = keyPairFromString(ed25519Keys);
+    const converted = XKeyConvert.convertKeyPair(keys);
+    // ed2curve returns null if conversion fails, though for valid keys it shouldn't.
+    // We cast to any to allow lodash comparison or check for existence
+    expect(converted).toBeDefined();
+    if (converted) {
+        expect(keyPairToString(converted)).toEqual(convertedX25519Keys);
+    }
+});
+
+test("convertPublicKey", () => {
+    const keys = keyPairFromString(ed25519Keys);
+    const convertedPublicKey = XKeyConvert.convertPublicKey(keys.publicKey);
+    if (!convertedPublicKey) {
+        throw new Error("Conversion failed.");
+    }
+
+    const correctConvertedKey = XUtils.decodeHex(convertedX25519Keys.public);
+    expect(XUtils.bytesEqual(convertedPublicKey, correctConvertedKey)).toBe(
+        true,
+    );
+});
+
+test("convertPrivateKey", () => {
+    const keys = keyPairFromString(ed25519Keys);
+    const convertedPrivateKey = XKeyConvert.convertSecretKey(keys.secretKey);
+    if (!convertedPrivateKey) {
+        throw new Error("Conversion failed.");
+    }
+
+    const correctConvertedKey = XUtils.decodeHex(convertedX25519Keys.private);
+    expect(XUtils.bytesEqual(convertedPrivateKey, correctConvertedKey)).toBe(
+        true,
+    );
+});
+
+function keyPairFromString(strKeyPair: { private: string; public: string }) {
+    return {
+        publicKey: XUtils.decodeHex(strKeyPair.public),
+        secretKey: XUtils.decodeHex(strKeyPair.private),
+    };
+}
+
+function keyPairToString(keyPair: nacl.BoxKeyPair | nacl.SignKeyPair): {
+    private: string;
+    public: string;
+} {
+    return {
+        private: XUtils.encodeHex(keyPair.secretKey),
+        public: XUtils.encodeHex(keyPair.publicKey),
+    };
+}
