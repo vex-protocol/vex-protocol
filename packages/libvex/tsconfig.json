@@ -1,0 +1,36 @@
+{
+    "compilerOptions": {
+        "target": "es2022",
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "moduleDetection": "force",
+        "lib": ["es2022", "DOM"],
+
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "outDir": "./dist",
+        "rootDir": "./src",
+
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "exactOptionalPropertyTypes": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "noImplicitReturns": true,
+        "noImplicitOverride": true,
+        "noFallthroughCasesInSwitch": true,
+        "allowUnusedLabels": false,
+        "allowUnreachableCode": false,
+        "noUncheckedSideEffectImports": true,
+
+        "isolatedModules": true,
+        "verbatimModuleSyntax": true,
+        "erasableSyntaxOnly": true,
+        "forceConsistentCasingInFileNames": true,
+
+        "resolveJsonModule": true,
+        "skipLibCheck": true
+    },
+    "include": ["src/**/*"],
+    "exclude": ["./scripts/*", "./dist/*"]
+}
