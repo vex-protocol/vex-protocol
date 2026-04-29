@@ -9,7 +9,7 @@ FROM node:24-alpine AS build
 RUN apk add --no-cache python3 make g++
 
 # Pin pnpm via corepack (matches packageManager field in root package.json).
-RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 WORKDIR /repo
 COPY . .

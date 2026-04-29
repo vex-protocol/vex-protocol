@@ -20,7 +20,7 @@
         "license:check": "pnpm -r --if-present license:check",
         "version": "pnpm exec changeset version && pnpm -r --if-present run post-version"
     },
-    "packageManager": "pnpm@10.30.3",
+    "packageManager": "pnpm@10.33.0",
     "engines": {
         "node": ">=24.0.0"
     },
