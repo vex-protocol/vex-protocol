@@ -15,6 +15,9 @@ import { encode as encode_2 } from '@stablelib/base64';
 export type CryptoProfile = "fips" | "tweetnacl";
 
 // @public
+export function fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(ecdsaSpki: Uint8Array): Promise<Uint8Array>;
+
+// @public
 export function getCryptoProfile(): CryptoProfile;
 
 // @public
@@ -70,11 +73,6 @@ export function xDHAsync(myPrivateKey: Uint8Array, theirPublicKey: Uint8Array): 
 
 // @public
 export function xEcdhKeyPairFromEcdsaKeyPairAsync(sign: KeyPair): Promise<KeyPair>;
-
-// @public
-export function fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(
-    ecdsaSpki: Uint8Array,
-): Promise<Uint8Array>;
 
 // @public
 export function xEncode(curveType: "X448" | "X25519", publicKey: Uint8Array): Uint8Array;

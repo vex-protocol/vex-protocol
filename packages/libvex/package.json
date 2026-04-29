@@ -70,7 +70,6 @@
         "lint": "eslint src/",
         "lint:fix": "eslint src/ --fix",
         "lint:pkg": "publint --strict",
-        "lint:pkgjson": "npx npm-package-json-lint .",
         "lint:types": "attw --pack . --ignore-rules cjs-resolves-to-esm no-resolution",
         "lint:api": "api-extractor run --local --verbose",
         "prepack": "pnpm run build",

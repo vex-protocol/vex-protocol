@@ -32,8 +32,10 @@ apps/spire/emoji
 **/.env.*
 !**/.env.example
 
-# Tests.
-**/src/__tests__
+# NOTE: do NOT exclude src/__tests__ — libvex's src/preset/test.ts imports
+# from ../__tests__/harness/memory-storage at compile time (it's a shipped
+# test-preset despite the path). tsconfig.build.json already excludes
+# tests from emit, so leaving them in the context doesn't bloat /out.
 **/*.test.ts
 **/*.test.tsx
 

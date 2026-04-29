@@ -65,8 +65,28 @@ jobs:
             - name: License check
               run: pnpm license:check
 
-            - name: npm-package-json-lint
+            - name: publint per package (lint:pkg = publint --strict)
               run: pnpm lint:pkg
+
+            - name: arethetypeswrong per package (lint:types = attw)
+              run: pnpm lint:types
+
+            - name: api-extractor per package (lint:api)
+              run: pnpm lint:api
+
+            - name: api-extractor drift gate
+              run: |
+                  set -euo pipefail
+                  if ! git diff --exit-code -- 'packages/*/api/'; then
+                      echo "::error::Public API report drift detected. Run 'pnpm lint:api' locally and commit the regenerated api/*.api.md files."
+                      exit 1
+                  fi
+
+            - name: spec drift (types — openapi.json/asyncapi.json)
+              run: pnpm specs:check
+
+            - name: spec lint (spectral on openapi.json/asyncapi.json)
+              run: pnpm lint:specs
 
             - name: Socket security scan
               if: |
