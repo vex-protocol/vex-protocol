@@ -83,12 +83,13 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/vex-protocol/types-js.git"
+        "url": "git+https://github.com/vex-protocol/protocol.git",
+        "directory": "packages/types"
     },
     "bugs": {
-        "url": "https://github.com/vex-protocol/types-js/issues"
+        "url": "https://github.com/vex-protocol/protocol/issues"
     },
-    "homepage": "https://github.com/vex-protocol/types-js#readme",
+    "homepage": "https://github.com/vex-protocol/protocol/tree/master/packages/types#readme",
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"

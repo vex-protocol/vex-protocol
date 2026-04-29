@@ -16,9 +16,15 @@ jobs:
         permissions:
             contents: write
             pull-requests: write
-            # Required for `pnpm publish --provenance`. Gives the runner an
-            # OIDC token so npm can attest "this tarball was built by this
-            # workflow at this commit". Works alongside NPM_TOKEN.
+            # OIDC trusted publishing — the runner's id-token authenticates
+            # directly to npm, no NPM_TOKEN needed. See ADR-012 in
+            # chat-ui-monorepo: when both OIDC and NPM_TOKEN are present,
+            # npm CLI prefers the token, defeating supply-chain protections.
+            # Trusted publisher must be configured per-package on npmjs.com:
+            # https://www.npmjs.com/package/<name>/access — repo
+            # vex-protocol/protocol, workflow release.yml.
+            # Requires npm CLI >=11.5.1 and Node >=22.14.0 (both satisfied by
+            # .tool-versions: node 24.14.0 ships npm 11.x).
             id-token: write
         outputs:
             published: ${{ steps.changesets.outputs.published }}
@@ -56,12 +62,20 @@ jobs:
               id: changesets
               uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
               with:
-                  publish: pnpm publish -r --access public --provenance --no-git-checks
+                  # changeset publish shells out to `npm publish` per package,
+                  # which has confirmed OIDC trusted-publishing support. We
+                  # avoid `pnpm publish -r` because pnpm's native OIDC support
+                  # is unreliable (pnpm/pnpm#9812 still open as of 2026, and
+                  # pnpm v11 dropped npm-CLI delegation for publish).
+                  publish: pnpm exec changeset publish
                   title: "chore: version packages"
                   commit: "chore: version packages"
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  # NO NPM_TOKEN. NO NODE_AUTH_TOKEN. An empty string still
+                  # defeats OIDC fallback (npm/cli#8976), so the env vars are
+                  # not declared at all. Auth is via the OIDC token from
+                  # id-token: write.
                   NPM_CONFIG_PROVENANCE: "true"
 
     deploy-spire:

@@ -100,12 +100,13 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/vex-protocol/crypto-js.git"
+        "url": "git+https://github.com/vex-protocol/protocol.git",
+        "directory": "packages/crypto"
     },
     "bugs": {
-        "url": "https://github.com/vex-protocol/crypto-js/issues"
+        "url": "https://github.com/vex-protocol/protocol/issues"
     },
-    "homepage": "https://github.com/vex-protocol/crypto-js#readme",
+    "homepage": "https://github.com/vex-protocol/protocol/tree/master/packages/crypto#readme",
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
