@@ -1,0 +1,33 @@
+packages:
+    - apps/*
+    - packages/*
+
+blockExoticSubdeps: true
+
+catalog:
+    "@types/node": ^25.6.0
+    "@vex-chat/crypto": workspace:*
+    "@vex-chat/libvex": workspace:*
+    "@vex-chat/types": workspace:*
+    kysely: ^0.28.16
+    msgpackr: ^1.11.9
+    typescript: 6.0.2
+    uuid: ^14.0.0
+    vitest: 4.1.4
+    zod: ^4.3.6
+
+catalogMode: strict
+
+minimumReleaseAge: 10080
+
+minimumReleaseAgeExclude:
+    - "@vex-chat/crypto"
+    - "@vex-chat/libvex"
+    - "@vex-chat/spire"
+    - "@vex-chat/types"
+
+onlyBuiltDependencies:
+    - argon2
+    - better-sqlite3
+    - esbuild
+    - msgpackr-extract

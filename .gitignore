@@ -1,5 +1,21 @@
+node_modules
+dist
+*.tsbuildinfo
+
+# Per-app env overrides — only .env.example is committed
+.env
+.env.local
+.env.*.local
+
+# Wrong lockfiles / package managers
+package-lock.json
+yarn.lock
+
+# Local registry config
+.npmrc
 
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
 .beads-credential-key
+.beads/backup/

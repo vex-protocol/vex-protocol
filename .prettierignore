@@ -1,0 +1,21 @@
+# Generated build artefacts
+dist/
+docs/
+
+# Package manager / lockfiles
+pnpm-lock.yaml
+package-lock.json
+
+# Plain-text tool version pins (asdf / setup-node / mise)
+.tool-versions
+
+# Local-only Claude Code state
+.claude/settings.local.json
+
+# Agent/tool state — managed BEADS INTEGRATION block confuses prettier
+.beads/
+AGENTS.md
+CLAUDE.md
+
+# License checker failure reports
+license-error-*.md
