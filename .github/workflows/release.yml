@@ -26,9 +26,6 @@ jobs:
             # Requires npm CLI >=11.5.1 and Node >=22.14.0 (both satisfied by
             # .tool-versions: node 24.14.0 ships npm 11.x).
             id-token: write
-        outputs:
-            published: ${{ steps.changesets.outputs.published }}
-            publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -77,30 +74,3 @@ jobs:
                   # not declared at all. Auth is via the OIDC token from
                   # id-token: write.
                   NPM_CONFIG_PROVENANCE: "true"
-
-    deploy-spire:
-        name: Trigger Spire deploy
-        needs: release
-        if: |
-            needs.release.outputs.published == 'true' &&
-            contains(fromJson(needs.release.outputs.publishedPackages).*.name, '@vex-chat/spire')
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        steps:
-            - name: Harden Runner
-              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-              with:
-                  egress-policy: audit
-
-            - name: POST deploy webhook
-              env:
-                  DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
-                  DEPLOY_HOOK_SECRET: ${{ secrets.DEPLOY_HOOK_SECRET }}
-              run: |
-                  set -euo pipefail
-                  curl -fsS -X POST \
-                      -H "Authorization: Bearer ${DEPLOY_HOOK_SECRET}" \
-                      -H "Content-Type: application/json" \
-                      -d '{"package":"@vex-chat/spire","commit":"${{ github.sha }}"}' \
-                      "${DEPLOY_HOOK_URL}"
