@@ -21,6 +21,7 @@
         "pnpm": ">=10.0.0"
     },
     "devDependencies": {
+        "@changesets/changelog-github": "0.5.1",
         "@changesets/cli": "2.30.0",
         "eslint": "10.2.0",
         "eslint-config-prettier": "10.1.8",

@@ -1,0 +1,92 @@
+name: Release
+
+on:
+    push:
+        branches: [master]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+    contents: read
+
+jobs:
+    release:
+        name: Release
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: write
+            # Required for `pnpm publish --provenance`. Gives the runner an
+            # OIDC token so npm can attest "this tarball was built by this
+            # workflow at this commit". Works alongside NPM_TOKEN.
+            id-token: write
+        outputs:
+            published: ${{ steps.changesets.outputs.published }}
+            publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  registry-url: https://registry.npmjs.org
+
+            - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+              with:
+                  run_install: false
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --ignore-scripts
+
+            - name: Build (topo-ordered)
+              run: pnpm -r --workspace-concurrency=1 build
+
+            - name: License check
+              run: pnpm license:check
+
+            - name: Create Release PR or Publish
+              id: changesets
+              uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
+              with:
+                  publish: pnpm publish -r --access public --provenance --no-git-checks
+                  title: "chore: version packages"
+                  commit: "chore: version packages"
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  NPM_CONFIG_PROVENANCE: "true"
+
+    deploy-spire:
+        name: Trigger Spire deploy
+        needs: release
+        if: |
+            needs.release.outputs.published == 'true' &&
+            contains(fromJson(needs.release.outputs.publishedPackages).*.name, '@vex-chat/spire')
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - name: POST deploy webhook
+              env:
+                  DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+                  DEPLOY_HOOK_SECRET: ${{ secrets.DEPLOY_HOOK_SECRET }}
+              run: |
+                  set -euo pipefail
+                  curl -fsS -X POST \
+                      -H "Authorization: Bearer ${DEPLOY_HOOK_SECRET}" \
+                      -H "Content-Type: application/json" \
+                      -d '{"package":"@vex-chat/spire","commit":"${{ github.sha }}"}' \
+                      "${DEPLOY_HOOK_URL}"

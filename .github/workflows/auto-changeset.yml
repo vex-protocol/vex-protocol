@@ -1,0 +1,159 @@
+name: Auto Changeset
+
+on:
+    pull_request:
+        types: [opened, synchronize]
+
+concurrency:
+    group: auto-changeset-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    generate-changeset:
+        if: |
+            github.event.pull_request.user.type != 'Bot' &&
+            !startsWith(github.event.pull_request.title, 'chore: version packages') &&
+            github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: write
+            id-token: write
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.head_ref }}
+
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+
+            - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+              with:
+                  run_install: false
+
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+
+            - name: Configure git
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            - name: Check existing changeset
+              id: check
+              run: |
+                  if pnpm exec changeset status --since=origin/master 2>/dev/null; then
+                    echo "exists=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "exists=false" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Generate changeset with Claude
+              if: steps.check.outputs.exists == 'false'
+              uses: anthropics/claude-code-action@21302532c2959a4f8f5e445004f617ef8b7b1dd7 # v1
+              with:
+                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  prompt: |
+                      You are a release engineer for the `vex-protocol` monorepo.
+                      It contains four published packages:
+
+                      - `packages/types`  → @vex-chat/types  (wire protocol types)
+                      - `packages/crypto` → @vex-chat/crypto (crypto primitives)
+                      - `packages/libvex` → @vex-chat/libvex (SDK)
+                      - `apps/spire`      → @vex-chat/spire  (server)
+
+                      Your job: generate ONE `.changeset/<slug>.md` file for this PR
+                      that accurately describes the user-visible impact across the
+                      packages it touches — OR an empty changeset if there is no
+                      user-visible impact.
+
+                      ## Step 1 — read the rules first
+
+                      1. Read root `AGENTS.md` and the `AGENTS.md` of each package
+                         the PR touches. They are the source of truth for what
+                         counts as user-visible.
+                      2. Read the top of each touched package's `CHANGELOG.md` to
+                         match voice and length.
+                      3. Read the PR's commit messages:
+                           git log --format='%s%n%b%n---' origin/master..HEAD
+                      4. Identify which packages changed:
+                           git diff --name-only origin/master...HEAD
+
+                      ## Step 2 — decide user-visibility per package
+
+                      A change is **user-visible for a package** only if it affects
+                      what consumers of `<package>@latest` see when they install it.
+                      Each package's `package.json` `files: [...]` enumerates what
+                      ships in the tarball. Files outside that list are NOT
+                      user-visible:
+
+                      - `.github/`, `.changeset/`, `AGENTS.md`, `CHANGELOG.md` itself
+                      - Root configs (`tsconfig*.json`, `eslint.config.js`,
+                        `.prettierrc`, `mise.toml`, `.tool-versions`,
+                        `vitest.config.ts`)
+                      - `src/__tests__/**` and `**/*.test.ts`
+                      - `scripts/`, `services/`, `public/` (not in `files:` arrays)
+                      - `package-lock.json` (gone — pnpm-lock.yaml is the lockfile,
+                        and it's at root, not user-visible)
+                      - `package.json` matters only if `dependencies` /
+                        `peerDependencies` / `files` / `engines` / `exports` /
+                        runtime-behavior fields changed (NOT version bumps —
+                        changesets manages those)
+
+                      ## Step 3 — decide bump levels
+
+                      One package per touched-and-user-visible package:
+
+                      - **Patch** — bugfix, internal rewrite with same observable
+                        behavior, dep bump that affects runtime in a backward-compat
+                        way.
+                      - **Minor** — new public APIs, new endpoints, new optional
+                        config. Pre-1.0 packages: this is also where breaking
+                        changes go (per 0.x convention) — call them out in the body.
+                      - **Major** — only for packages that have reached 1.0.0+.
+
+                      **Bias hard toward empty.** When in doubt between patch and
+                      empty, prefer empty.
+
+                      ## Step 4 — write the changeset
+
+                      Write one file: `.changeset/<short-slug>.md` where `<slug>`
+                      is 2–4 lowercase dash-separated words from the PR title or
+                      primary commit.
+
+                      For a non-empty changeset:
+
+                          ---
+                          "@vex-chat/<pkg-a>": <bump>
+                          "@vex-chat/<pkg-b>": <bump>
+                          ---
+
+                          <1–3 sentences describing user-visible impact, matching
+                          CHANGELOG.md voice. Lead with what consumers should DO
+                          differently, not what changed internally.>
+
+                      For an empty changeset (no user-visible impact in any
+                      package), the format is exactly:
+
+                          ---
+                          ---
+
+                      ## Step 5 — commit and push
+
+                          git add .changeset/
+                          git commit -m "chore: add changeset"
+                          git push origin HEAD:${{ github.head_ref }}
+
+                      ## Budget
+
+                      Keep this under 12 tool calls. Don't explore the repo beyond
+                      what's needed. Do NOT run `pnpm install` or `pnpm build` —
+                      they're slow and unnecessary for the visibility decision.
+                  claude_args: |
+                      --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(ls:*),Bash(cat:*),Read,Write,Grep,Glob"
