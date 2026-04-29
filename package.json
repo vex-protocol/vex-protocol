@@ -13,7 +13,8 @@
         "lint:pkg": "pnpm dlx npm-package-json-lint .",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "license:check": "pnpm -r --if-present license:check"
+        "license:check": "pnpm -r --if-present license:check",
+        "version": "pnpm exec changeset version && pnpm -r --if-present run post-version"
     },
     "packageManager": "pnpm@10.30.3",
     "engines": {

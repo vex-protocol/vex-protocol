@@ -42,7 +42,7 @@
         "openapi": "npx tsx scripts/generate-openapi.ts",
         "asyncapi": "npx tsx scripts/generate-asyncapi.ts",
         "specs": "pnpm run openapi && pnpm run asyncapi",
-        "ci:version": "changeset version && pnpm run specs",
+        "post-version": "pnpm run specs",
         "lint:specs": "spectral lint openapi.json asyncapi.json",
         "specs:check": "pnpm run specs && git diff --exit-code openapi.json asyncapi.json",
         "test:types": "tsc --noEmit"

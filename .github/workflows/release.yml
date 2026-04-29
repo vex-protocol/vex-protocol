@@ -59,11 +59,19 @@ jobs:
               id: changesets
               uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
               with:
-                  # changeset publish shells out to `npm publish` per package,
-                  # which has confirmed OIDC trusted-publishing support. We
-                  # avoid `pnpm publish -r` because pnpm's native OIDC support
-                  # is unreliable (pnpm/pnpm#9812 still open as of 2026, and
-                  # pnpm v11 dropped npm-CLI delegation for publish).
+                  # version: runs in the "open chore: version packages PR" path.
+                  # Root `version` script: `changeset version` THEN
+                  # `pnpm -r --if-present run post-version` so any package
+                  # that needs post-bump work runs it (e.g. @vex-chat/types
+                  # regenerates openapi.json/asyncapi.json so info.version
+                  # tracks package.json version).
+                  version: pnpm run version
+                  # publish: changeset publish shells to `npm publish` per
+                  # package, which has confirmed OIDC trusted-publishing
+                  # support. We avoid `pnpm publish -r` because pnpm's native
+                  # OIDC support is unreliable (pnpm/pnpm#9812 still open as
+                  # of 2026, and pnpm v11 dropped npm-CLI delegation for
+                  # publish).
                   publish: pnpm exec changeset publish
                   title: "chore: version packages"
                   commit: "chore: version packages"
