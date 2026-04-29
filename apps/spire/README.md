@@ -1,12 +1,12 @@
 # @vex-chat/spire
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/spire?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/spire)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/spire-js/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/spire-js/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/spire-js?style=flat-square&label=released)](https://github.com/vex-protocol/spire-js/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/spire?style=flat-square&color=blue)](./LICENSE)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/spire-js/master/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/apps/spire/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/spire?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/spire-js?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/spire-js)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/spire)](https://socket.dev/npm/package/@vex-chat/spire)
 
 Reference server implementation for the [Vex](https://vex.wtf) protocol.
@@ -17,17 +17,19 @@ Reference server implementation for the [Vex](https://vex.wtf) protocol.
 
 ## Install
 
-Or clone the repo:
+Spire is part of the [vex-protocol/protocol](https://github.com/vex-protocol/protocol) monorepo. Clone the monorepo and install workspace deps:
 
 ```sh
-git clone git@github.com:vex-protocol/spire-js
-cd spire-js
-npm ci
+git clone git@github.com:vex-protocol/protocol
+cd protocol
+pnpm install
 ```
+
+Spire's source lives at `apps/spire/`. Most commands below run from the monorepo root.
 
 ## Running the server (Docker)
 
-From a clone, with Docker and Docker Compose installed:
+The Dockerfile uses the monorepo as build context so the build can resolve `workspace:^` deps for `@vex-chat/{types,crypto,libvex}`. From `apps/spire/`, with Docker and Docker Compose installed:
 
 ```sh
 cp .env.example .env
@@ -35,16 +37,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-**Crypto mode (tweetnacl vs FIPS):** `SPIRE_FIPS` in `.env` selects the server profile. It must match how you generated `SPK` — **`npm run gen-spk`** (Ed25519) for tweetnacl, or **`npm run gen-spk-fips`** (P-256) with **`SPIRE_FIPS=true`**. You can override for one run without editing `.env`: `SPIRE_FIPS=true docker compose up` (or `=false`).
+**Crypto mode (tweetnacl vs FIPS):** `SPIRE_FIPS` in `.env` selects the server profile. It must match how you generated `SPK` — **`pnpm --filter @vex-chat/spire gen-spk`** (Ed25519) for tweetnacl, or **`pnpm --filter @vex-chat/spire gen-spk-fips`** (P-256) with **`SPIRE_FIPS=true`**. You can override for one run without editing `.env`: `SPIRE_FIPS=true docker compose up` (or `=false`).
 
-Compose builds the image from this repo’s `Dockerfile`, starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777** (see `ports` in `docker-compose.yml`). Spire itself listens on **16777** inside the `internal` network (same for tweetnacl and FIPS — `GET /status` reports the crypto profile). Nginx and the health check use `deploy/resolve-spire-listen-port.sh` to match. Use **http://127.0.0.1:16777** for HTTP and WebSocket.
+Compose builds the image (context: monorepo root, dockerfile: `apps/spire/Dockerfile`), starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777** (see `ports` in `docker-compose.yml`). Spire itself listens on **16777** inside the `internal` network (same for tweetnacl and FIPS — `GET /status` reports the crypto profile). Nginx and the health check use `deploy/resolve-spire-listen-port.sh` to match. Use **http://127.0.0.1:16777** for HTTP and WebSocket.
 
 ## Running without Docker
 
 For local development or if you installed from npm, Spire runs with `node --experimental-strip-types` (no separate compile step):
 
 ```sh
-npm start
+pnpm --filter @vex-chat/spire start
+# or, from apps/spire/: pnpm start
 # or: node --experimental-strip-types src/run.ts
 ```
 
@@ -60,17 +63,17 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 
 ### Required
 
-| Variable     | Description                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SPK`        | Server private key, hex-encoded. **tweetnacl:** `npm run gen-spk` (Ed25519). **FIPS:** `npm run gen-spk-fips` and set `SPIRE_FIPS=true` (P-256 PKCS#8). Each command prints `SPK` and `JWT_SECRET` lines. |
-| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `npm run gen-spk` emits a dedicated value; do not reuse `SPK` here.                                |
-| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                           |
+| Variable     | Description                                                                                                                                                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SPK`        | Server private key, hex-encoded. **tweetnacl:** `pnpm --filter @vex-chat/spire gen-spk` (Ed25519). **FIPS:** `pnpm --filter @vex-chat/spire gen-spk-fips` and set `SPIRE_FIPS=true` (P-256 PKCS#8). Each command prints `SPK` and `JWT_SECRET` lines. |
+| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                      |
+| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                                                                       |
 
 ### Optional
 
 | Variable       | Default    | Description                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SPIRE_FIPS`   | _falsy_    | If `true` or `1`, run the **FIPS** profile (P-256, Web Crypto). `SPK` must come from `npm run gen-spk-fips`, not `gen-spk`. Any other value uses **tweetnacl** (Ed25519) and `gen-spk`. In Docker Compose, the service passes `SPIRE_FIPS=${SPIRE_FIPS:-false}` so the shell or `.env` can set the mode.                                                                                               |
+| `SPIRE_FIPS`   | _falsy_    | If `true` or `1`, run the **FIPS** profile (P-256, Web Crypto). `SPK` must come from `pnpm --filter @vex-chat/spire gen-spk-fips`, not `gen-spk`. Any other value uses **tweetnacl** (Ed25519) and `gen-spk`. In Docker Compose, the service passes `SPIRE_FIPS=${SPIRE_FIPS:-false}` so the shell or `.env` can set the mode.                                                                         |
 | `API_PORT`     | (see text) | If unset, Spire listens on **16777** (all crypto profiles; use `GET /status` to see which). In Docker, nginx and the image healthcheck use `deploy/resolve-spire-listen-port.sh` to follow the same rule. Set explicitly to override.                                                                                                                                                                  |
 | `NODE_ENV`     | _(unset)_  | Set to `production` to disable interactive `/docs` / `/async-docs`. If unset or any other value, doc viewers are mounted. `helmet()` runs in all modes.                                                                                                                                                                                                                                                |
 | `CORS_ORIGINS` | _(empty)_  | Comma-separated allowed `Origin` values. If set, only those origins may use credentialed browser requests. If unset, Spire **reflects the request `Origin`** so self-hosted Spire and arbitrary app origins (Tauri, localhost, etc.) work without configuration — appropriate for bearer-token APIs; set an allowlist if you need to restrict which sites may call your instance from users' browsers. |
@@ -80,7 +83,7 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 ### Sample `.env`
 
 ```sh
-# Run `npm run gen-spk` and paste the two lines it prints (SPK + JWT_SECRET).
+# Run `pnpm --filter @vex-chat/spire gen-spk` and paste the two lines it prints (SPK + JWT_SECRET).
 SPK=a1b2c3...
 JWT_SECRET=d4e5f6...
 DB_TYPE=sqlite
@@ -91,19 +94,21 @@ NODE_ENV=production
 
 ## Development
 
+From the monorepo root (or use `pnpm <script>` from `apps/spire/`):
+
 ```sh
-npm run build         # tsc (sanity check — runtime uses --experimental-strip-types)
-npm run lint          # eslint strictTypeChecked
-npm run lint:fix      # eslint --fix
-npm run format        # prettier --write
-npm run format:check
-npm test              # vitest run
-npx type-coverage     # type-coverage (≥95%)
+pnpm install                                  # install workspace deps
+pnpm --filter @vex-chat/spire build           # tsc (sanity check — runtime uses --experimental-strip-types)
+pnpm --filter @vex-chat/spire lint            # eslint strictTypeChecked
+pnpm --filter @vex-chat/spire lint:fix        # eslint --fix
+pnpm --filter @vex-chat/spire test            # vitest run
 ```
+
+Workspace-wide commands from root: `pnpm test`, `pnpm lint`, `pnpm format:check`, `pnpm -r build`.
 
 See the root [AGENTS.md](../../AGENTS.md) and this package's [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish via OIDC) and the rules for writing changesets.
 
-Contributions from outside contributors should follow [CONTRIBUTING.md](./CONTRIBUTING.md) (including the [CLA](./CLA.md)).
+Outside contributors should follow the root [CONTRIBUTING.md](../../CONTRIBUTING.md) (including the [CLA](../../CLA.md)).
 
 ## License
 

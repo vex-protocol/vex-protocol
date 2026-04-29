@@ -1,16 +1,16 @@
 # @vex-chat/libvex
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/libvex?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/libvex)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/libvex-js/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/libvex-js/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/libvex-js?style=flat-square&label=released)](https://github.com/vex-protocol/libvex-js/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/libvex?style=flat-square&color=blue)](./LICENSE)
 [![Types](https://img.shields.io/npm/types/@vex-chat/libvex?style=flat-square&logo=typescript&color=3178c6)](./dist/index.d.ts)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/libvex-js/master/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/packages/libvex/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/libvex?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/libvex-js?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/libvex-js)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/libvex)](https://socket.dev/npm/package/@vex-chat/libvex)
 
-Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/spire) server.
+Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/protocol/tree/master/apps/spire) server.
 
 [Documentation](https://lib.vex.wtf/)
 
@@ -82,31 +82,33 @@ Presets return a `PlatformPreset` with a `createStorage()` factory and a `device
 
 ## Development
 
+From the monorepo root:
+
 ```sh
-npm run build           # rimraf dist && tsc -p tsconfig.build.json
-npm run lint            # eslint
-npm run lint:fix        # eslint --fix
-npm run format          # prettier --write
-npm run format:check
-npm test                # vitest unit suite (browser-safe, no spire required)
-npm run test:e2e        # vitest node + browser e2e — needs a running spire
-npm run lint:pkg        # publint --strict
-npm run lint:types      # @arethetypeswrong/cli
-npm run lint:api        # api-extractor — regenerates api/libvex.api.md
-npx type-coverage       # type-coverage (≥95%)
-npm run license:check   # license allowlist gate
-npm run docs            # typedoc — writes ./docs
+pnpm install                                    # install workspace deps
+pnpm --filter @vex-chat/libvex build            # rimraf dist && tsc -p tsconfig.build.json
+pnpm --filter @vex-chat/libvex lint             # eslint
+pnpm --filter @vex-chat/libvex lint:fix         # eslint --fix
+pnpm --filter @vex-chat/libvex test             # vitest unit suite (browser-safe, no spire required)
+pnpm --filter @vex-chat/libvex test:e2e         # vitest node + browser e2e — needs a running spire
+pnpm --filter @vex-chat/libvex lint:pkg         # publint --strict
+pnpm --filter @vex-chat/libvex lint:types       # @arethetypeswrong/cli
+pnpm --filter @vex-chat/libvex lint:api         # api-extractor — regenerates api/libvex.api.md
+pnpm --filter @vex-chat/libvex license:check    # license allowlist gate
+pnpm --filter @vex-chat/libvex docs             # typedoc — writes ./docs
 ```
 
-The unit suite (`npm test`) runs browser-safe and offline. The e2e suite (`npm run test:e2e`) needs a running Spire when you point tests at it.
+Or run from this directory directly with `pnpm <script>`.
 
-**Docker matrix (dev):** from the `libvex-js` directory, `npm run test:spire-docker-matrix` builds a sibling `spire-js` Docker Compose stack in **tweetnacl** mode, runs `test:local-spire`, then repeats in **FIPS** mode, then restores or removes a generated `spire-js/.env`. Set `SPIRE_ROOT` if the Spire tree is not `../spire-js` relative to this package.
+The unit suite runs browser-safe and offline. The e2e suite needs a running Spire when you point tests at it.
 
-**Applications** using `@vex-chat/libvex` configure the client with **`ClientOptions`** only (e.g. `host`, `unsafeHttp`, `devApiKey`, `cryptoProfile`)—the library does not read `.env` or any environment variables. **This repository’s e2e tests** (not the published API) can use `API_URL` / `DEV_API_KEY` in your shell or CI when you run `vitest`. When `API_URL` points at Spire, the suite **reads** `GET …/status` to pick the same `cryptoProfile` (tweetnacl vs fips) as the server, so you usually do not set `LIBVEX_E2E_CRYPTO` by hand. There is no separate `.env` contract for the npm package.
+**Local Spire (dev):** `pnpm --filter @vex-chat/libvex test:local-spire` runs the e2e suite against an instance of `apps/spire/` brought up locally; see `scripts/test-local-spire.mjs`. Bring spire up via `pnpm --filter @vex-chat/spire start` (or `docker compose up` in `apps/spire/`) before running.
 
-See [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish) and the rules for writing changesets.
+**Applications** using `@vex-chat/libvex` configure the client with **`ClientOptions`** only (e.g. `host`, `unsafeHttp`, `devApiKey`, `cryptoProfile`)—the library does not read `.env` or any environment variables. **This repository's e2e tests** (not the published API) can use `API_URL` / `DEV_API_KEY` in your shell or CI when you run `vitest`. When `API_URL` points at Spire, the suite **reads** `GET …/status` to pick the same `cryptoProfile` (tweetnacl vs fips) as the server, so you usually do not set `LIBVEX_E2E_CRYPTO` by hand. There is no separate `.env` contract for the npm package.
 
-Outside contributors should follow [CONTRIBUTING.md](./CONTRIBUTING.md) (including the [CLA](./CLA.md)).
+See the root [AGENTS.md](../../AGENTS.md) and this package's [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish via OIDC) and the rules for writing changesets.
+
+Outside contributors should follow the root [CONTRIBUTING.md](../../CONTRIBUTING.md) (including the [CLA](../../CLA.md)).
 
 ## License
 

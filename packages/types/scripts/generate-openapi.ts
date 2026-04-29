@@ -555,7 +555,7 @@ const doc = generator.generateDocument({
         license: { name: "AGPL-3.0-or-later" },
         contact: {
             name: "Vex Protocol",
-            url: "https://github.com/vex-protocol/types-js",
+            url: "https://github.com/vex-protocol/protocol/tree/master/packages/types",
         },
     },
     servers: [

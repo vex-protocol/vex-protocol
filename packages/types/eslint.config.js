@@ -38,4 +38,29 @@ export default tseslint.config(
             "@typescript-eslint/no-unused-vars": "off",
         },
     },
+    {
+        // scripts/ lives outside tsconfig's rootDir (src/), so type-aware
+        // rules can't parse them. These are dev tooling that doesn't ship
+        // in the tarball — disable type-checking AND the strictest style
+        // rules so generators / one-off scripts don't have to pretend to
+        // be production code.
+        files: ["scripts/**/*.ts"],
+        ...tseslint.configs.disableTypeChecked,
+        rules: {
+            ...tseslint.configs.disableTypeChecked.rules,
+            "@typescript-eslint/explicit-function-return-type": "off",
+            "@typescript-eslint/explicit-module-boundary-types": "off",
+            "@typescript-eslint/no-unused-vars": "off",
+            // Disable perfectionist sorting opinions on tooling code.
+            "perfectionist/sort-objects": "off",
+            "perfectionist/sort-interfaces": "off",
+            "perfectionist/sort-type-definitions": "off",
+            "perfectionist/sort-modules": "off",
+            "perfectionist/sort-classes": "off",
+            "perfectionist/sort-named-imports": "off",
+            "perfectionist/sort-named-exports": "off",
+            "perfectionist/sort-imports": "off",
+            "headers/header-format": "off",
+        },
+    },
 );

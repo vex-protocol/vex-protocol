@@ -11,8 +11,8 @@ services:
         volumes:
             - spire-data:/data
         env_file: .env
-        # tweetnacl (default): SPIRE_FIPS unset / false, SPK from `npm run gen-spk`
-        # fips: SPIRE_FIPS=true, SPK from `npm run gen-spk-fips` (P-256 PKCS#8)
+        # tweetnacl (default): SPIRE_FIPS unset / false, SPK from `pnpm --filter @vex-chat/spire gen-spk`
+        # fips: SPIRE_FIPS=true, SPK from `pnpm --filter @vex-chat/spire gen-spk-fips` (P-256 PKCS#8)
         # Shell overrides .env: SPIRE_FIPS=true docker compose up
         environment:
             - SPIRE_FIPS=${SPIRE_FIPS:-false}
