@@ -68,6 +68,14 @@ jobs:
             - name: npm-package-json-lint
               run: pnpm lint:pkg
 
+            - name: Socket security scan
+              if: |
+                  github.event_name == 'pull_request' &&
+                  github.event.pull_request.head.repo.full_name == github.repository
+              run: pnpm dlx @socketsecurity/cli@1.1.84 ci
+              env:
+                  SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
+
             - name: Check for changeset (non-bot, non-release PRs only)
               if: |
                   github.event_name == 'pull_request' &&
