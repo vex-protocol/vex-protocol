@@ -1,0 +1,17 @@
+{
+    "name": "@vex-chat/eslint-config",
+    "version": "0.0.1",
+    "private": true,
+    "type": "module",
+    "exports": {
+        "./base": "./base.js"
+    },
+    "dependencies": {
+        "eslint-config-prettier": "^10.1.0",
+        "eslint-plugin-perfectionist": "^5.8.0",
+        "typescript-eslint": "^8.32.1"
+    },
+    "peerDependencies": {
+        "eslint": ">=10.0.0"
+    }
+}
