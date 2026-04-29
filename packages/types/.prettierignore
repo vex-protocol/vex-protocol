@@ -1,0 +1,20 @@
+# Generated specs — formatted by scripts/generate-{openapi,asyncapi}.ts
+# with JSON.stringify(…, null, 4). Keeping prettier out avoids drift
+# between the generator output and the committed spec (prettier would
+# collapse short arrays onto a single line, which JSON.stringify can't).
+openapi.json
+asyncapi.json
+
+# Generated build artefacts
+dist/
+api/
+temp/
+
+# Package manager / lockfiles
+package-lock.json
+
+# Local-only Claude Code state
+.claude/settings.local.json
+
+# Plain-text tool version pins (asdf / setup-node / mise)
+.tool-versions
