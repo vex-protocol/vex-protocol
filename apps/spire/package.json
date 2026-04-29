@@ -51,7 +51,6 @@
         "docs": "node ./scripts/generate-docs.js",
         "service:status-monitor": "node ./services/status-monitor/index.js",
         "service:status-monitor:clear-history": "node ./services/status-monitor/clear-history.js",
-        "service:deploy-hook": "node ./services/deploy-hook/index.js",
         "monitor": "node ./services/status-monitor/index.js"
     },
     "devDependencies": {

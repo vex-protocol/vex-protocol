@@ -18,7 +18,7 @@ Spire-specific rules. Shared rules (release flow, NEVER list, dependabot policy,
 - `src/` — shipped for operator auditability and the `--experimental-strip-types` runtime
 - `package.json`, `README.md`, `LICENSE`, `LICENSE-COMMERCIAL`, `LICENSING.md`, `CLA.md`, `CHANGELOG.md`
 
-Anything else — `.github/`, tsconfig, eslint config, `src/__tests__/**`, `vitest.config.ts`, `AGENTS.md`, `scripts/` (dev utilities), `services/` (sibling service helpers including the inactive `deploy-hook/` receiver), `public/` (static docs assets served by the running server) — is NOT in the tarball's footprint and is NOT user-visible. PRs touching only those files should ship an **empty changeset** (`---\n---\n`).
+Anything else — `.github/`, tsconfig, eslint config, `src/__tests__/**`, `vitest.config.ts`, `AGENTS.md`, `scripts/` (dev utilities), `services/` (sibling service helpers — currently `status-monitor/`), `public/` (static docs assets served by the running server) — is NOT in the tarball's footprint and is NOT user-visible. PRs touching only those files should ship an **empty changeset** (`---\n---\n`).
 
 ## Stress jobs in CI
 
@@ -29,8 +29,14 @@ Anything else — `.github/`, tsconfig, eslint config, `src/__tests__/**`, `vite
 
 Both build the same image and use a fresh GHA layer cache. The repo previously ran a multi-OS matrix for native edge cases — if you reintroduce that, don't drop coverage without reason.
 
-## Deploy-hook
+## Deploy
 
-There used to be an automated webhook from `release.yml` that POSTed to `DEPLOY_HOOK_URL` after a successful spire publish. **That's been removed.** The receiver code under `services/deploy-hook/` is still present (and the `service:deploy-hook` script in `package.json`) — it's inactive in CI but still usable for manual / external triggering if you want it. There are no `DEPLOY_HOOK_*` secrets in the workflow anymore.
+Spire is published to npm via the unified `release.yml` like the other packages, but **no automated production deploy fires from CI**. Operators pull the new version manually and restart (`pm2 restart spire` or equivalent).
 
-If you bring deploy automation back, gate it on `changesets/action`'s `publishedPackages` output containing `@vex-chat/spire` (the pattern from before; see git log around protocol-1m8 for how it was wired).
+If you want to bring deploy automation back, the `changesets/action` step in `release.yml` exposes a `publishedPackages` output you can gate on:
+
+```yaml
+if: contains(fromJson(steps.changesets.outputs.publishedPackages).*.name, '@vex-chat/spire')
+```
+
+The `services/deploy-hook/` receiver that used to listen for that webhook was removed — see commit history if you need a starting point.
