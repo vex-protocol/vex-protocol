@@ -19,10 +19,8 @@ package-lock.json
 # Local-only Claude Code state
 .claude/settings.local.json
 
-# Agent/tool state — managed BEADS INTEGRATION block confuses prettier
+# Agent/tool state
 .beads/
-AGENTS.md
-CLAUDE.md
 
 # License checker failure reports
 license-error-*.md
