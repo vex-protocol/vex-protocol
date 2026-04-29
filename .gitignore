@@ -18,6 +18,11 @@ yarn.lock
 # Local registry config
 .npmrc
 
+# Per-user agent / editor state
+.claude/
+.cursor/
+.vscode/
+
 # Beads (not used in this repo; if installed locally, ignore everything)
 .beads/
 .dolt/
