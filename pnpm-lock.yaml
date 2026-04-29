@@ -66,10 +66,10 @@ importers:
         specifier: 0.9.7
         version: 0.9.7
       '@vex-chat/crypto':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/crypto
       '@vex-chat/types':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/types
       argon2:
         specifier: 0.44.0
@@ -157,7 +157,7 @@ importers:
         specifier: 8.18.1
         version: 8.18.1
       '@vex-chat/libvex':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/libvex
       '@vitest/eslint-plugin':
         specifier: 1.6.15
@@ -251,7 +251,7 @@ importers:
         specifier: 'catalog:'
         version: 25.6.0
       '@vex-chat/types':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../types
       '@vitest/eslint-plugin':
         specifier: 1.6.15
@@ -314,10 +314,10 @@ importers:
   packages/libvex:
     dependencies:
       '@vex-chat/crypto':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../crypto
       '@vex-chat/types':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../types
       axios:
         specifier: 1.15.0

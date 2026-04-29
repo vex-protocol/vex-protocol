@@ -32,7 +32,6 @@
         "copyright:apply": "node scripts/copyright-headers.mjs",
         "lint": "eslint src/ scripts/stress/",
         "lint:fix": "eslint src/ scripts/stress/ --fix",
-        "prepare": "husky || true",
         "test": "vitest run",
         "stress:web": "node --experimental-strip-types scripts/stress/spire-stress.ts",
         "stress:cli": "node --experimental-strip-types scripts/stress/stress-cli-sweep.ts",
@@ -58,7 +57,7 @@
         "@types/multer": "2.1.0",
         "@types/node": "catalog:",
         "@types/ws": "8.18.1",
-        "@vex-chat/libvex": "workspace:*",
+        "@vex-chat/libvex": "workspace:^",
         "@vitest/eslint-plugin": "1.6.15",
         "axios": "1.15.0",
         "eslint": "10.2.0",
@@ -79,15 +78,6 @@
         "atLeast": 95,
         "ignoreCatch": true
     },
-    "lint-staged": {
-        "*.ts": [
-            "eslint --fix",
-            "prettier --write"
-        ],
-        "*.{yml,yaml}": [
-            "prettier --write"
-        ]
-    },
     "overrides": {
         "@types/ws": "8.18.1",
         "@types/readable-stream": "4.0.11",
@@ -98,8 +88,8 @@
     "dependencies": {
         "@asyncapi/web-component": "2.6.5",
         "@scalar/express-api-reference": "0.9.7",
-        "@vex-chat/crypto": "workspace:*",
-        "@vex-chat/types": "workspace:*",
+        "@vex-chat/crypto": "workspace:^",
+        "@vex-chat/types": "workspace:^",
         "argon2": "0.44.0",
         "better-sqlite3": "11.10.0",
         "cors": "2.8.6",

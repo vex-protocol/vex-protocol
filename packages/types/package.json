@@ -81,15 +81,6 @@
         "strict": true,
         "ignoreCatch": true
     },
-    "lint-staged": {
-        "src/**/*.ts": [
-            "eslint --fix",
-            "prettier --write"
-        ],
-        "*.{json,md,yaml,yml}": [
-            "prettier --write"
-        ]
-    },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/vex-protocol/types-js.git"

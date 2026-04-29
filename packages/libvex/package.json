@@ -107,8 +107,8 @@
         "vitest": "catalog:"
     },
     "dependencies": {
-        "@vex-chat/crypto": "workspace:*",
-        "@vex-chat/types": "workspace:*",
+        "@vex-chat/crypto": "workspace:^",
+        "@vex-chat/types": "workspace:^",
         "axios": "1.15.0",
         "eventemitter3": "5.0.4",
         "kysely": "catalog:",
@@ -141,15 +141,6 @@
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
-    },
-    "lint-staged": {
-        "src/**/*.ts": [
-            "eslint --fix",
-            "prettier --write"
-        ],
-        "*.{json,md}": [
-            "prettier --write"
-        ]
     },
     "typeCoverage": {
         "atLeast": 95,

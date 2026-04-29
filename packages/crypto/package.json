@@ -46,7 +46,7 @@
         "prepublish": "pnpm run build"
     },
     "peerDependencies": {
-        "@vex-chat/types": "workspace:*",
+        "@vex-chat/types": "workspace:^",
         "typescript": ">=5.9.0 || >=6.0.0"
     },
     "peerDependenciesMeta": {
@@ -71,7 +71,7 @@
         "@microsoft/api-extractor": "7.58.2",
         "@types/ed2curve": "0.2.4",
         "@types/node": "catalog:",
-        "@vex-chat/types": "workspace:*",
+        "@vex-chat/types": "workspace:^",
         "@vitest/eslint-plugin": "1.6.15",
         "eslint": "10.2.0",
         "eslint-config-prettier": "10.1.8",
@@ -97,15 +97,6 @@
         "atLeast": 100,
         "strict": true,
         "ignoreCatch": true
-    },
-    "lint-staged": {
-        "src/**/*.ts": [
-            "eslint --fix",
-            "prettier --write"
-        ],
-        "*.{json,md,yaml,yml}": [
-            "prettier --write"
-        ]
     },
     "repository": {
         "type": "git",
