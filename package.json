@@ -10,6 +10,8 @@
         "typecheck": "pnpm -r --if-present typecheck",
         "lint": "pnpm -r --if-present lint",
         "lint:fix": "pnpm -r --if-present lint:fix",
+        "copyright:check": "pnpm -r --if-present copyright:check",
+        "copyright:apply": "pnpm -r --if-present copyright:apply",
         "lint:pkg": "pnpm -r --if-present lint:pkg",
         "lint:types": "pnpm -r --if-present lint:types",
         "lint:api": "pnpm -r --if-present lint:api",

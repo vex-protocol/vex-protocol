@@ -17,7 +17,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const REPO_NAME = path.basename(ROOT);
+const PKG_NAME = JSON.parse(
+    await fs.readFile(path.join(ROOT, "package.json"), "utf8"),
+).name;
 
 const HEADER = `/**
  * Copyright (c) 2020-2026 Vex Heavy Industries LLC
@@ -28,8 +30,8 @@ const HEADER = `/**
 `;
 
 /** @returns {{ dir: string, exts: Set<string> }[]} */
-function patternsForRepo(repo) {
-    if (repo === "spire-js") {
+function patternsForPackage(name) {
+    if (name === "@vex-chat/spire") {
         return [
             { dir: path.join(ROOT, "src"), exts: new Set([".ts"]) },
             {
@@ -39,11 +41,11 @@ function patternsForRepo(repo) {
             { dir: path.join(ROOT, "services"), exts: new Set([".js"]) },
         ];
     }
-    if (repo === "libvex-js" || repo === "crypto-js") {
+    if (name === "@vex-chat/libvex" || name === "@vex-chat/crypto") {
         return [{ dir: path.join(ROOT, "src"), exts: new Set([".ts"]) }];
     }
     console.error(
-        `copyright-headers: unknown repo folder "${repo}" (expected spire-js, libvex-js, or crypto-js).`,
+        `copyright-headers: unknown package "${name}" (expected @vex-chat/spire, @vex-chat/libvex, or @vex-chat/crypto).`,
     );
     process.exit(1);
 }
@@ -114,7 +116,7 @@ async function prependHeader(filePath) {
 
 async function main() {
     const check = process.argv.includes("--check");
-    const specs = patternsForRepo(REPO_NAME);
+    const specs = patternsForPackage(PKG_NAME);
     const files = [];
     for (const { dir, exts } of specs) {
         await collectFiles(dir, exts, files);
