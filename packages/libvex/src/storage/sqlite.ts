@@ -46,12 +46,12 @@ import { EventEmitter } from "eventemitter3";
 
 export class SqliteStorage extends EventEmitter implements Storage {
     public ready = false;
-    private closing = false;
-    /** Shared across concurrent `init()` callers; `close()` awaits it before `destroy()`. */
-    private initInFlight: Promise<void> | null = null;
-    private readonly db: Kysely<ClientDatabase>;
     /** 32-byte AES-256 (or nacl) key for local at-rest `secretbox` (see `XUtils.deriveLocalAtRestAesKey`). */
     private readonly atRestAesKey: Uint8Array;
+    private closing = false;
+    private readonly db: Kysely<ClientDatabase>;
+    /** Shared across concurrent `init()` callers; `close()` awaits it before `destroy()`. */
+    private initInFlight: null | Promise<void> = null;
 
     constructor(db: Kysely<ClientDatabase>, atRestAesKey: Uint8Array) {
         super();
@@ -63,14 +63,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
-
-    /**
-     * Read `closing` where TypeScript would incorrectly assume it cannot
-     * become true after an earlier guard (e.g. across `await`).
-     */
-    private isClosingNow(): boolean {
-        return this.closing;
-    }
 
     async close(): Promise<void> {
         this.closing = true;
@@ -104,8 +96,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
             .execute();
     }
 
-    // ── Messages ─────────────────────────────────────────────────────────────
-
     async deleteMessage(mailID: string): Promise<void> {
         if (this.closing) {
             return;
@@ -115,6 +105,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             .where("mailID", "=", mailID)
             .execute();
     }
+
+    // ── Messages ─────────────────────────────────────────────────────────────
 
     async deleteOneTimeKey(index: number): Promise<void> {
         if (this.closing) {
@@ -196,8 +188,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return this.decryptMessagesAsync(messages);
     }
 
-    // ── Sessions ─────────────────────────────────────────────────────────────
-
     async getOneTimeKey(index: number): Promise<null | PreKeysCrypto> {
         await this.untilReady();
         if (this.closing) {
@@ -224,6 +214,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             signature: XUtils.decodeHex(otkInfo.signature),
         };
     }
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
 
     async getPreKeys(): Promise<null | PreKeysCrypto> {
         await this.untilReady();
@@ -394,8 +386,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
             .execute();
     }
 
-    // ── PreKeys / OneTimeKeys ────────────────────────────────────────────────
-
     async markSessionVerified(sessionID: string): Promise<void> {
         if (this.closing) {
             return;
@@ -406,6 +396,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             .where("sessionID", "=", sessionID)
             .execute();
     }
+
+    // ── PreKeys / OneTimeKeys ────────────────────────────────────────────────
 
     async purgeHistory(): Promise<void> {
         await this.db.deleteFrom("messages").execute();
@@ -442,8 +434,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
             }
         }
     }
-
-    // ── Devices ──────────────────────────────────────────────────────────────
 
     async saveMessage(message: Message): Promise<void> {
         if (this.isClosingNow()) {
@@ -497,6 +487,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
     }
 
+    // ── Devices ──────────────────────────────────────────────────────────────
+
     async savePreKeys(
         preKeys: UnsavedPreKey[],
         oneTime: boolean,
@@ -535,8 +527,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return saved;
     }
 
-    // ── Purge ────────────────────────────────────────────────────────────────
-
     async saveSession(session: SessionSQL): Promise<void> {
         if (this.closing) {
             return;
@@ -565,7 +555,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
+    // ── Purge ────────────────────────────────────────────────────────────────
 
     private async decryptMessagesAsync(
         messages: MessageRow[],
@@ -611,6 +601,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return out;
     }
 
+    // ── Private helpers ──────────────────────────────────────────────────────
+
     private deviceRowToDevice(row: DeviceRow): Device {
         return {
             deleted: row.deleted !== 0,
@@ -620,6 +612,14 @@ export class SqliteStorage extends EventEmitter implements Storage {
             owner: row.owner,
             signKey: row.signKey,
         };
+    }
+
+    /**
+     * Read `closing` where TypeScript would incorrectly assume it cannot
+     * become true after an earlier guard (e.g. across `await`).
+     */
+    private isClosingNow(): boolean {
+        return this.closing;
     }
 
     private isDuplicateError(err: unknown): boolean {

@@ -1,12 +1,10 @@
-import perfectionist from "eslint-plugin-perfectionist";
-import tseslint from "typescript-eslint";
-import eslintConfigPrettier from "eslint-config-prettier/flat";
 import vitest from "@vitest/eslint-plugin";
+import { base } from "@vex-chat/eslint-config/base";
+import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-    ...tseslint.configs.strictTypeChecked,
+    ...base,
     {
-        plugins: { perfectionist },
         languageOptions: {
             parserOptions: {
                 projectService: true,
@@ -15,14 +13,6 @@ export default tseslint.config(
         },
         rules: {
             "@typescript-eslint/no-unsafe-type-assertion": "error",
-            "@typescript-eslint/consistent-type-imports": [
-                "error",
-                {
-                    prefer: "type-imports",
-                    fixStyle: "separate-type-imports",
-                },
-            ],
-            "@typescript-eslint/consistent-type-exports": "error",
             "@typescript-eslint/no-import-type-side-effects": "error",
             "@typescript-eslint/prefer-readonly": "error",
             "@typescript-eslint/require-array-sort-compare": "error",
@@ -36,33 +26,6 @@ export default tseslint.config(
                 },
             ],
             "no-console": "error",
-
-            "perfectionist/sort-imports": [
-                "error",
-                {
-                    type: "natural",
-                    order: "asc",
-                    ignoreCase: true,
-                    internalPattern: ["^@vex-chat/"],
-                    newlinesBetween: 1,
-                    customGroups: [
-                        {
-                            groupName: "type-imports",
-                            modifiers: ["type"],
-                        },
-                    ],
-                    groups: [
-                        "type-imports",
-                        "builtin",
-                        "internal",
-                        "external",
-                        "parent",
-                        "sibling",
-                        "index",
-                        "unknown",
-                    ],
-                },
-            ],
         },
     },
     {
@@ -77,6 +40,8 @@ export default tseslint.config(
             "@typescript-eslint/no-unsafe-call": "off",
             "@typescript-eslint/no-unsafe-argument": "off",
             "@typescript-eslint/no-non-null-assertion": "off",
+            // Tests don't need the Vex copyright header.
+            "headers/header-format": "off",
         },
     },
     {
@@ -88,5 +53,4 @@ export default tseslint.config(
             "@typescript-eslint/no-unsafe-argument": "off",
         },
     },
-    eslintConfigPrettier,
 );

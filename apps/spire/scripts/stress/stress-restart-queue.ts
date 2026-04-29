@@ -18,20 +18,20 @@ export interface StressWebRestartRequest {
 }
 
 export class StressRestartQueue {
-    private pending: StressWebRestartRequest | null = null;
-
-    public schedule(req: StressWebRestartRequest): void {
-        this.pending = req;
-    }
+    private pending: null | StressWebRestartRequest = null;
 
     /** Take the pending restart, if any (single consumer). */
-    public consume(): StressWebRestartRequest | null {
+    public consume(): null | StressWebRestartRequest {
         const p = this.pending;
         this.pending = null;
         return p;
     }
 
-    public peek(): StressWebRestartRequest | null {
+    public peek(): null | StressWebRestartRequest {
         return this.pending;
+    }
+
+    public schedule(req: StressWebRestartRequest): void {
+        this.pending = req;
     }
 }

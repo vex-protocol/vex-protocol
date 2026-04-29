@@ -10,76 +10,17 @@
 import { isAxiosError } from "axios";
 
 export interface HttpExpectStats {
-    /** Successful round-trips we explicitly counted (2xx implied). */
-    ok: number;
     /** Non-2xx or Axios errors with a response status. */
     byStatus: Record<number, number>;
+    /** Successful round-trips we explicitly counted (2xx implied). */
+    ok: number;
     /** Rejects without an HTTP status (WS, login message-only failures, etc.). */
     other: number;
 }
 
-export function createHttpExpectStats(): HttpExpectStats {
-    return { byStatus: {}, ok: 0, other: 0 };
-}
-
-export function recordHttpFailure(stats: HttpExpectStats, err: unknown): void {
-    if (isAxiosError(err) && typeof err.response?.status === "number") {
-        const c = err.response.status;
-        stats.byStatus[c] = (stats.byStatus[c] ?? 0) + 1;
-    } else {
-        stats.other += 1;
-    }
-}
-
-export function httpFailureTotal(stats: HttpExpectStats): number {
-    let n = stats.other;
-    for (const v of Object.values(stats.byStatus)) {
-        n += v;
-    }
-    return n;
-}
-
 export type TrackSoftResult =
-    | { readonly ok: true }
-    | { readonly ok: false; readonly cause?: unknown };
-
-/** Like {@link settleOne} but never throws; returns success vs optional rejection cause. */
-export async function trackSoftResult(
-    stats: HttpExpectStats,
-    p: Promise<unknown>,
-): Promise<TrackSoftResult> {
-    try {
-        await p;
-        stats.ok += 1;
-        return { ok: true };
-    } catch (err: unknown) {
-        recordHttpFailure(stats, err);
-        return { ok: false, cause: err };
-    }
-}
-
-/** Like {@link settleOne} but never throws; returns whether the promise settled successfully. */
-export async function trackSoft(
-    stats: HttpExpectStats,
-    p: Promise<unknown>,
-): Promise<boolean> {
-    const r = await trackSoftResult(stats, p);
-    return r.ok;
-}
-
-export async function settleOne<T>(
-    stats: HttpExpectStats,
-    p: Promise<T>,
-): Promise<T> {
-    try {
-        const v = await p;
-        stats.ok += 1;
-        return v;
-    } catch (err: unknown) {
-        recordHttpFailure(stats, err);
-        throw err;
-    }
-}
+    | { readonly cause?: unknown; readonly ok: false }
+    | { readonly ok: true };
 
 /**
  * Wait for every promise (no fail-fast). Outcomes are already counted by
@@ -91,6 +32,10 @@ export async function allTracked(
 ): Promise<void> {
     void _stats;
     await Promise.allSettled(promises);
+}
+
+export function createHttpExpectStats(): HttpExpectStats {
+    return { byStatus: {}, ok: 0, other: 0 };
 }
 
 export function formatHttpExpectLine(
@@ -116,4 +61,59 @@ export function formatHttpExpectLine(
         s = `${s.slice(0, Math.max(0, width - 1))}…`;
     }
     return s;
+}
+
+export function httpFailureTotal(stats: HttpExpectStats): number {
+    let n = stats.other;
+    for (const v of Object.values(stats.byStatus)) {
+        n += v;
+    }
+    return n;
+}
+
+export function recordHttpFailure(stats: HttpExpectStats, err: unknown): void {
+    if (isAxiosError(err) && typeof err.response?.status === "number") {
+        const c = err.response.status;
+        stats.byStatus[c] = (stats.byStatus[c] ?? 0) + 1;
+    } else {
+        stats.other += 1;
+    }
+}
+
+export async function settleOne<T>(
+    stats: HttpExpectStats,
+    p: Promise<T>,
+): Promise<T> {
+    try {
+        const v = await p;
+        stats.ok += 1;
+        return v;
+    } catch (err: unknown) {
+        recordHttpFailure(stats, err);
+        throw err;
+    }
+}
+
+/** Like {@link settleOne} but never throws; returns whether the promise settled successfully. */
+export async function trackSoft(
+    stats: HttpExpectStats,
+    p: Promise<unknown>,
+): Promise<boolean> {
+    const r = await trackSoftResult(stats, p);
+    return r.ok;
+}
+
+/** Like {@link settleOne} but never throws; returns success vs optional rejection cause. */
+export async function trackSoftResult(
+    stats: HttpExpectStats,
+    p: Promise<unknown>,
+): Promise<TrackSoftResult> {
+    try {
+        await p;
+        stats.ok += 1;
+        return { ok: true };
+    } catch (err: unknown) {
+        recordHttpFailure(stats, err);
+        return { cause: err, ok: false };
+    }
 }

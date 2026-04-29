@@ -25,96 +25,14 @@ import { slimStressUiSnapshotForWire } from "./stress-sse-snapshot.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Throttle SSE JSON writes — each `JSON.stringify(fullSnapshot)` can be MB+ under load. */
-function createThrottledSseSender(res: {
-    write(chunk: string): boolean;
-}): (snap: ReturnType<StressTelemetry["getSnapshot"]>) => void {
-    let lastSent = 0;
-    let queued: ReturnType<StressTelemetry["getSnapshot"]> | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const minIntervalMs = 120;
-
-    const flush = (): void => {
-        timer = null;
-        if (queued === null) {
-            return;
-        }
-        const snap = queued;
-        queued = null;
-        lastSent = Date.now();
-        const wire = slimStressUiSnapshotForWire(snap);
-        res.write(`data: ${JSON.stringify(wire)}\n\n`);
-    };
-
-    return (snap: ReturnType<StressTelemetry["getSnapshot"]>) => {
-        const now = Date.now();
-        const elapsed = now - lastSent;
-        if (lastSent === 0 || elapsed >= minIntervalMs) {
-            if (timer !== null) {
-                clearTimeout(timer);
-                timer = null;
-            }
-            queued = null;
-            lastSent = now;
-            const wire = slimStressUiSnapshotForWire(snap);
-            res.write(`data: ${JSON.stringify(wire)}\n\n`);
-            return;
-        }
-        queued = snap;
-        if (timer === null) {
-            timer = setTimeout(flush, minIntervalMs - elapsed);
-        }
-    };
-}
-
 export interface StressWebServerHandle {
-    readonly port: number;
     close(): Promise<void>;
-}
-
-function listenOnce(
-    server: ReturnType<typeof createServer>,
-    port: number,
-): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const onErr = (err: NodeJS.ErrnoException): void => {
-            server.off("listening", onListening);
-            reject(err);
-        };
-        const onListening = (): void => {
-            server.off("error", onErr);
-            resolve();
-        };
-        server.once("error", onErr);
-        server.listen(port, "127.0.0.1", onListening);
-    });
+    readonly port: number;
 }
 
 export interface StressWebServerOptions {
     readonly restartQueue: StressRestartQueue;
     readonly scenario: string;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function clampInt(
-    n: unknown,
-    lo: number,
-    hi: number,
-    fallback: number,
-): number {
-    const v =
-        typeof n === "number"
-            ? n
-            : typeof n === "string"
-              ? Number(n)
-              : Number.NaN;
-    if (!Number.isFinite(v)) {
-        return fallback;
-    }
-    return Math.max(lo, Math.min(hi, Math.floor(v)));
 }
 
 export async function startStressWebServer(
@@ -247,4 +165,86 @@ export async function startStressWebServer(
             }),
         port: boundPort,
     };
+}
+
+function clampInt(
+    n: unknown,
+    lo: number,
+    hi: number,
+    fallback: number,
+): number {
+    const v =
+        typeof n === "number"
+            ? n
+            : typeof n === "string"
+              ? Number(n)
+              : Number.NaN;
+    if (!Number.isFinite(v)) {
+        return fallback;
+    }
+    return Math.max(lo, Math.min(hi, Math.floor(v)));
+}
+
+/** Throttle SSE JSON writes — each `JSON.stringify(fullSnapshot)` can be MB+ under load. */
+function createThrottledSseSender(res: {
+    write(chunk: string): boolean;
+}): (snap: ReturnType<StressTelemetry["getSnapshot"]>) => void {
+    let lastSent = 0;
+    let queued: null | ReturnType<StressTelemetry["getSnapshot"]> = null;
+    let timer: null | ReturnType<typeof setTimeout> = null;
+    const minIntervalMs = 120;
+
+    const flush = (): void => {
+        timer = null;
+        if (queued === null) {
+            return;
+        }
+        const snap = queued;
+        queued = null;
+        lastSent = Date.now();
+        const wire = slimStressUiSnapshotForWire(snap);
+        res.write(`data: ${JSON.stringify(wire)}\n\n`);
+    };
+
+    return (snap: ReturnType<StressTelemetry["getSnapshot"]>) => {
+        const now = Date.now();
+        const elapsed = now - lastSent;
+        if (lastSent === 0 || elapsed >= minIntervalMs) {
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            queued = null;
+            lastSent = now;
+            const wire = slimStressUiSnapshotForWire(snap);
+            res.write(`data: ${JSON.stringify(wire)}\n\n`);
+            return;
+        }
+        queued = snap;
+        if (timer === null) {
+            timer = setTimeout(flush, minIntervalMs - elapsed);
+        }
+    };
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function listenOnce(
+    server: ReturnType<typeof createServer>,
+    port: number,
+): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const onErr = (err: NodeJS.ErrnoException): void => {
+            server.off("listening", onListening);
+            reject(err);
+        };
+        const onListening = (): void => {
+            server.off("error", onErr);
+            resolve();
+        };
+        server.once("error", onErr);
+        server.listen(port, "127.0.0.1", onListening);
+    });
 }

@@ -10,26 +10,15 @@
  */
 import { createHash } from "node:crypto";
 
-/** First stack frame line after the message line, if present. */
-export function stackSignature(stack: string | undefined): string {
-    if (stack === undefined || stack.length === 0) {
-        return "";
-    }
-    const lines = stack.split("\n").map((l) => l.trim());
-    return lines.length > 1 ? (lines[1] ?? "") : "";
-}
-
-/** Collapse volatile tokens so repeated failures group together. */
-export function normalizeFailureMessage(message: string): string {
-    let s = message;
-    s = s.replace(
-        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-        "<uuid>",
-    );
-    s = s.replace(/\b[0-9a-f]{16,}\b/gi, "<hex>");
-    s = s.replace(/\b\d{10,}\b/g, "<n>");
-    s = s.replace(/\s+/g, " ").trim();
-    return s;
+export interface StressFailureGroupRow {
+    readonly correlationKey: string;
+    readonly count: number;
+    readonly incidentIds: readonly string[];
+    readonly libvexSurfaces: readonly string[];
+    readonly protocolPaths: readonly string[];
+    readonly sampleMessage: string;
+    /** Distinct libvex surface keys (`Client.*` catalog ids) where this correlation appeared. */
+    readonly surfaceKeys: readonly string[];
 }
 
 export function failureCorrelationKey(input: {
@@ -41,17 +30,6 @@ export function failureCorrelationKey(input: {
     const sig = stackSignature(input.stack);
     const raw = `${input.protocolPath}\n${norm}\n${sig}`;
     return createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 16);
-}
-
-export interface StressFailureGroupRow {
-    readonly correlationKey: string;
-    readonly count: number;
-    readonly incidentIds: readonly string[];
-    readonly libvexSurfaces: readonly string[];
-    readonly protocolPaths: readonly string[];
-    readonly sampleMessage: string;
-    /** Distinct libvex surface keys (`Client.*` catalog ids) where this correlation appeared. */
-    readonly surfaceKeys: readonly string[];
 }
 
 export function groupStressFailures(
@@ -116,4 +94,26 @@ export function groupStressFailures(
     }
     out.sort((a, b) => b.count - a.count);
     return out;
+}
+
+/** Collapse volatile tokens so repeated failures group together. */
+export function normalizeFailureMessage(message: string): string {
+    let s = message;
+    s = s.replace(
+        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+        "<uuid>",
+    );
+    s = s.replace(/\b[0-9a-f]{16,}\b/gi, "<hex>");
+    s = s.replace(/\b\d{10,}\b/g, "<n>");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+}
+
+/** First stack frame line after the message line, if present. */
+export function stackSignature(stack: string | undefined): string {
+    if (stack === undefined || stack.length === 0) {
+        return "";
+    }
+    const lines = stack.split("\n").map((l) => l.trim());
+    return lines.length > 1 ? (lines[1] ?? "") : "";
 }

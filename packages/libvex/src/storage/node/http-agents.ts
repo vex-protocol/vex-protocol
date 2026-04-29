@@ -18,19 +18,19 @@ export interface NodeHttpAgentPair {
     readonly https: nodeHttps.Agent;
 }
 
-export function createNodeHttpAgents(): NodeHttpAgentPair {
-    return {
-        http: new nodeHttp.Agent({ keepAlive: true }),
-        https: new nodeHttps.Agent({ keepAlive: true }),
-    };
-}
-
 export function attachNodeAgentsToAxios(
     instance: AxiosInstance,
     agents: NodeHttpAgentPair,
 ): void {
     instance.defaults.httpAgent = agents.http;
     instance.defaults.httpsAgent = agents.https;
+}
+
+export function createNodeHttpAgents(): NodeHttpAgentPair {
+    return {
+        http: new nodeHttp.Agent({ keepAlive: true }),
+        https: new nodeHttps.Agent({ keepAlive: true }),
+    };
 }
 
 export function destroyNodeHttpAgents(agents: NodeHttpAgentPair): void {

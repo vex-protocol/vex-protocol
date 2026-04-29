@@ -12,7 +12,7 @@
 export interface StressFacetCatalogEntry {
     readonly apiCall: string;
     readonly description: string;
-    readonly group: "bootstrap" | "world" | "load";
+    readonly group: "bootstrap" | "load" | "world";
     /** Canonical libvex Client surface, e.g. `Client.invites.retrieve`. */
     readonly protocolPath: string;
     readonly title: string;
@@ -21,121 +21,12 @@ export interface StressFacetCatalogEntry {
 export const STRESS_FACET_CATALOG: Readonly<
     Record<string, StressFacetCatalogEntry>
 > = {
-    "Client.create": {
-        apiCall: "Client.create()",
-        description: "Instantiate libvex with local DB folder and Spire host.",
-        group: "bootstrap",
-        protocolPath: "Client.create",
-        title: "Client bootstrap",
-    },
-    "Client.register": {
-        apiCall: "client.register()",
-        description: "Create a new Vex account for this stress client.",
-        group: "bootstrap",
-        protocolPath: "Client.register",
-        title: "Register account",
-    },
-    "Client.login": {
-        apiCall: "client.login()",
-        description:
-            "Authenticate session (new user or SPIRE_STRESS_USERNAME).",
-        group: "bootstrap",
-        protocolPath: "Client.login",
-        title: "Login session",
-    },
-    "Client.connect": {
-        apiCall: "client.connect()",
-        description: "Open WebSocket to Spire for realtime mail and sync.",
-        group: "bootstrap",
-        protocolPath: "Client.connect",
-        title: "WebSocket connect",
-    },
-    "Client.servers.create; Client.channels.retrieve": {
-        apiCall: "servers.create · channels.retrieve",
-        description: "Hub creates shared noise server and resolves #general.",
-        group: "world",
-        protocolPath: "Client.servers.create; Client.channels.retrieve",
-        title: "Shared server + channels",
-    },
-    "Client.invites.create; Client.invites.redeem | world guests": {
-        apiCall: "invites.create · invites.redeem",
-        description: "Guests join the same guild via single-use invite links.",
-        group: "world",
-        protocolPath: "Client.invites.create; Client.invites.redeem",
-        title: "Invite guests (world setup)",
-    },
-    "Client.connect | websocket mesh": {
-        apiCall: "client.connect() (all clients)",
-        description: "Every member opens WS after sharing the server.",
-        group: "world",
-        protocolPath: "Client.connect",
-        title: "WebSocket mesh (noise world)",
-    },
-    "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami":
-        {
-            apiCall: "servers.create · channels.retrieve · invites.* · whoami",
-            description:
-                "Shared chat guild: hub server, invites, member whoami.",
-            group: "world",
-            protocolPath:
-                "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
-            title: "Chat shared server",
-        },
-    "Client.messages.group": {
-        apiCall: "messages.group(channelID, body)",
-        description: "Encrypted group post into the shared channel.",
+    "Client.channels.create": {
+        apiCall: "channels.create(name, serverID)",
+        description: "Create extra channel on shared server (hub only).",
         group: "load",
-        protocolPath: "Client.messages.group",
-        title: "Group message send",
-    },
-    "Client.messages.retrieveGroup": {
-        apiCall: "messages.retrieveGroup(channelID)",
-        description: "Load channel history (recipient-style read path).",
-        group: "load",
-        protocolPath: "Client.messages.retrieveGroup",
-        title: "Group history",
-    },
-    "Client.messages.send": {
-        apiCall: "messages.send(userID, body)",
-        description: "Direct message to another stress user in the world.",
-        group: "load",
-        protocolPath: "Client.messages.send",
-        title: "DM send",
-    },
-    "Client.messages.retrieve": {
-        apiCall: "messages.retrieve(userID)",
-        description: "DM thread history with a peer.",
-        group: "load",
-        protocolPath: "Client.messages.retrieve",
-        title: "DM history",
-    },
-    "Client.whoami": {
-        apiCall: "whoami()",
-        description: "Resolve current user + device from Spire.",
-        group: "load",
-        protocolPath: "Client.whoami",
-        title: "Whoami",
-    },
-    "Client.servers.retrieve": {
-        apiCall: "servers.retrieve()",
-        description: "List all servers the account belongs to.",
-        group: "load",
-        protocolPath: "Client.servers.retrieve",
-        title: "List servers",
-    },
-    "Client.servers.retrieveByID": {
-        apiCall: "servers.retrieveByID(serverID)",
-        description: "Fetch one server record by id.",
-        group: "load",
-        protocolPath: "Client.servers.retrieveByID",
-        title: "Server by ID",
-    },
-    "Client.permissions.retrieve": {
-        apiCall: "permissions.retrieve()",
-        description: "Permissions for the current user across servers.",
-        group: "load",
-        protocolPath: "Client.permissions.retrieve",
-        title: "My permissions",
+        protocolPath: "Client.channels.create",
+        title: "Channel create",
     },
     "Client.channels.retrieve": {
         apiCall: "channels.retrieve(serverID)",
@@ -151,6 +42,13 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.channels.retrieveByID",
         title: "Channel by ID",
     },
+    "Client.channels.retrieve | chat": {
+        apiCall: "channels.retrieve(serverID)",
+        description: "Channel listing for the shared server.",
+        group: "load",
+        protocolPath: "Client.channels.retrieve",
+        title: "Chat · list channels",
+    },
     "Client.channels.userList": {
         apiCall: "channels.userList(channelID)",
         description: "Members visible in the channel.",
@@ -158,54 +56,54 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.channels.userList",
         title: "Channel members",
     },
-    "Client.users.familiars": {
-        apiCall: "users.familiars()",
-        description: "Known contacts / familiars list.",
+    "Client.channels.userList | chat": {
+        apiCall: "channels.userList(channelID)",
+        description: "Member list for #general.",
         group: "load",
-        protocolPath: "Client.users.familiars",
-        title: "Familiars",
+        protocolPath: "Client.channels.userList",
+        title: "Chat · channel members",
     },
-    "Client.users.retrieve": {
-        apiCall: "users.retrieve(username)",
-        description: "Lookup another user by username.",
-        group: "load",
-        protocolPath: "Client.users.retrieve",
-        title: "User lookup",
+    "Client.connect": {
+        apiCall: "client.connect()",
+        description: "Open WebSocket to Spire for realtime mail and sync.",
+        group: "bootstrap",
+        protocolPath: "Client.connect",
+        title: "WebSocket connect",
     },
-    "Client.sessions.retrieve": {
-        apiCall: "sessions.retrieve()",
-        description: "List active sessions / devices.",
-        group: "load",
-        protocolPath: "Client.sessions.retrieve",
-        title: "Sessions list",
+    "Client.connect | websocket mesh": {
+        apiCall: "client.connect() (all clients)",
+        description: "Every member opens WS after sharing the server.",
+        group: "world",
+        protocolPath: "Client.connect",
+        title: "WebSocket mesh (noise world)",
     },
-    "Client.me.user; Client.whoami": {
-        apiCall: "me.user() + whoami()",
-        description: "Profile helper combined with identity refresh.",
-        group: "load",
-        protocolPath: "Client.me.user; Client.whoami",
-        title: "Me · user",
+    "Client.create": {
+        apiCall: "Client.create()",
+        description: "Instantiate libvex with local DB folder and Spire host.",
+        group: "bootstrap",
+        protocolPath: "Client.create",
+        title: "Client bootstrap",
     },
-    "Client.me.device; Client.whoami": {
-        apiCall: "me.device() + whoami()",
-        description: "Device helper combined with identity refresh.",
+    "Client.emoji.create": {
+        apiCall: "emoji.create(png, name, serverID)",
+        description: "Upload a tiny PNG as custom emoji (hub only).",
         group: "load",
-        protocolPath: "Client.me.device; Client.whoami",
-        title: "Me · device",
+        protocolPath: "Client.emoji.create",
+        title: "Emoji upload",
     },
-    "Client.moderation.fetchPermissionList": {
-        apiCall: "moderation.fetchPermissionList(serverID)",
-        description: "Moderation permission matrix for the server.",
+    "Client.emoji.retrieveList": {
+        apiCall: "emoji.retrieveList(serverID)",
+        description: "Custom emoji catalog for the server.",
         group: "load",
-        protocolPath: "Client.moderation.fetchPermissionList",
-        title: "Mod permissions",
+        protocolPath: "Client.emoji.retrieveList",
+        title: "Emoji list",
     },
-    "Client.invites.retrieve": {
-        apiCall: "invites.retrieve(serverID)",
-        description: "Outstanding invites on the shared server.",
+    "Client.files.create": {
+        apiCall: "files.create(bytes)",
+        description: "Upload small random payload as a file asset.",
         group: "load",
-        protocolPath: "Client.invites.retrieve",
-        title: "List invites",
+        protocolPath: "Client.files.create",
+        title: "File upload",
     },
     "Client.invites.create": {
         apiCall: "invites.create(serverID, duration)",
@@ -221,33 +119,48 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.invites.create; Client.invites.redeem",
         title: "Invite round-trip",
     },
-    "Client.emoji.retrieveList": {
-        apiCall: "emoji.retrieveList(serverID)",
-        description: "Custom emoji catalog for the server.",
-        group: "load",
-        protocolPath: "Client.emoji.retrieveList",
-        title: "Emoji list",
+    "Client.invites.create; Client.invites.redeem | world guests": {
+        apiCall: "invites.create · invites.redeem",
+        description: "Guests join the same guild via single-use invite links.",
+        group: "world",
+        protocolPath: "Client.invites.create; Client.invites.redeem",
+        title: "Invite guests (world setup)",
     },
-    "Client.emoji.create": {
-        apiCall: "emoji.create(png, name, serverID)",
-        description: "Upload a tiny PNG as custom emoji (hub only).",
+    "Client.invites.retrieve": {
+        apiCall: "invites.retrieve(serverID)",
+        description: "Outstanding invites on the shared server.",
         group: "load",
-        protocolPath: "Client.emoji.create",
-        title: "Emoji upload",
+        protocolPath: "Client.invites.retrieve",
+        title: "List invites",
     },
-    "Client.files.create": {
-        apiCall: "files.create(bytes)",
-        description: "Upload small random payload as a file asset.",
-        group: "load",
-        protocolPath: "Client.files.create",
-        title: "File upload",
+    "Client.login": {
+        apiCall: "client.login()",
+        description:
+            "Authenticate session (new user or SPIRE_STRESS_USERNAME).",
+        group: "bootstrap",
+        protocolPath: "Client.login",
+        title: "Login session",
     },
-    "Client.channels.create": {
-        apiCall: "channels.create(name, serverID)",
-        description: "Create extra channel on shared server (hub only).",
+    "Client.me.device; Client.whoami": {
+        apiCall: "me.device() + whoami()",
+        description: "Device helper combined with identity refresh.",
         group: "load",
-        protocolPath: "Client.channels.create",
-        title: "Channel create",
+        protocolPath: "Client.me.device; Client.whoami",
+        title: "Me · device",
+    },
+    "Client.me.user; Client.whoami": {
+        apiCall: "me.user() + whoami()",
+        description: "Profile helper combined with identity refresh.",
+        group: "load",
+        protocolPath: "Client.me.user; Client.whoami",
+        title: "Me · user",
+    },
+    "Client.messages.group": {
+        apiCall: "messages.group(channelID, body)",
+        description: "Encrypted group post into the shared channel.",
+        group: "load",
+        protocolPath: "Client.messages.group",
+        title: "Group message send",
     },
     "Client.messages.group | chat": {
         apiCall: "messages.group(channelID, body)",
@@ -256,19 +169,26 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.messages.group",
         title: "Chat · group send",
     },
+    "Client.messages.retrieve": {
+        apiCall: "messages.retrieve(userID)",
+        description: "DM thread history with a peer.",
+        group: "load",
+        protocolPath: "Client.messages.retrieve",
+        title: "DM history",
+    },
+    "Client.messages.retrieveGroup": {
+        apiCall: "messages.retrieveGroup(channelID)",
+        description: "Load channel history (recipient-style read path).",
+        group: "load",
+        protocolPath: "Client.messages.retrieveGroup",
+        title: "Group history",
+    },
     "Client.messages.retrieveGroup | chat": {
         apiCall: "messages.retrieveGroup(channelID)",
         description: "Read shared channel history from each client.",
         group: "load",
         protocolPath: "Client.messages.retrieveGroup",
         title: "Chat · group history",
-    },
-    "Client.messages.send | chat": {
-        apiCall: "messages.send(userID, body)",
-        description: "DM between two stress users in the same world.",
-        group: "load",
-        protocolPath: "Client.messages.send",
-        title: "Chat · DM send",
     },
     "Client.messages.retrieve | chat": {
         apiCall: "messages.retrieve(userID)",
@@ -277,12 +197,33 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.messages.retrieve",
         title: "Chat · DM history",
     },
-    "Client.servers.retrieve | chat": {
-        apiCall: "servers.retrieve()",
-        description: "Guild list while under chat load.",
+    "Client.messages.send": {
+        apiCall: "messages.send(userID, body)",
+        description: "Direct message to another stress user in the world.",
         group: "load",
-        protocolPath: "Client.servers.retrieve",
-        title: "Chat · list servers",
+        protocolPath: "Client.messages.send",
+        title: "DM send",
+    },
+    "Client.messages.send | chat": {
+        apiCall: "messages.send(userID, body)",
+        description: "DM between two stress users in the same world.",
+        group: "load",
+        protocolPath: "Client.messages.send",
+        title: "Chat · DM send",
+    },
+    "Client.moderation.fetchPermissionList": {
+        apiCall: "moderation.fetchPermissionList(serverID)",
+        description: "Moderation permission matrix for the server.",
+        group: "load",
+        protocolPath: "Client.moderation.fetchPermissionList",
+        title: "Mod permissions",
+    },
+    "Client.permissions.retrieve": {
+        apiCall: "permissions.retrieve()",
+        description: "Permissions for the current user across servers.",
+        group: "load",
+        protocolPath: "Client.permissions.retrieve",
+        title: "My permissions",
     },
     "Client.permissions.retrieve | chat": {
         apiCall: "permissions.retrieve()",
@@ -291,19 +232,50 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.permissions.retrieve",
         title: "Chat · permissions",
     },
-    "Client.channels.retrieve | chat": {
-        apiCall: "channels.retrieve(serverID)",
-        description: "Channel listing for the shared server.",
+    "Client.permissions.retrieve | read": {
+        apiCall: "permissions.retrieve()",
+        description: "Mixed scenario: permission reads.",
         group: "load",
-        protocolPath: "Client.channels.retrieve",
-        title: "Chat · list channels",
+        protocolPath: "Client.permissions.retrieve",
+        title: "Read · permissions",
     },
-    "Client.channels.userList | chat": {
-        apiCall: "channels.userList(channelID)",
-        description: "Member list for #general.",
+    "Client.register": {
+        apiCall: "client.register()",
+        description: "Create a new Vex account for this stress client.",
+        group: "bootstrap",
+        protocolPath: "Client.register",
+        title: "Register account",
+    },
+    "Client.servers.create; Client.channels.retrieve": {
+        apiCall: "servers.create · channels.retrieve",
+        description: "Hub creates shared noise server and resolves #general.",
+        group: "world",
+        protocolPath: "Client.servers.create; Client.channels.retrieve",
+        title: "Shared server + channels",
+    },
+    "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami":
+        {
+            apiCall: "servers.create · channels.retrieve · invites.* · whoami",
+            description:
+                "Shared chat guild: hub server, invites, member whoami.",
+            group: "world",
+            protocolPath:
+                "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
+            title: "Chat shared server",
+        },
+    "Client.servers.retrieve": {
+        apiCall: "servers.retrieve()",
+        description: "List all servers the account belongs to.",
         group: "load",
-        protocolPath: "Client.channels.userList",
-        title: "Chat · channel members",
+        protocolPath: "Client.servers.retrieve",
+        title: "List servers",
+    },
+    "Client.servers.retrieveByID": {
+        apiCall: "servers.retrieveByID(serverID)",
+        description: "Fetch one server record by id.",
+        group: "load",
+        protocolPath: "Client.servers.retrieveByID",
+        title: "Server by ID",
     },
     "Client.servers.retrieveByID | chat": {
         apiCall: "servers.retrieveByID(serverID)",
@@ -311,6 +283,48 @@ export const STRESS_FACET_CATALOG: Readonly<
         group: "load",
         protocolPath: "Client.servers.retrieveByID",
         title: "Chat · server by ID",
+    },
+    "Client.servers.retrieve | chat": {
+        apiCall: "servers.retrieve()",
+        description: "Guild list while under chat load.",
+        group: "load",
+        protocolPath: "Client.servers.retrieve",
+        title: "Chat · list servers",
+    },
+    "Client.servers.retrieve | read": {
+        apiCall: "servers.retrieve()",
+        description: "Repeated server listing (servers scenario).",
+        group: "load",
+        protocolPath: "Client.servers.retrieve",
+        title: "Read · servers",
+    },
+    "Client.sessions.retrieve": {
+        apiCall: "sessions.retrieve()",
+        description: "List active sessions / devices.",
+        group: "load",
+        protocolPath: "Client.sessions.retrieve",
+        title: "Sessions list",
+    },
+    "Client.users.familiars": {
+        apiCall: "users.familiars()",
+        description: "Known contacts / familiars list.",
+        group: "load",
+        protocolPath: "Client.users.familiars",
+        title: "Familiars",
+    },
+    "Client.users.retrieve": {
+        apiCall: "users.retrieve(username)",
+        description: "Lookup another user by username.",
+        group: "load",
+        protocolPath: "Client.users.retrieve",
+        title: "User lookup",
+    },
+    "Client.whoami": {
+        apiCall: "whoami()",
+        description: "Resolve current user + device from Spire.",
+        group: "load",
+        protocolPath: "Client.whoami",
+        title: "Whoami",
     },
     "Client.whoami | chat": {
         apiCall: "whoami()",
@@ -325,20 +339,6 @@ export const STRESS_FACET_CATALOG: Readonly<
         group: "load",
         protocolPath: "Client.whoami",
         title: "Read · whoami",
-    },
-    "Client.servers.retrieve | read": {
-        apiCall: "servers.retrieve()",
-        description: "Repeated server listing (servers scenario).",
-        group: "load",
-        protocolPath: "Client.servers.retrieve",
-        title: "Read · servers",
-    },
-    "Client.permissions.retrieve | read": {
-        apiCall: "permissions.retrieve()",
-        description: "Mixed scenario: permission reads.",
-        group: "load",
-        protocolPath: "Client.permissions.retrieve",
-        title: "Read · permissions",
     },
 };
 
@@ -370,31 +370,31 @@ const NOISE_LOAD_IDS = [
 ] as const;
 
 const NOISE_OP_TO_SURFACE: Readonly<Record<string, string>> = {
-    grp_msg: "Client.messages.group",
-    grp_hist: "Client.messages.retrieveGroup",
-    dm_send: "Client.messages.send",
-    dm_hist: "Client.messages.retrieve",
-    whoami: "Client.whoami",
-    srv_list: "Client.servers.retrieve",
-    srv_id: "Client.servers.retrieveByID",
-    perm_me: "Client.permissions.retrieve",
-    ch_list: "Client.channels.retrieve",
     ch_id: "Client.channels.retrieveByID",
+    ch_list: "Client.channels.retrieve",
     ch_users: "Client.channels.userList",
+    channels_create: "Client.channels.create",
+    dm_hist: "Client.messages.retrieve",
+    dm_send: "Client.messages.send",
+    emoji_create: "Client.emoji.create",
+    emoji_retrieveList: "Client.emoji.retrieveList",
     fam: "Client.users.familiars",
-    usr_get: "Client.users.retrieve",
-    sess: "Client.sessions.retrieve",
-    me_u: "Client.me.user; Client.whoami",
-    me_dev: "Client.me.device; Client.whoami",
-    mod_list: "Client.moderation.fetchPermissionList",
-    inv_list: "Client.invites.retrieve",
-    inv_mk: "Client.invites.create",
+    files_create: "Client.files.create",
+    grp_hist: "Client.messages.retrieveGroup",
+    grp_msg: "Client.messages.group",
     inv_flow:
         "Client.invites.create; Client.invites.redeem | invite round-trip",
-    emoji_retrieveList: "Client.emoji.retrieveList",
-    emoji_create: "Client.emoji.create",
-    files_create: "Client.files.create",
-    channels_create: "Client.channels.create",
+    inv_list: "Client.invites.retrieve",
+    inv_mk: "Client.invites.create",
+    me_dev: "Client.me.device; Client.whoami",
+    me_u: "Client.me.user; Client.whoami",
+    mod_list: "Client.moderation.fetchPermissionList",
+    perm_me: "Client.permissions.retrieve",
+    sess: "Client.sessions.retrieve",
+    srv_id: "Client.servers.retrieveByID",
+    srv_list: "Client.servers.retrieve",
+    usr_get: "Client.users.retrieve",
+    whoami: "Client.whoami",
 };
 
 /** Map noise op id (e.g. `inv_mk`) to telemetry `Client.*` surface key. */
@@ -413,70 +413,54 @@ const BASE_SURFACE_KEYS = [
 export const LEGACY_FACET_ID_TO_SURFACE_KEY: Readonly<Record<string, string>> =
     {
         "bootstrap.libvex_create": "Client.create",
-        "bootstrap.register": "Client.register",
         "bootstrap.login": "Client.login",
+        "bootstrap.register": "Client.register",
         "bootstrap.ws_connect": "Client.connect",
-        "world.noise_server": "Client.servers.create; Client.channels.retrieve",
-        "world.noise_invite":
-            "Client.invites.create; Client.invites.redeem | world guests",
-        "world.noise_ws": "Client.connect | websocket mesh",
-        "world.chat_server":
-            "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
-        "noise.grp_msg": "Client.messages.group",
-        "noise.grp_hist": "Client.messages.retrieveGroup",
-        "noise.dm_send": "Client.messages.send",
-        "noise.dm_hist": "Client.messages.retrieve",
-        "noise.whoami": "Client.whoami",
-        "noise.srv_list": "Client.servers.retrieve",
-        "noise.srv_id": "Client.servers.retrieveByID",
-        "noise.perm_me": "Client.permissions.retrieve",
-        "noise.ch_list": "Client.channels.retrieve",
-        "noise.ch_id": "Client.channels.retrieveByID",
-        "noise.ch_users": "Client.channels.userList",
-        "noise.fam": "Client.users.familiars",
-        "noise.usr_get": "Client.users.retrieve",
-        "noise.sess": "Client.sessions.retrieve",
-        "noise.me_u": "Client.me.user; Client.whoami",
-        "noise.me_dev": "Client.me.device; Client.whoami",
-        "noise.mod_list": "Client.moderation.fetchPermissionList",
-        "noise.inv_list": "Client.invites.retrieve",
-        "noise.inv_mk": "Client.invites.create",
-        "noise.inv_flow":
-            "Client.invites.create; Client.invites.redeem | invite round-trip",
-        "noise.emoji_retrieveList": "Client.emoji.retrieveList",
-        "noise.emoji_create": "Client.emoji.create",
-        "noise.files_create": "Client.files.create",
-        "noise.channels_create": "Client.channels.create",
-        "chat.messages_group": "Client.messages.group | chat",
-        "chat.messages_retrieveGroup": "Client.messages.retrieveGroup | chat",
-        "chat.messages_send_dm": "Client.messages.send | chat",
-        "chat.messages_retrieve_dm": "Client.messages.retrieve | chat",
-        "chat.servers_retrieve": "Client.servers.retrieve | chat",
-        "chat.permissions_retrieve": "Client.permissions.retrieve | chat",
         "chat.channels_retrieve": "Client.channels.retrieve | chat",
         "chat.channels_userList": "Client.channels.userList | chat",
+        "chat.messages_group": "Client.messages.group | chat",
+        "chat.messages_retrieve_dm": "Client.messages.retrieve | chat",
+        "chat.messages_retrieveGroup": "Client.messages.retrieveGroup | chat",
+        "chat.messages_send_dm": "Client.messages.send | chat",
+        "chat.permissions_retrieve": "Client.permissions.retrieve | chat",
+        "chat.servers_retrieve": "Client.servers.retrieve | chat",
         "chat.servers_retrieveByID": "Client.servers.retrieveByID | chat",
         "chat.whoami_fallback": "Client.whoami | chat",
-        "read.whoami": "Client.whoami | read",
-        "read.servers_retrieve": "Client.servers.retrieve | read",
+        "noise.ch_id": "Client.channels.retrieveByID",
+        "noise.ch_list": "Client.channels.retrieve",
+        "noise.ch_users": "Client.channels.userList",
+        "noise.channels_create": "Client.channels.create",
+        "noise.dm_hist": "Client.messages.retrieve",
+        "noise.dm_send": "Client.messages.send",
+        "noise.emoji_create": "Client.emoji.create",
+        "noise.emoji_retrieveList": "Client.emoji.retrieveList",
+        "noise.fam": "Client.users.familiars",
+        "noise.files_create": "Client.files.create",
+        "noise.grp_hist": "Client.messages.retrieveGroup",
+        "noise.grp_msg": "Client.messages.group",
+        "noise.inv_flow":
+            "Client.invites.create; Client.invites.redeem | invite round-trip",
+        "noise.inv_list": "Client.invites.retrieve",
+        "noise.inv_mk": "Client.invites.create",
+        "noise.me_dev": "Client.me.device; Client.whoami",
+        "noise.me_u": "Client.me.user; Client.whoami",
+        "noise.mod_list": "Client.moderation.fetchPermissionList",
+        "noise.perm_me": "Client.permissions.retrieve",
+        "noise.sess": "Client.sessions.retrieve",
+        "noise.srv_id": "Client.servers.retrieveByID",
+        "noise.srv_list": "Client.servers.retrieve",
+        "noise.usr_get": "Client.users.retrieve",
+        "noise.whoami": "Client.whoami",
         "read.permissions_retrieve": "Client.permissions.retrieve | read",
+        "read.servers_retrieve": "Client.servers.retrieve | read",
+        "read.whoami": "Client.whoami | read",
+        "world.chat_server":
+            "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
+        "world.noise_invite":
+            "Client.invites.create; Client.invites.redeem | world guests",
+        "world.noise_server": "Client.servers.create; Client.channels.retrieve",
+        "world.noise_ws": "Client.connect | websocket mesh",
     };
-
-/** Resolve catalog key from either current `Client.*` keys or legacy internal ids. */
-export function normalizeStressSurfaceKey(id: string): string {
-    if (STRESS_FACET_CATALOG[id] !== undefined) {
-        return id;
-    }
-    const mapped = LEGACY_FACET_ID_TO_SURFACE_KEY[id];
-    return mapped ?? id;
-}
-
-/** Canonical `Client.*` path for telemetry / UI (from {@link STRESS_FACET_CATALOG}). */
-export function protocolPathForStressFacet(surfaceKey: string): string {
-    const key = normalizeStressSurfaceKey(surfaceKey);
-    const row = STRESS_FACET_CATALOG[key];
-    return row !== undefined ? row.protocolPath : `Unknown (${surfaceKey})`;
-}
 
 /** Surface keys registered for a scenario (stable UI ordering). */
 export function facetIdsForScenario(scenario: string): readonly string[] {
@@ -517,4 +501,20 @@ export function facetIdsForScenario(scenario: string): readonly string[] {
         "Client.servers.retrieve | read",
         "Client.permissions.retrieve | read",
     ];
+}
+
+/** Resolve catalog key from either current `Client.*` keys or legacy internal ids. */
+export function normalizeStressSurfaceKey(id: string): string {
+    if (STRESS_FACET_CATALOG[id] !== undefined) {
+        return id;
+    }
+    const mapped = LEGACY_FACET_ID_TO_SURFACE_KEY[id];
+    return mapped ?? id;
+}
+
+/** Canonical `Client.*` path for telemetry / UI (from {@link STRESS_FACET_CATALOG}). */
+export function protocolPathForStressFacet(surfaceKey: string): string {
+    const key = normalizeStressSurfaceKey(surfaceKey);
+    const row = STRESS_FACET_CATALOG[key];
+    return row !== undefined ? row.protocolPath : `Unknown (${surfaceKey})`;
 }

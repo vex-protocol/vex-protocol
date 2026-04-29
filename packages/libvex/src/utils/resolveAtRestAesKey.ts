@@ -7,9 +7,9 @@
 import {
     type CryptoProfile,
     xEcdhKeyPairFromEcdsaKeyPairAsync,
+    XKeyConvert,
     xSignKeyPairFromSecret,
     xSignKeyPairFromSecretAsync,
-    XKeyConvert,
     XUtils,
 } from "@vex-chat/crypto";
 

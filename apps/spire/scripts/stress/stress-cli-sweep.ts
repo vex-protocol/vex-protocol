@@ -65,7 +65,7 @@ function isStressUiFacetRow(x: unknown): x is StressUiFacetRow {
     );
 }
 
-function parseFacetDumpFile(raw: string): StressFacetDumpV1 | null {
+function parseFacetDumpFile(raw: string): null | StressFacetDumpV1 {
     let data: unknown;
     try {
         data = JSON.parse(raw) as unknown;
@@ -93,7 +93,7 @@ function parseFacetDumpFile(raw: string): StressFacetDumpV1 | null {
         }
         facets.push(row);
     }
-    return { v: 1, host: o["host"], scenario: o["scenario"], facets };
+    return { facets, host: o["host"], scenario: o["scenario"], v: 1 };
 }
 
 const SPIRE_JS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -104,23 +104,168 @@ const STRESS_ENTRY = join(
     "spire-stress.ts",
 );
 
-function parseCommaNums(label: string, raw: string): number[] {
-    const parts = raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    const out: number[] = [];
-    for (const p of parts) {
-        const n = Number(p);
-        if (!Number.isFinite(n) || n < 1) {
-            throw new Error(`${label}: expected positive integers, got "${p}"`);
+async function main(): Promise<void> {
+    config();
+    const argv = process.argv.slice(2);
+    let opts;
+    try {
+        opts = parseArgs(argv);
+    } catch (e) {
+        process.stderr.write(
+            (e instanceof Error ? e.message : String(e)) + "\n",
+        );
+        process.stderr.write("Try npm run stress:cli -- --help\n");
+        process.exit(1);
+    }
+    if (opts.help) {
+        printHelp();
+        process.exit(0);
+    }
+
+    const dev = process.env["DEV_API_KEY"]?.trim() ?? "";
+    if (dev.length === 0) {
+        process.stderr.write("DEV_API_KEY is required in the environment.\n");
+        process.exit(1);
+    }
+
+    const rows: string[] = [
+        "combo\tclients\tconc\texit",
+        "-----\t-------\t----\t----",
+    ];
+
+    let worst = 0;
+    let combo = 0;
+    const total = opts.clients.length * opts.conc.length;
+    const facetDumpPaths: string[] = [];
+
+    const cap =
+        opts.seconds !== undefined
+            ? `, cap ${String(opts.seconds)}s wall time`
+            : "";
+    process.stderr.write(
+        `\nstress:cli — ${String(total)} combo(s), ${String(opts.walls)} wall(s)/combo${cap}, scenario=${opts.scenario}, pacing=${opts.loadPacing}\n\n`,
+    );
+
+    matrix: for (const c of opts.clients) {
+        for (const n of opts.conc) {
+            combo += 1;
+            process.stderr.write(
+                `--- [${String(combo)}/${String(total)}] clients=${String(c)} concurrency=${String(n)} ---\n`,
+            );
+            const dumpPath = join(
+                tmpdir(),
+                `spire-stress-facet-${String(combo)}-${randomUUID()}.json`,
+            );
+            facetDumpPaths.push(dumpPath);
+            const env: Record<string, string> = {
+                DEV_API_KEY: dev,
+                NODE_ENV: process.env["NODE_ENV"] ?? "development",
+                SPIRE_STRESS_CLIENTS: String(c),
+                SPIRE_STRESS_CONCURRENCY: String(n),
+                /** Parent merges facet JSON after the matrix; suppress per-child stdout table. */
+                SPIRE_STRESS_FACET_DEFER: "1",
+                SPIRE_STRESS_FACET_DUMP_PATH: dumpPath,
+                SPIRE_STRESS_FACET_REPORT: "0",
+                /** Finite run: exit after N walls (not time-based forever loop). */
+                SPIRE_STRESS_FOREVER: "0",
+                SPIRE_STRESS_LOAD_MODE: opts.loadPacing,
+                SPIRE_STRESS_OPEN_BROWSER: "0",
+                SPIRE_STRESS_ROUNDS: String(opts.walls),
+                SPIRE_STRESS_SCENARIO: opts.scenario,
+                SPIRE_STRESS_WEB: "0",
+            };
+            if (opts.seconds !== undefined) {
+                env["SPIRE_STRESS_MAX_WALL_SEC"] = String(opts.seconds);
+            }
+            if (opts.host !== undefined) {
+                env["SPIRE_STRESS_HOST"] = opts.host;
+            }
+            if (opts.burstGapMs !== undefined) {
+                env["SPIRE_STRESS_BURST_GAP_MS"] = opts.burstGapMs;
+            }
+            if (opts.verbose) {
+                env["SPIRE_STRESS_VERBOSE"] = "1";
+            }
+
+            const code = await runChild(env);
+            worst = Math.max(worst, code);
+            rows.push(
+                `${String(combo)}\t${String(c)}\t${String(n)}\t${String(code)}`,
+            );
+            if (opts.stopOnFail && !opts.informational && code === 1) {
+                process.stderr.write(
+                    "\nstress:cli: stopping (--stop-on-fail) after exit code 1.\n",
+                );
+                break matrix;
+            }
+            if (code === 2) {
+                process.stderr.write(
+                    "\nstress:cli: target unreachable (exit 2) — aborting matrix.\n",
+                );
+                process.stderr.write(rows.join("\n") + "\n");
+                process.exit(2);
+            }
         }
-        out.push(Math.floor(n));
     }
-    if (out.length === 0) {
-        throw new Error(`${label}: need at least one value`);
+
+    let hostForReport =
+        opts.host?.trim() ??
+        process.env["SPIRE_STRESS_HOST"]?.trim() ??
+        "127.0.0.1:16777";
+    const rowLists: StressUiFacetRow[][] = [];
+    for (const p of facetDumpPaths) {
+        try {
+            const raw = readFileSync(p, "utf8");
+            const j = parseFacetDumpFile(raw);
+            if (j !== null) {
+                if (j.host.length > 0) {
+                    hostForReport = j.host;
+                }
+                rowLists.push(j.facets);
+            }
+        } catch {
+            /* combo may have crashed before write */
+        }
+        try {
+            unlinkSync(p);
+        } catch {
+            /* ignore */
+        }
     }
-    return out;
+    if (rowLists.length > 0) {
+        const merged = mergeStressFacetRowLists(rowLists);
+        const headline = `stress:cli matrix · ${String(rowLists.length)} run(s) · scenario=${opts.scenario} · target=${hostForReport} · clients ${opts.clients.join(",")} · conc ${opts.conc.join(",")}`;
+        process.stdout.write(
+            formatStressFacetCiReport(
+                {
+                    facets: merged,
+                    host: hostForReport,
+                    scenario: opts.scenario,
+                },
+                { headline },
+            ),
+        );
+    }
+
+    process.stderr.write("\n" + rows.join("\n") + "\n\n");
+    process.stderr.write(`stress:cli: worst exit code ${String(worst)}\n`);
+    if (opts.informational && worst === 1) {
+        process.stderr.write(
+            "stress:cli: informational mode enabled; forcing final exit code 0.\n",
+        );
+    }
+    if (worst === 2) {
+        process.exit(2);
+    }
+    if (opts.informational) {
+        // Informational mode only suppresses generic stress failures (exit 1).
+        // Keep non-1 codes hard-failing (e.g. explicit quality-gate breaches).
+        if (worst <= 1) {
+            process.exit(0);
+        }
+        process.exit(1);
+    }
+    process.exit(worst <= 1 ? worst : 1);
 }
 
 function parseArgs(argv: string[]): {
@@ -217,6 +362,25 @@ function parseArgs(argv: string[]): {
     };
 }
 
+function parseCommaNums(label: string, raw: string): number[] {
+    const parts = raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const out: number[] = [];
+    for (const p of parts) {
+        const n = Number(p);
+        if (!Number.isFinite(n) || n < 1) {
+            throw new Error(`${label}: expected positive integers, got "${p}"`);
+        }
+        out.push(Math.floor(n));
+    }
+    if (out.length === 0) {
+        throw new Error(`${label}: need at least one value`);
+    }
+    return out;
+}
+
 function printHelp(): void {
     process.stderr.write(
         [
@@ -267,170 +431,6 @@ async function runChild(env: Record<string, string>): Promise<number> {
             resolve(code ?? 1);
         });
     });
-}
-
-async function main(): Promise<void> {
-    config();
-    const argv = process.argv.slice(2);
-    let opts;
-    try {
-        opts = parseArgs(argv);
-    } catch (e) {
-        process.stderr.write(
-            (e instanceof Error ? e.message : String(e)) + "\n",
-        );
-        process.stderr.write("Try npm run stress:cli -- --help\n");
-        process.exit(1);
-    }
-    if (opts.help) {
-        printHelp();
-        process.exit(0);
-    }
-
-    const dev = process.env["DEV_API_KEY"]?.trim() ?? "";
-    if (dev.length === 0) {
-        process.stderr.write("DEV_API_KEY is required in the environment.\n");
-        process.exit(1);
-    }
-
-    const rows: string[] = [
-        "combo\tclients\tconc\texit",
-        "-----\t-------\t----\t----",
-    ];
-
-    let worst = 0;
-    let combo = 0;
-    const total = opts.clients.length * opts.conc.length;
-    const facetDumpPaths: string[] = [];
-
-    const cap =
-        opts.seconds !== undefined
-            ? `, cap ${String(opts.seconds)}s wall time`
-            : "";
-    process.stderr.write(
-        `\nstress:cli — ${String(total)} combo(s), ${String(opts.walls)} wall(s)/combo${cap}, scenario=${opts.scenario}, pacing=${opts.loadPacing}\n\n`,
-    );
-
-    matrix: for (const c of opts.clients) {
-        for (const n of opts.conc) {
-            combo += 1;
-            process.stderr.write(
-                `--- [${String(combo)}/${String(total)}] clients=${String(c)} concurrency=${String(n)} ---\n`,
-            );
-            const dumpPath = join(
-                tmpdir(),
-                `spire-stress-facet-${String(combo)}-${randomUUID()}.json`,
-            );
-            facetDumpPaths.push(dumpPath);
-            const env: Record<string, string> = {
-                DEV_API_KEY: dev,
-                SPIRE_STRESS_CLIENTS: String(c),
-                SPIRE_STRESS_CONCURRENCY: String(n),
-                SPIRE_STRESS_SCENARIO: opts.scenario,
-                /** Finite run: exit after N walls (not time-based forever loop). */
-                SPIRE_STRESS_FOREVER: "0",
-                SPIRE_STRESS_ROUNDS: String(opts.walls),
-                SPIRE_STRESS_WEB: "0",
-                SPIRE_STRESS_OPEN_BROWSER: "0",
-                SPIRE_STRESS_LOAD_MODE: opts.loadPacing,
-                /** Parent merges facet JSON after the matrix; suppress per-child stdout table. */
-                SPIRE_STRESS_FACET_DEFER: "1",
-                SPIRE_STRESS_FACET_REPORT: "0",
-                SPIRE_STRESS_FACET_DUMP_PATH: dumpPath,
-                NODE_ENV: process.env["NODE_ENV"] ?? "development",
-            };
-            if (opts.seconds !== undefined) {
-                env["SPIRE_STRESS_MAX_WALL_SEC"] = String(opts.seconds);
-            }
-            if (opts.host !== undefined) {
-                env["SPIRE_STRESS_HOST"] = opts.host;
-            }
-            if (opts.burstGapMs !== undefined) {
-                env["SPIRE_STRESS_BURST_GAP_MS"] = opts.burstGapMs;
-            }
-            if (opts.verbose) {
-                env["SPIRE_STRESS_VERBOSE"] = "1";
-            }
-
-            const code = await runChild(env);
-            worst = Math.max(worst, code);
-            rows.push(
-                `${String(combo)}\t${String(c)}\t${String(n)}\t${String(code)}`,
-            );
-            if (opts.stopOnFail && !opts.informational && code === 1) {
-                process.stderr.write(
-                    "\nstress:cli: stopping (--stop-on-fail) after exit code 1.\n",
-                );
-                break matrix;
-            }
-            if (code === 2) {
-                process.stderr.write(
-                    "\nstress:cli: target unreachable (exit 2) — aborting matrix.\n",
-                );
-                process.stderr.write(rows.join("\n") + "\n");
-                process.exit(2);
-            }
-        }
-    }
-
-    let hostForReport =
-        opts.host?.trim() ??
-        process.env["SPIRE_STRESS_HOST"]?.trim() ??
-        "127.0.0.1:16777";
-    const rowLists: StressUiFacetRow[][] = [];
-    for (const p of facetDumpPaths) {
-        try {
-            const raw = readFileSync(p, "utf8");
-            const j = parseFacetDumpFile(raw);
-            if (j !== null) {
-                if (j.host.length > 0) {
-                    hostForReport = j.host;
-                }
-                rowLists.push(j.facets);
-            }
-        } catch {
-            /* combo may have crashed before write */
-        }
-        try {
-            unlinkSync(p);
-        } catch {
-            /* ignore */
-        }
-    }
-    if (rowLists.length > 0) {
-        const merged = mergeStressFacetRowLists(rowLists);
-        const headline = `stress:cli matrix · ${String(rowLists.length)} run(s) · scenario=${opts.scenario} · target=${hostForReport} · clients ${opts.clients.join(",")} · conc ${opts.conc.join(",")}`;
-        process.stdout.write(
-            formatStressFacetCiReport(
-                {
-                    scenario: opts.scenario,
-                    host: hostForReport,
-                    facets: merged,
-                },
-                { headline },
-            ),
-        );
-    }
-
-    process.stderr.write("\n" + rows.join("\n") + "\n\n");
-    process.stderr.write(`stress:cli: worst exit code ${String(worst)}\n`);
-    if (opts.informational && worst === 1) {
-        process.stderr.write(
-            "stress:cli: informational mode enabled; forcing final exit code 0.\n",
-        );
-    }
-    if (worst === 2) {
-        process.exit(2);
-    }
-    if (opts.informational) {
-        // Informational mode only suppresses generic stress failures (exit 1).
-        // Keep non-1 codes hard-failing (e.g. explicit quality-gate breaches).
-        if (worst <= 1) {
-            process.exit(0);
-        }
-        process.exit(1);
-    }
-    process.exit(worst <= 1 ? worst : 1);
 }
 
 void main().catch((err: unknown) => {

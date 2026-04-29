@@ -33,6 +33,10 @@ export function isLikelySpireDown(err: unknown): boolean {
     return needles.some((n) => m.includes(n));
 }
 
+export function isWrappedSpireUnreachable(err: unknown): boolean {
+    return err instanceof Error && err.message.includes(UNREACHABLE_BANNER);
+}
+
 /** Wrap for a single clear stderr block (detected in main catch). */
 export function wrapSpireUnreachable(host: string, err: unknown): Error {
     const base = err instanceof Error ? err.message : String(err);
@@ -45,8 +49,4 @@ export function wrapSpireUnreachable(host: string, err: unknown): Error {
             `  Underlying error: ${base}`,
         ].join("\n"),
     );
-}
-
-export function isWrappedSpireUnreachable(err: unknown): boolean {
-    return err instanceof Error && err.message.includes(UNREACHABLE_BANNER);
 }

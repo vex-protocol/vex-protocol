@@ -34,8 +34,8 @@ import { EventEmitter } from "eventemitter3";
 
 export class MemoryStorage extends EventEmitter implements Storage {
     public ready = false;
-    private readonly devices: Device[] = [];
     private readonly atRestAesKey: Uint8Array;
+    private readonly devices: Device[] = [];
     private messages: Message[] = [];
     private nextOtkIndex = 1;
     private nextPreKeyIndex = 1;

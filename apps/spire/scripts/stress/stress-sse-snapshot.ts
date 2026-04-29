@@ -20,6 +20,24 @@ const MAX_WIRE_MESSAGE = 4000;
 const MAX_WIRE_AXIOS_SNIPPET = 1200;
 const MAX_WIRE_RECENT_REQUESTS = 40;
 
+/** Snapshot safe for frequent `JSON.stringify` (SSE + optional /api/snapshot). */
+export function slimStressUiSnapshotForWire(
+    snap: StressUiSnapshot,
+): StressUiSnapshot {
+    const failures = snap.failures.slice(0, MAX_WIRE_FAILURES).map(slimFailure);
+    const recent =
+        snap.recentRequests !== undefined
+            ? snap.recentRequests
+                  .slice(0, MAX_WIRE_RECENT_REQUESTS)
+                  .map(slimRecent)
+            : undefined;
+    return {
+        ...snap,
+        failures,
+        recentRequests: recent,
+    };
+}
+
 function clipStrNum(s: string, maxLen: number): string {
     if (s.length <= maxLen) {
         return s;
@@ -71,22 +89,4 @@ function slimRecent(r: StressRequestLogEntry): StressRequestLogEntry {
     } catch {
         return { ...r, inputs: { _truncated: "[unserializable]" } };
     }
-}
-
-/** Snapshot safe for frequent `JSON.stringify` (SSE + optional /api/snapshot). */
-export function slimStressUiSnapshotForWire(
-    snap: StressUiSnapshot,
-): StressUiSnapshot {
-    const failures = snap.failures.slice(0, MAX_WIRE_FAILURES).map(slimFailure);
-    const recent =
-        snap.recentRequests !== undefined
-            ? snap.recentRequests
-                  .slice(0, MAX_WIRE_RECENT_REQUESTS)
-                  .map(slimRecent)
-            : undefined;
-    return {
-        ...snap,
-        failures,
-        recentRequests: recent,
-    };
 }

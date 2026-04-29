@@ -12,78 +12,21 @@ import type { StressClientViz } from "./stress-client-viz.ts";
 import type { StressTraceDb } from "./stress-trace-db.ts";
 
 import {
-    STRESS_ISSUE_BUNDLE_PATH,
     buildFatalIssueBundle,
+    STRESS_ISSUE_BUNDLE_PATH,
     writeFatalIssueBundle,
 } from "./stress-issue-bundle.ts";
 
 export interface StressCrashContext {
     chatWorld: null | { channelID: string; serverID: string };
     clientCount: number;
-    clientViz: StressClientViz[] | null;
+    clientViz: null | StressClientViz[];
     currentBurst: number;
     host: string;
     lastConcurrency: number;
     noiseWorld: null | { channelID: string; serverID: string };
     phase: string;
     scenario: string;
-}
-
-function formatClientRows(viz: StressClientViz[] | null): string {
-    if (viz === null || viz.length === 0) {
-        return "  (no per-client viz — use scenario=noise for in-flight labels)\n";
-    }
-    const lines: string[] = [];
-    for (let i = 0; i < viz.length; i++) {
-        const v = viz[i];
-        if (v === undefined) {
-            continue;
-        }
-        const active = v.inFlight.length > 0 ? v.inFlight : v.lastOp;
-        lines.push(
-            `  #${String(i)}  active/last=${active.slice(0, 28)}  ok=${String(v.lastOk)}  ops=${String(v.ops)}  last_done=${v.lastOp.slice(0, 20)}`,
-        );
-    }
-    return `${lines.join("\n")}\n`;
-}
-
-/** JSON-safe snapshot for SQLite / incident rows. */
-export function stressHarnessSnapshot(
-    ctx: StressCrashContext,
-): Record<string, unknown> {
-    const clients =
-        ctx.clientViz?.map((v, i) => ({
-            i,
-            inFlight: v.inFlight,
-            lastOk: v.lastOk,
-            lastOp: v.lastOp,
-            ops: v.ops,
-        })) ?? null;
-    return {
-        burst: ctx.currentBurst,
-        clientCount: ctx.clientCount,
-        clients,
-        concurrency: ctx.lastConcurrency,
-        host: ctx.host,
-        chatWorld: ctx.chatWorld,
-        noiseWorld: ctx.noiseWorld,
-        phase: ctx.phase,
-        scenario: ctx.scenario,
-    };
-}
-
-function formatNoise(world: StressCrashContext["noiseWorld"]): string {
-    if (world === null) {
-        return "";
-    }
-    return `  noise server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
-}
-
-function formatChatWorld(world: StressCrashContext["chatWorld"]): string {
-    if (world === null) {
-        return "";
-    }
-    return `  chat server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
 }
 
 export function formatStressCrashDump(
@@ -126,7 +69,7 @@ export function installStressCrashDiagnostics(
     ctx: StressCrashContext,
     options?: {
         readonly getTelemetrySnapshot?: () => unknown;
-        readonly trace?: StressTraceDb | null;
+        readonly trace?: null | StressTraceDb;
     },
 ): () => void {
     const trace = options?.trace ?? null;
@@ -143,9 +86,9 @@ export function installStressCrashDiagnostics(
         });
         try {
             const bundle = buildFatalIssueBundle({
-                run: harness,
                 kind: "uncaughtException",
                 reason: err,
+                run: harness,
                 telemetrySnapshot: getTelemetrySnapshot?.() ?? null,
             });
             const path = writeFatalIssueBundle(bundle);
@@ -166,9 +109,9 @@ export function installStressCrashDiagnostics(
         });
         try {
             const bundle = buildFatalIssueBundle({
-                run: harness,
                 kind: "unhandledRejection",
                 reason,
+                run: harness,
                 telemetrySnapshot: getTelemetrySnapshot?.() ?? null,
             });
             const path = writeFatalIssueBundle(bundle);
@@ -183,4 +126,61 @@ export function installStressCrashDiagnostics(
         process.off("uncaughtException", onUncaught);
         process.off("unhandledRejection", onUnhandled);
     };
+}
+
+/** JSON-safe snapshot for SQLite / incident rows. */
+export function stressHarnessSnapshot(
+    ctx: StressCrashContext,
+): Record<string, unknown> {
+    const clients =
+        ctx.clientViz?.map((v, i) => ({
+            i,
+            inFlight: v.inFlight,
+            lastOk: v.lastOk,
+            lastOp: v.lastOp,
+            ops: v.ops,
+        })) ?? null;
+    return {
+        burst: ctx.currentBurst,
+        chatWorld: ctx.chatWorld,
+        clientCount: ctx.clientCount,
+        clients,
+        concurrency: ctx.lastConcurrency,
+        host: ctx.host,
+        noiseWorld: ctx.noiseWorld,
+        phase: ctx.phase,
+        scenario: ctx.scenario,
+    };
+}
+
+function formatChatWorld(world: StressCrashContext["chatWorld"]): string {
+    if (world === null) {
+        return "";
+    }
+    return `  chat server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
+}
+
+function formatClientRows(viz: null | StressClientViz[]): string {
+    if (viz === null || viz.length === 0) {
+        return "  (no per-client viz — use scenario=noise for in-flight labels)\n";
+    }
+    const lines: string[] = [];
+    for (let i = 0; i < viz.length; i++) {
+        const v = viz[i];
+        if (v === undefined) {
+            continue;
+        }
+        const active = v.inFlight.length > 0 ? v.inFlight : v.lastOp;
+        lines.push(
+            `  #${String(i)}  active/last=${active.slice(0, 28)}  ok=${String(v.lastOk)}  ops=${String(v.ops)}  last_done=${v.lastOp.slice(0, 20)}`,
+        );
+    }
+    return `${lines.join("\n")}\n`;
+}
+
+function formatNoise(world: StressCrashContext["noiseWorld"]): string {
+    if (world === null) {
+        return "";
+    }
+    return `  noise server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
 }

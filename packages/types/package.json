@@ -58,6 +58,7 @@
         "@microsoft/api-extractor": "7.58.2",
         "@stoplight/spectral-cli": "6.15.0",
         "@types/node": "catalog:",
+        "@vex-chat/eslint-config": "workspace:*",
         "eslint": "10.2.0",
         "eslint-config-prettier": "10.1.8",
         "eslint-plugin-perfectionist": "5.8.0",

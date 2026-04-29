@@ -128,10 +128,9 @@ export interface InternalUserRecord extends UserRecord {
 }
 
 export class Database extends EventEmitter {
-    private db: Kysely<ServerDatabase>;
+    private static readonly EMOJI_LIST_CACHE_TTL_MS = 10_000;
 
-    /** Underlying better-sqlite3 handle (file or :memory:). */
-    private readonly rawSqlite: InstanceType<typeof BetterSqlite3>;
+    private db: Kysely<ServerDatabase>;
 
     /**
      * Short TTL cache for {@link retrieveEmojiList} (key = server id, stored as
@@ -144,7 +143,8 @@ export class Database extends EventEmitter {
         { rows: Emoji[]; until: number }
     >();
 
-    private static readonly EMOJI_LIST_CACHE_TTL_MS = 10_000;
+    /** Underlying better-sqlite3 handle (file or :memory:). */
+    private readonly rawSqlite: InstanceType<typeof BetterSqlite3>;
 
     constructor(options?: SpireOptions) {
         super();
@@ -178,68 +178,6 @@ export class Database extends EventEmitter {
         });
 
         void this.init();
-    }
-
-    /**
-     * Dev-only snapshot of SQLite files + pragmas (same process as Spire).
-     * Not for production callers.
-     */
-    public getDevSqliteMonitor(): Record<string, unknown> {
-        const openedAs = this.rawSqlite.name;
-        const absPath =
-            openedAs === ":memory:"
-                ? ":memory:"
-                : path.isAbsolute(openedAs)
-                  ? openedAs
-                  : path.resolve(process.cwd(), openedAs);
-
-        const journalMode = this.rawSqlite.pragma("journal_mode", {
-            simple: true,
-        });
-        const synchronous = this.rawSqlite.pragma("synchronous", {
-            simple: true,
-        });
-        const busyTimeout = this.rawSqlite.pragma("busy_timeout", {
-            simple: true,
-        });
-        const cacheSize = this.rawSqlite.pragma("cache_size", { simple: true });
-        const pageCount = this.rawSqlite.pragma("page_count", { simple: true });
-        const pageSize = this.rawSqlite.pragma("page_size", { simple: true });
-        const freelistCount = this.rawSqlite.pragma("freelist_count", {
-            simple: true,
-        });
-
-        const out: Record<string, unknown> = {
-            absPath,
-            busyTimeout,
-            cacheSize,
-            freelistCount,
-            journalMode,
-            openedAs,
-            pageCount,
-            pageSize,
-            synchronous,
-        };
-
-        if (openedAs !== ":memory:") {
-            const filePaths = {
-                main: absPath,
-                shm: `${absPath}-shm`,
-                wal: `${absPath}-wal`,
-            };
-            out["filePaths"] = filePaths;
-            const sizes: Record<string, number> = {};
-            for (const [label, fp] of Object.entries(filePaths)) {
-                try {
-                    sizes[label] = statSync(fp).size;
-                } catch {
-                    sizes[label] = 0;
-                }
-            }
-            out["fileBytes"] = sizes;
-        }
-
-        return out;
     }
 
     public async close(): Promise<void> {
@@ -480,6 +418,68 @@ export class Database extends EventEmitter {
             .deleteFrom("servers")
             .where("serverID", "=", serverID)
             .execute();
+    }
+
+    /**
+     * Dev-only snapshot of SQLite files + pragmas (same process as Spire).
+     * Not for production callers.
+     */
+    public getDevSqliteMonitor(): Record<string, unknown> {
+        const openedAs = this.rawSqlite.name;
+        const absPath =
+            openedAs === ":memory:"
+                ? ":memory:"
+                : path.isAbsolute(openedAs)
+                  ? openedAs
+                  : path.resolve(process.cwd(), openedAs);
+
+        const journalMode = this.rawSqlite.pragma("journal_mode", {
+            simple: true,
+        });
+        const synchronous = this.rawSqlite.pragma("synchronous", {
+            simple: true,
+        });
+        const busyTimeout = this.rawSqlite.pragma("busy_timeout", {
+            simple: true,
+        });
+        const cacheSize = this.rawSqlite.pragma("cache_size", { simple: true });
+        const pageCount = this.rawSqlite.pragma("page_count", { simple: true });
+        const pageSize = this.rawSqlite.pragma("page_size", { simple: true });
+        const freelistCount = this.rawSqlite.pragma("freelist_count", {
+            simple: true,
+        });
+
+        const out: Record<string, unknown> = {
+            absPath,
+            busyTimeout,
+            cacheSize,
+            freelistCount,
+            journalMode,
+            openedAs,
+            pageCount,
+            pageSize,
+            synchronous,
+        };
+
+        if (openedAs !== ":memory:") {
+            const filePaths = {
+                main: absPath,
+                shm: `${absPath}-shm`,
+                wal: `${absPath}-wal`,
+            };
+            out["filePaths"] = filePaths;
+            const sizes: Record<string, number> = {};
+            for (const [label, fp] of Object.entries(filePaths)) {
+                try {
+                    sizes[label] = statSync(fp).size;
+                } catch {
+                    sizes[label] = 0;
+                }
+            }
+            out["fileBytes"] = sizes;
+        }
+
+        return out;
     }
 
     public async getKeyBundle(deviceID: string): Promise<KeyBundle | null> {

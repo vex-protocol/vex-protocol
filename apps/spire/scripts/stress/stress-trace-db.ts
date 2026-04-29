@@ -84,22 +84,14 @@ export interface StressTraceEventInput {
     readonly phase: string;
 }
 
-function defaultDbPath(): string {
-    const base = join(homedir(), ".spire-stress");
-    try {
-        mkdirSync(base, { recursive: true });
-    } catch {
-        return join(tmpdir(), "spire-stress-traces.sqlite");
-    }
-    return join(base, "traces.sqlite");
-}
+export type StressTraceSink = null | StressTraceDb;
 
 export class StressTraceDb {
+    private closed = false;
     private readonly db: Database.Database;
     private readonly runId: string;
-    private seq = 0;
-    private closed = false;
     private runStarted = false;
+    private seq = 0;
 
     public constructor(dbPath: string) {
         mkdirSync(dirname(dbPath), { recursive: true });
@@ -110,7 +102,7 @@ export class StressTraceDb {
         this.runId = randomUUID();
     }
 
-    public static tryOpenFromEnv(): StressTraceDb | null {
+    public static tryOpenFromEnv(): null | StressTraceDb {
         const off = process.env["SPIRE_STRESS_TRACE"]?.trim() === "0";
         if (off) {
             return null;
@@ -127,30 +119,6 @@ export class StressTraceDb {
             );
             return null;
         }
-    }
-
-    public getRunId(): string {
-        return this.runId;
-    }
-
-    public getDbPathForDisplay(): string {
-        return this.db.name;
-    }
-
-    public beginRun(input: {
-        readonly clientCount: number;
-        readonly host: string;
-        readonly scenario: string;
-    }): void {
-        this.runStarted = true;
-        const startedAt = new Date().toISOString();
-        this.db.prepare(INSERT_RUN).run({
-            client_count: input.clientCount,
-            host: input.host,
-            run_id: this.runId,
-            scenario: input.scenario,
-            started_at: startedAt,
-        });
     }
 
     public append(input: StressTraceEventInput): void {
@@ -170,6 +138,68 @@ export class StressTraceDb {
         });
     }
 
+    public beginRun(input: {
+        readonly clientCount: number;
+        readonly host: string;
+        readonly scenario: string;
+    }): void {
+        this.runStarted = true;
+        const startedAt = new Date().toISOString();
+        this.db.prepare(INSERT_RUN).run({
+            client_count: input.clientCount,
+            host: input.host,
+            run_id: this.runId,
+            scenario: input.scenario,
+            started_at: startedAt,
+        });
+    }
+
+    public captureFatal(input: {
+        readonly harnessSnapshot: Record<string, unknown>;
+        readonly kind: "uncaughtException" | "unhandledRejection";
+        readonly reason: unknown;
+    }): void {
+        const err = input.reason;
+        const message = err instanceof Error ? err.message : String(err);
+        const nodeStack =
+            err instanceof Error ? (err.stack ?? message) : message;
+        const recent = this.recentEvents(120);
+        this.db.prepare(INSERT_INCIDENT).run({
+            harness_snapshot_json: JSON.stringify(input.harnessSnapshot),
+            kind: input.kind,
+            message,
+            node_stack: nodeStack,
+            recent_events_json: JSON.stringify(recent),
+            run_id: this.runId,
+            ts_ms: Date.now(),
+        });
+        const burstRaw = input.harnessSnapshot["burst"];
+        const burstNum =
+            typeof burstRaw === "number" && Number.isFinite(burstRaw)
+                ? burstRaw
+                : 0;
+        const phaseRaw = input.harnessSnapshot["phase"];
+        const phaseStr = typeof phaseRaw === "string" ? phaseRaw : "?";
+        this.append({
+            burst: burstNum,
+            detail: {
+                incident: true,
+                kind: input.kind,
+                message,
+            },
+            event: "fatal",
+            phase: phaseStr,
+        });
+    }
+
+    public close(): void {
+        if (this.closed) {
+            return;
+        }
+        this.closed = true;
+        this.db.close();
+    }
+
     public finalizeRun(input: {
         readonly endedReason: string;
         readonly summary: Record<string, unknown>;
@@ -183,6 +213,14 @@ export class StressTraceDb {
             run_id: this.runId,
             summary_json: JSON.stringify(input.summary),
         });
+    }
+
+    public getDbPathForDisplay(): string {
+        return this.db.name;
+    }
+
+    public getRunId(): string {
+        return this.runId;
     }
 
     public recentEvents(limit: number): Record<string, unknown>[] {
@@ -239,58 +277,10 @@ export class StressTraceDb {
         }
         return out;
     }
-
-    public captureFatal(input: {
-        readonly harnessSnapshot: Record<string, unknown>;
-        readonly kind: "uncaughtException" | "unhandledRejection";
-        readonly reason: unknown;
-    }): void {
-        const err = input.reason;
-        const message = err instanceof Error ? err.message : String(err);
-        const nodeStack =
-            err instanceof Error ? (err.stack ?? message) : message;
-        const recent = this.recentEvents(120);
-        this.db.prepare(INSERT_INCIDENT).run({
-            harness_snapshot_json: JSON.stringify(input.harnessSnapshot),
-            kind: input.kind,
-            message,
-            node_stack: nodeStack,
-            recent_events_json: JSON.stringify(recent),
-            run_id: this.runId,
-            ts_ms: Date.now(),
-        });
-        const burstRaw = input.harnessSnapshot["burst"];
-        const burstNum =
-            typeof burstRaw === "number" && Number.isFinite(burstRaw)
-                ? burstRaw
-                : 0;
-        const phaseRaw = input.harnessSnapshot["phase"];
-        const phaseStr = typeof phaseRaw === "string" ? phaseRaw : "?";
-        this.append({
-            burst: burstNum,
-            detail: {
-                incident: true,
-                kind: input.kind,
-                message,
-            },
-            event: "fatal",
-            phase: phaseStr,
-        });
-    }
-
-    public close(): void {
-        if (this.closed) {
-            return;
-        }
-        this.closed = true;
-        this.db.close();
-    }
 }
 
-export type StressTraceSink = StressTraceDb | null;
-
 /** Path to an existing stress trace DB for read-only UI polling (may be null). */
-export function probeStressTraceDbPathForReading(): string | null {
+export function probeStressTraceDbPathForReading(): null | string {
     if (process.env["SPIRE_STRESS_TRACE"]?.trim() === "0") {
         return null;
     }
@@ -300,4 +290,14 @@ export function probeStressTraceDbPathForReading(): string | null {
     }
     const p = join(homedir(), ".spire-stress", "traces.sqlite");
     return existsSync(p) ? p : null;
+}
+
+function defaultDbPath(): string {
+    const base = join(homedir(), ".spire-stress");
+    try {
+        mkdirSync(base, { recursive: true });
+    } catch {
+        return join(tmpdir(), "spire-stress-traces.sqlite");
+    }
+    return join(base, "traces.sqlite");
 }

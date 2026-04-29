@@ -26,8 +26,6 @@ import { protect } from "./index.ts";
 const DEVICE_REQUEST_TTL_MS = 10 * 60 * 1000;
 const RESOLVED_REQUEST_TTL_MS = 30 * 60 * 1000;
 
-type DeviceEnrollmentStatus = "approved" | "expired" | "pending" | "rejected";
-
 interface DeviceEnrollmentRequest {
     approvedDeviceID?: string;
     challengeHex: string;
@@ -40,11 +38,34 @@ interface DeviceEnrollmentRequest {
     userID: string;
 }
 
+type DeviceEnrollmentStatus = "approved" | "expired" | "pending" | "rejected";
+
 const approvePayloadSchema = z.object({
     signed: z.string().min(1),
 });
 
 const deviceEnrollments = new Map<string, DeviceEnrollmentRequest>();
+
+function pruneDeviceEnrollmentRequests(nowMs = Date.now()): void {
+    for (const [requestID, req] of deviceEnrollments.entries()) {
+        if (
+            req.status === "pending" &&
+            nowMs - req.createdAt > DEVICE_REQUEST_TTL_MS
+        ) {
+            req.status = "expired";
+            req.resolvedAt = nowMs;
+            deviceEnrollments.set(requestID, req);
+            continue;
+        }
+        if (
+            req.status !== "pending" &&
+            req.resolvedAt !== undefined &&
+            nowMs - req.resolvedAt > RESOLVED_REQUEST_TTL_MS
+        ) {
+            deviceEnrollments.delete(requestID);
+        }
+    }
+}
 
 function requestSummary(req: DeviceEnrollmentRequest): {
     approvedDeviceID?: string;
@@ -72,27 +93,6 @@ function requestSummary(req: DeviceEnrollmentRequest): {
             : {}),
         ...(req.error !== undefined ? { error: req.error } : {}),
     };
-}
-
-function pruneDeviceEnrollmentRequests(nowMs = Date.now()): void {
-    for (const [requestID, req] of deviceEnrollments.entries()) {
-        if (
-            req.status === "pending" &&
-            nowMs - req.createdAt > DEVICE_REQUEST_TTL_MS
-        ) {
-            req.status = "expired";
-            req.resolvedAt = nowMs;
-            deviceEnrollments.set(requestID, req);
-            continue;
-        }
-        if (
-            req.status !== "pending" &&
-            req.resolvedAt !== undefined &&
-            nowMs - req.resolvedAt > RESOLVED_REQUEST_TTL_MS
-        ) {
-            deviceEnrollments.delete(requestID);
-        }
-    }
 }
 
 export const getUserRouter = (

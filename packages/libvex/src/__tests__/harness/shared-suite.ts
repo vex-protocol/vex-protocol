@@ -38,141 +38,6 @@ import { Client } from "../../index.js";
 
 import { testFile, testImage } from "./fixtures.js";
 
-/**
- * `GET` `{API_URL or http://}{host}/status` — used for crypto profile preflight
- * (must match `getCryptoProfile()` when running e2e against a custom Spire).
- */
-function spireStatusUrlFromEnv(): null | string {
-    const raw = process.env["API_URL"]?.trim();
-    if (raw === undefined || raw.length === 0) {
-        return null;
-    }
-    if (/^https?:\/\//i.test(raw)) {
-        const u = new URL(raw);
-        return `${u.protocol}//${u.host}/status`;
-    }
-    return `http://${raw}/status`;
-}
-
-/** `LIBVEX_E2E_CRYPTO` only — used when status auto-detect is skipped. */
-function e2eCryptoProfileFromEnvOnly(): "fips" | "tweetnacl" {
-    const v = process.env["LIBVEX_E2E_CRYPTO"]?.trim().toLowerCase();
-    if (v === "fips" || v === "p-256" || v === "p256") {
-        return "fips";
-    }
-    if (v === "tweetnacl" || v === "nacl" || v === "ed25519") {
-        return "tweetnacl";
-    }
-    return "tweetnacl";
-}
-
-/**
- * Picks the signing profile for the suite: optional env override, else `GET` Spire
- * `/status` when `API_URL` is set, else tweetnacl.
- */
-async function resolveE2eCryptoProfile(): Promise<"fips" | "tweetnacl"> {
-    if (process.env["LIBVEX_E2E_SKIP_STATUS_CHECK"] === "1") {
-        return e2eCryptoProfileFromEnvOnly();
-    }
-    const v = process.env["LIBVEX_E2E_CRYPTO"]?.trim().toLowerCase();
-    if (v === "fips" || v === "p-256" || v === "p256") {
-        return "fips";
-    }
-    if (v === "tweetnacl" || v === "nacl" || v === "ed25519") {
-        return "tweetnacl";
-    }
-    if (v !== undefined && v.length > 0) {
-        throw new Error(
-            `libvex e2e: invalid LIBVEX_E2E_CRYPTO=${JSON.stringify(v)}. Use fips, tweetnacl, or leave unset to auto-detect from Spire /status`,
-        );
-    }
-    const url = spireStatusUrlFromEnv();
-    if (url === null) {
-        return "tweetnacl";
-    }
-    let res: Response;
-    try {
-        res = await fetch(url, { method: "GET" });
-    } catch {
-        return "tweetnacl";
-    }
-    if (!res.ok) {
-        return "tweetnacl";
-    }
-    const data: unknown = await res.json();
-    if (
-        typeof data !== "object" ||
-        data === null ||
-        !("cryptoProfile" in data)
-    ) {
-        return "tweetnacl";
-    }
-    const cp = (data as { cryptoProfile: unknown }).cryptoProfile;
-    if (cp === "fips" || cp === "tweetnacl") {
-        return cp;
-    }
-    return "tweetnacl";
-}
-
-function e2eClientOptionsBase(): ClientOptions {
-    return {
-        inMemoryDb: true,
-        ...apiUrlOverrideFromEnv(),
-        cryptoProfile: getCryptoProfile(),
-    };
-}
-
-async function e2eGenerateSecretKey(): Promise<string> {
-    return await Client.generateSecretKeyAsync();
-}
-
-async function assertSpireCryptoProfileMatchesTest(): Promise<void> {
-    if (process.env["LIBVEX_E2E_SKIP_STATUS_CHECK"] === "1") {
-        return;
-    }
-    const url = spireStatusUrlFromEnv();
-    if (url === null) {
-        return;
-    }
-    const want = getCryptoProfile();
-    let res: Response;
-    try {
-        res = await fetch(url, { method: "GET" });
-    } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(
-            `libvex e2e: could not GET ${url} (check API_URL; is Spire running?): ${msg}`,
-        );
-    }
-    if (!res.ok) {
-        throw new Error(
-            `libvex e2e: ${url} returned HTTP ${String(res.status)} — Spire not reachable on this base URL?`,
-        );
-    }
-    const data: unknown = await res.json();
-    if (
-        typeof data !== "object" ||
-        data === null ||
-        !("cryptoProfile" in data) ||
-        typeof (data as { cryptoProfile: unknown }).cryptoProfile !== "string"
-    ) {
-        throw new Error(
-            `libvex e2e: Spire /status is missing a string "cryptoProfile" (upgrade Spire) or set LIBVEX_E2E_SKIP_STATUS_CHECK=1 to skip this check`,
-        );
-    }
-    const gotStr = (data as { cryptoProfile: string }).cryptoProfile;
-    if (gotStr !== "fips" && gotStr !== "tweetnacl") {
-        throw new Error(
-            `libvex e2e: Spire /status cryptoProfile is not fips|tweetnacl: ${gotStr}`,
-        );
-    }
-    if (gotStr !== want) {
-        throw new Error(
-            `libvex e2e: Spire is cryptoProfile=${gotStr} (see SPIRE_FIPS + SPK) but this test has getCryptoProfile()=${want}. Use matching keys/scripts (gen-spk.js vs gen-spk-fips.js) and the same mode on client and server.`,
-        );
-    }
-}
-
 export function platformSuite(
     platformName: string,
     makeStorage: (SK: string, opts: ClientOptions) => Promise<Storage>,
@@ -469,7 +334,7 @@ export function platformSuite(
 }
 
 function apiUrlOverrideFromEnv():
-    | Pick<ClientOptions, "host" | "unsafeHttp" | "devApiKey">
+    | Pick<ClientOptions, "devApiKey" | "host" | "unsafeHttp">
     | undefined {
     const raw = process.env["API_URL"]?.trim();
     const devKey = process.env["DEV_API_KEY"]?.trim();
@@ -496,26 +361,161 @@ function apiUrlOverrideFromEnv():
     };
 }
 
-/** Shared staging / CI proxies sometimes return 502; retry a few times. */
-async function withTransientRetry<T>(fn: () => Promise<T>): Promise<T> {
-    const attempts = 4;
-    let last: unknown;
-    for (let i = 0; i < attempts; i++) {
-        try {
-            return await fn();
-        } catch (e) {
-            last = e;
-            const transient =
-                isAxiosError(e) &&
-                (e.response?.status === 502 || e.response?.status === 503);
-            if (transient && i < attempts - 1) {
-                await new Promise((r) => setTimeout(r, 400 * (i + 1)));
-                continue;
-            }
-            throw e;
-        }
+async function assertSpireCryptoProfileMatchesTest(): Promise<void> {
+    if (process.env["LIBVEX_E2E_SKIP_STATUS_CHECK"] === "1") {
+        return;
     }
-    throw last;
+    const url = spireStatusUrlFromEnv();
+    if (url === null) {
+        return;
+    }
+    const want = getCryptoProfile();
+    let res: Response;
+    try {
+        res = await fetch(url, { method: "GET" });
+    } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(
+            `libvex e2e: could not GET ${url} (check API_URL; is Spire running?): ${msg}`,
+        );
+    }
+    if (!res.ok) {
+        throw new Error(
+            `libvex e2e: ${url} returned HTTP ${String(res.status)} — Spire not reachable on this base URL?`,
+        );
+    }
+    const data: unknown = await res.json();
+    if (
+        typeof data !== "object" ||
+        data === null ||
+        !("cryptoProfile" in data) ||
+        typeof (data as { cryptoProfile: unknown }).cryptoProfile !== "string"
+    ) {
+        throw new Error(
+            `libvex e2e: Spire /status is missing a string "cryptoProfile" (upgrade Spire) or set LIBVEX_E2E_SKIP_STATUS_CHECK=1 to skip this check`,
+        );
+    }
+    const gotStr = (data as { cryptoProfile: string }).cryptoProfile;
+    if (gotStr !== "fips" && gotStr !== "tweetnacl") {
+        throw new Error(
+            `libvex e2e: Spire /status cryptoProfile is not fips|tweetnacl: ${gotStr}`,
+        );
+    }
+    if (gotStr !== want) {
+        throw new Error(
+            `libvex e2e: Spire is cryptoProfile=${gotStr} (see SPIRE_FIPS + SPK) but this test has getCryptoProfile()=${want}. Use matching keys/scripts (gen-spk.js vs gen-spk-fips.js) and the same mode on client and server.`,
+        );
+    }
+}
+
+function connectAndWait(
+    c: Client,
+    label: string,
+    timeout = 10_000,
+): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} connect timed out`));
+        }, timeout);
+        const onConnected = () => {
+            clearTimeout(timer);
+            c.off("connected", onConnected);
+            resolve();
+        };
+        c.on("connected", onConnected);
+        c.connect().catch((err: unknown) => {
+            clearTimeout(timer);
+            reject(err instanceof Error ? err : new Error(String(err)));
+        });
+    });
+}
+
+function e2eClientOptionsBase(): ClientOptions {
+    return {
+        inMemoryDb: true,
+        ...apiUrlOverrideFromEnv(),
+        cryptoProfile: getCryptoProfile(),
+    };
+}
+
+/** `LIBVEX_E2E_CRYPTO` only — used when status auto-detect is skipped. */
+function e2eCryptoProfileFromEnvOnly(): "fips" | "tweetnacl" {
+    const v = process.env["LIBVEX_E2E_CRYPTO"]?.trim().toLowerCase();
+    if (v === "fips" || v === "p-256" || v === "p256") {
+        return "fips";
+    }
+    if (v === "tweetnacl" || v === "nacl" || v === "ed25519") {
+        return "tweetnacl";
+    }
+    return "tweetnacl";
+}
+
+async function e2eGenerateSecretKey(): Promise<string> {
+    return await Client.generateSecretKeyAsync();
+}
+
+/**
+ * Picks the signing profile for the suite: optional env override, else `GET` Spire
+ * `/status` when `API_URL` is set, else tweetnacl.
+ */
+async function resolveE2eCryptoProfile(): Promise<"fips" | "tweetnacl"> {
+    if (process.env["LIBVEX_E2E_SKIP_STATUS_CHECK"] === "1") {
+        return e2eCryptoProfileFromEnvOnly();
+    }
+    const v = process.env["LIBVEX_E2E_CRYPTO"]?.trim().toLowerCase();
+    if (v === "fips" || v === "p-256" || v === "p256") {
+        return "fips";
+    }
+    if (v === "tweetnacl" || v === "nacl" || v === "ed25519") {
+        return "tweetnacl";
+    }
+    if (v !== undefined && v.length > 0) {
+        throw new Error(
+            `libvex e2e: invalid LIBVEX_E2E_CRYPTO=${JSON.stringify(v)}. Use fips, tweetnacl, or leave unset to auto-detect from Spire /status`,
+        );
+    }
+    const url = spireStatusUrlFromEnv();
+    if (url === null) {
+        return "tweetnacl";
+    }
+    let res: Response;
+    try {
+        res = await fetch(url, { method: "GET" });
+    } catch {
+        return "tweetnacl";
+    }
+    if (!res.ok) {
+        return "tweetnacl";
+    }
+    const data: unknown = await res.json();
+    if (
+        typeof data !== "object" ||
+        data === null ||
+        !("cryptoProfile" in data)
+    ) {
+        return "tweetnacl";
+    }
+    const cp = (data as { cryptoProfile: unknown }).cryptoProfile;
+    if (cp === "fips" || cp === "tweetnacl") {
+        return cp;
+    }
+    return "tweetnacl";
+}
+
+/**
+ * `GET` `{API_URL or http://}{host}/status` — used for crypto profile preflight
+ * (must match `getCryptoProfile()` when running e2e against a custom Spire).
+ */
+function spireStatusUrlFromEnv(): null | string {
+    const raw = process.env["API_URL"]?.trim();
+    if (raw === undefined || raw.length === 0) {
+        return null;
+    }
+    if (/^https?:\/\//i.test(raw)) {
+        const u = new URL(raw);
+        return `${u.protocol}//${u.host}/status`;
+    }
+    return `http://${raw}/status`;
 }
 
 /*
@@ -547,28 +547,6 @@ async function e2eWaitForPeerDeviceCount(
 }
 */
 
-function connectAndWait(
-    c: Client,
-    label: string,
-    timeout = 10_000,
-): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            reject(new Error(`${label} connect timed out`));
-        }, timeout);
-        const onConnected = () => {
-            clearTimeout(timer);
-            c.off("connected", onConnected);
-            resolve();
-        };
-        c.on("connected", onConnected);
-        c.connect().catch((err: unknown) => {
-            clearTimeout(timer);
-            reject(err instanceof Error ? err : new Error(String(err)));
-        });
-    });
-}
-
 async function waitForMessage(
     c: Client,
     predicate: (m: Message) => boolean,
@@ -588,4 +566,26 @@ async function waitForMessage(
         };
         c.on("message", onMsg);
     });
+}
+
+/** Shared staging / CI proxies sometimes return 502; retry a few times. */
+async function withTransientRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const attempts = 4;
+    let last: unknown;
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await fn();
+        } catch (e) {
+            last = e;
+            const transient =
+                isAxiosError(e) &&
+                (e.response?.status === 502 || e.response?.status === 503);
+            if (transient && i < attempts - 1) {
+                await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+                continue;
+            }
+            throw e;
+        }
+    }
+    throw last;
 }

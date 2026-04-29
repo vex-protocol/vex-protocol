@@ -2,17 +2,41 @@
  * Shared ESLint base config for all Vex packages.
  *
  * Includes: typescript-eslint strictTypeChecked, perfectionist natural sorting
- * with import grouping, prettier compat.
+ * with import grouping, copyright-header enforcement, prettier compat.
  *
  * Apps add framework-specific plugins in their own eslint.config.js.
  */
 import eslintConfigPrettier from "eslint-config-prettier/flat";
+import headers from "eslint-plugin-headers";
 import perfectionist from "eslint-plugin-perfectionist";
 import tseslint from "typescript-eslint";
+
+/**
+ * The Vex copyright header text. Plain string; eslint-plugin-headers wraps
+ * it in `/** ... *\/` automatically when style: "jsdoc".
+ */
+const COPYRIGHT_HEADER =
+    "Copyright (c) 2020-2026 Vex Heavy Industries LLC\n" +
+    "Licensed under AGPL-3.0. See LICENSE for details.\n" +
+    "Commercial licenses available at vex.wtf";
 
 export const base = tseslint.config(
     ...tseslint.configs.strictTypeChecked,
     perfectionist.configs["recommended-natural"],
+    {
+        plugins: { headers },
+        rules: {
+            "headers/header-format": [
+                "error",
+                {
+                    source: "string",
+                    style: "jsdoc",
+                    content: COPYRIGHT_HEADER,
+                    trailingNewlines: 2,
+                },
+            ],
+        },
+    },
     {
         languageOptions: {
             parserOptions: {

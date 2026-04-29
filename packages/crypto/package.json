@@ -70,6 +70,7 @@
         "@microsoft/api-extractor": "7.58.2",
         "@types/ed2curve": "0.2.4",
         "@types/node": "catalog:",
+        "@vex-chat/eslint-config": "workspace:*",
         "@vex-chat/types": "workspace:^",
         "@vitest/eslint-plugin": "1.6.15",
         "eslint": "10.2.0",

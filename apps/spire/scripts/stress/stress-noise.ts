@@ -50,41 +50,23 @@ export interface NoiseWorld {
 
 const DURATIONS = ["1h", "24h", "48h", "7d"] as const;
 
-function pickDuration(): string {
-    return DURATIONS[randomInt(0, DURATIONS.length)] ?? "24h";
-}
+/** Noise op outcome; `cause` is the libvex/axios rejection when the Client path threw. */
+export type NoiseOpOutcome = TrackSoftResult;
 
-function randomMsg(): string {
-    const tag = randomBytes(4).toString("hex");
-    return `[noise ${tag}] ${String(randomInt(0, 1_000_000))}`;
-}
-
-function pickPeerUserID(world: NoiseWorld, clientIndex: number): string | null {
-    const choices = world.userIDs.filter((_id, i) => i !== clientIndex);
-    if (choices.length === 0) {
-        return null;
-    }
-    return choices[randomInt(0, choices.length)] ?? null;
-}
-
-function pickPeerUsername(
-    world: NoiseWorld,
+type OpFn = (
+    client: Client,
     clientIndex: number,
-): string | null {
-    const choices = world.usernames.filter((_u, i) => i !== clientIndex);
-    if (choices.length === 0) {
-        return null;
-    }
-    return choices[randomInt(0, choices.length)] ?? null;
-}
+    world: NoiseWorld,
+    stats: HttpExpectStats,
+) => Promise<NoiseOpOutcome>;
 
 /** Hub creates shared server, invites everyone else, then all WS connect. */
 export async function bootstrapNoiseWorld(
     clients: Client[],
     stats: HttpExpectStats,
-    trace: StressTraceDb | null,
+    trace: null | StressTraceDb,
     crashCtx: StressCrashContext,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
 ): Promise<NoiseWorld> {
     if (clients.length === 0) {
         throw new Error("noise: need at least one client.");
@@ -204,16 +186,6 @@ export async function bootstrapNoiseWorld(
     return world;
 }
 
-/** Noise op outcome; `cause` is the libvex/axios rejection when the Client path threw. */
-export type NoiseOpOutcome = TrackSoftResult;
-
-type OpFn = (
-    client: Client,
-    clientIndex: number,
-    world: NoiseWorld,
-    stats: HttpExpectStats,
-) => Promise<NoiseOpOutcome>;
-
 function noiseTelemetryErr(
     surfaceKey: string,
     outcome: NoiseOpOutcome,
@@ -239,28 +211,55 @@ function noiseTelemetryErr(
     );
 }
 
-const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
+function pickDuration(): string {
+    return DURATIONS[randomInt(0, DURATIONS.length)] ?? "24h";
+}
+
+function pickPeerUserID(world: NoiseWorld, clientIndex: number): null | string {
+    const choices = world.userIDs.filter((_id, i) => i !== clientIndex);
+    if (choices.length === 0) {
+        return null;
+    }
+    return choices[randomInt(0, choices.length)] ?? null;
+}
+
+function pickPeerUsername(
+    world: NoiseWorld,
+    clientIndex: number,
+): null | string {
+    const choices = world.usernames.filter((_u, i) => i !== clientIndex);
+    if (choices.length === 0) {
+        return null;
+    }
+    return choices[randomInt(0, choices.length)] ?? null;
+}
+
+function randomMsg(): string {
+    const tag = randomBytes(4).toString("hex");
+    return `[noise ${tag}] ${String(randomInt(0, 1_000_000))}`;
+}
+
+const WEIGHTED_OPS: readonly { id: string; run: OpFn; w: number }[] = [
     {
         id: "grp_msg",
-        w: 16,
         run: async (client, _i, world, stats) =>
             trackSoftResult(
                 stats,
                 client.messages.group(world.channelID, randomMsg()),
             ),
+        w: 16,
     },
     {
         id: "grp_hist",
-        w: 7,
         run: async (client, _i, world, stats) =>
             trackSoftResult(
                 stats,
                 client.messages.retrieveGroup(world.channelID),
             ),
+        w: 7,
     },
     {
         id: "dm_send",
-        w: 10,
         run: async (client, idx, world, stats) => {
             const peer = pickPeerUserID(world, idx);
             if (peer === null) {
@@ -271,10 +270,10 @@ const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
                 client.messages.send(peer, randomMsg()),
             );
         },
+        w: 10,
     },
     {
         id: "dm_hist",
-        w: 5,
         run: async (client, idx, world, stats) => {
             const peer = pickPeerUserID(world, idx);
             if (peer === null) {
@@ -282,61 +281,61 @@ const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
             }
             return trackSoftResult(stats, client.messages.retrieve(peer));
         },
+        w: 5,
     },
     {
         id: "whoami",
-        w: 4,
         run: async (client, _i, _w, stats) =>
             trackSoftResult(stats, client.whoami()),
+        w: 4,
     },
     {
         id: "srv_list",
-        w: 5,
         run: async (client, _i, _w, stats) =>
             trackSoftResult(stats, client.servers.retrieve()),
+        w: 5,
     },
     {
         id: "srv_id",
-        w: 4,
         run: async (client, _i, world, stats) =>
             trackSoftResult(stats, client.servers.retrieveByID(world.serverID)),
+        w: 4,
     },
     {
         id: "perm_me",
-        w: 5,
         run: async (client, _i, _w, stats) =>
             trackSoftResult(stats, client.permissions.retrieve()),
+        w: 5,
     },
     {
         id: "ch_list",
-        w: 5,
         run: async (client, _i, world, stats) =>
             trackSoftResult(stats, client.channels.retrieve(world.serverID)),
+        w: 5,
     },
     {
         id: "ch_id",
-        w: 4,
         run: async (client, _i, world, stats) =>
             trackSoftResult(
                 stats,
                 client.channels.retrieveByID(world.channelID),
             ),
+        w: 4,
     },
     {
         id: "ch_users",
-        w: 6,
         run: async (client, _i, world, stats) =>
             trackSoftResult(stats, client.channels.userList(world.channelID)),
+        w: 6,
     },
     {
         id: "fam",
-        w: 4,
         run: async (client, _i, _w, stats) =>
             trackSoftResult(stats, client.users.familiars()),
+        w: 4,
     },
     {
         id: "usr_get",
-        w: 5,
         run: async (client, idx, world, stats) => {
             const u = pickPeerUsername(world, idx);
             if (u === null) {
@@ -346,55 +345,55 @@ const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
                 const [user, err] = await client.users.retrieve(u);
                 if (err) {
                     recordHttpFailure(stats, err);
-                    return { ok: false, cause: err };
+                    return { cause: err, ok: false };
                 }
                 if (user === null) {
                     const empty = new Error("users.retrieve returned empty");
                     recordHttpFailure(stats, empty);
-                    return { ok: false, cause: empty };
+                    return { cause: empty, ok: false };
                 }
                 stats.ok += 1;
                 return { ok: true };
             } catch (err: unknown) {
                 recordHttpFailure(stats, err);
-                return { ok: false, cause: err };
+                return { cause: err, ok: false };
             }
         },
+        w: 5,
     },
     {
         id: "sess",
-        w: 4,
         run: async (client, _i, _w, stats) =>
             trackSoftResult(stats, client.sessions.retrieve()),
+        w: 4,
     },
     {
         id: "me_u",
-        w: 3,
         run: async (client, _i, _w, stats) => {
             void client.me.user();
             return trackSoftResult(stats, client.whoami());
         },
+        w: 3,
     },
     {
         id: "me_dev",
-        w: 3,
         run: async (client, _i, _w, stats) => {
             void client.me.device();
             return trackSoftResult(stats, client.whoami());
         },
+        w: 3,
     },
     {
         id: "mod_list",
-        w: 4,
         run: async (client, _i, world, stats) =>
             trackSoftResult(
                 stats,
                 client.moderation.fetchPermissionList(world.serverID),
             ),
+        w: 4,
     },
     {
         id: "inv_list",
-        w: 3,
         run: async (client, idx, world, stats) => {
             // INVITE permission is hub-only after redeem (guests are power 0). Listing from
             // every client floods Spire with intentional 401s and hides real regressions.
@@ -406,10 +405,10 @@ const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
                 client.invites.retrieve(world.serverID),
             );
         },
+        w: 3,
     },
     {
         id: "inv_mk",
-        w: 2,
         run: async (client, idx, world, stats) => {
             if (idx !== 0) {
                 return trackSoftResult(stats, client.whoami());
@@ -419,10 +418,51 @@ const WEIGHTED_OPS: readonly { run: OpFn; w: number; id: string }[] = [
                 client.invites.create(world.serverID, pickDuration()),
             );
         },
+        w: 2,
     },
 ];
 
 const OP_TOTAL = WEIGHTED_OPS.reduce((s, r) => s + r.w, 0);
+
+export async function runNoiseBurst(
+    clients: Client[],
+    world: NoiseWorld,
+    perClientConcurrency: number,
+    stats: HttpExpectStats,
+    viz: StressClientViz[],
+    trace: null | StressTraceDb,
+    crashCtx: StressCrashContext,
+    telemetry: null | StressTelemetry,
+): Promise<void> {
+    trace?.append({
+        burst: crashCtx.currentBurst,
+        detail: {
+            clients: clients.length,
+            perClientConcurrency,
+            serverID: world.serverID,
+        },
+        event: "noise_burst_batch",
+        phase: crashCtx.phase,
+    });
+    const tasks: Promise<void>[] = [];
+    for (let ci = 0; ci < clients.length; ci++) {
+        for (let k = 0; k < perClientConcurrency; k++) {
+            tasks.push(
+                runOneNoiseOp(
+                    clients,
+                    ci,
+                    world,
+                    stats,
+                    viz,
+                    trace,
+                    crashCtx,
+                    telemetry,
+                ),
+            );
+        }
+    }
+    await Promise.allSettled(tasks);
+}
 
 function pickOpIndex(): number {
     if (OP_TOTAL <= 0) {
@@ -463,7 +503,7 @@ async function runInviteRedeemNoise(
         inviteID = inv.inviteID;
     } catch (err: unknown) {
         recordHttpFailure(stats, err);
-        return { ok: false, cause: err };
+        return { cause: err, ok: false };
     }
     return trackSoftResult(stats, guest.invites.redeem(inviteID));
 }
@@ -474,9 +514,9 @@ async function runOneNoiseOp(
     world: NoiseWorld,
     stats: HttpExpectStats,
     viz: StressClientViz[],
-    trace: StressTraceDb | null,
+    trace: null | StressTraceDb,
     crashCtx: StressCrashContext,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
 ): Promise<void> {
     const client = clients[clientIndex];
     if (client === undefined) {
@@ -769,44 +809,4 @@ async function runOneNoiseOp(
     } finally {
         row.inFlight = "";
     }
-}
-
-export async function runNoiseBurst(
-    clients: Client[],
-    world: NoiseWorld,
-    perClientConcurrency: number,
-    stats: HttpExpectStats,
-    viz: StressClientViz[],
-    trace: StressTraceDb | null,
-    crashCtx: StressCrashContext,
-    telemetry: StressTelemetry | null,
-): Promise<void> {
-    trace?.append({
-        burst: crashCtx.currentBurst,
-        detail: {
-            clients: clients.length,
-            perClientConcurrency,
-            serverID: world.serverID,
-        },
-        event: "noise_burst_batch",
-        phase: crashCtx.phase,
-    });
-    const tasks: Promise<void>[] = [];
-    for (let ci = 0; ci < clients.length; ci++) {
-        for (let k = 0; k < perClientConcurrency; k++) {
-            tasks.push(
-                runOneNoiseOp(
-                    clients,
-                    ci,
-                    world,
-                    stats,
-                    viz,
-                    trace,
-                    crashCtx,
-                    telemetry,
-                ),
-            );
-        }
-    }
-    await Promise.allSettled(tasks);
 }

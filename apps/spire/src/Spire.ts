@@ -135,6 +135,17 @@ const getCommitSha = (): string => {
     }
 };
 
+export interface SpireOptions {
+    /**
+     * TCP port for the HTTP/WS server. If omitted, `run.ts` + `resolveSpireListenPort`
+     * use the default (16777 for all profiles; crypto mode is in `GET /status`). Env: `API_PORT`.
+     */
+    apiPort?: number;
+    /** Default `tweetnacl`. For `fips`, use `Spire.createAsync` (FIPS key load is async). */
+    cryptoProfile?: "fips" | "tweetnacl";
+    dbType?: "mysql" | "sqlite3" | "sqlite3mem" | "sqlite";
+}
+
 /**
  * Masks identifying material in the access-log URL: hyphenated UUIDs, and
  * `/device/...` path segments that hold public-key material (32B ed25519 hex, or
@@ -150,17 +161,6 @@ function redactAccessLogUrl(url: string): string {
     return s;
 }
 
-export interface SpireOptions {
-    /** Default `tweetnacl`. For `fips`, use `Spire.createAsync` (FIPS key load is async). */
-    cryptoProfile?: "fips" | "tweetnacl";
-    /**
-     * TCP port for the HTTP/WS server. If omitted, `run.ts` + `resolveSpireListenPort`
-     * use the default (16777 for all profiles; crypto mode is in `GET /status`). Env: `API_PORT`.
-     */
-    apiPort?: number;
-    dbType?: "mysql" | "sqlite3" | "sqlite3mem" | "sqlite";
-}
-
 /** FIPS: sign key loaded inside `Spire.createAsync` before the constructor runs. */
 let pendingFipsKeyPair: KeyPair | null = null;
 
@@ -169,6 +169,7 @@ export class Spire extends EventEmitter {
     private api = express();
     private clients: ClientManager[] = [];
     private readonly commitSha = getCommitSha();
+    private readonly cryptoProfile: "fips" | "tweetnacl";
     private db: Database;
     private dbReady = false;
     private deviceChallenges = new Map<
@@ -176,20 +177,19 @@ export class Spire extends EventEmitter {
         { deviceID: string; nonce: string; time: number }
     >();
     private queuedRequestIncrements = 0;
+
     private requestsTotal = 0;
 
     private requestsTotalLoaded = false;
-
     private server: null | Server = null;
-    private signKeys: KeyPair;
 
+    private signKeys: KeyPair;
     private readonly startedAt = new Date();
     private readonly version = getAppVersion();
     private wss: WebSocketServer = new WebSocketServer({
         maxPayload: 4096,
         noServer: true,
     });
-    private readonly cryptoProfile: "fips" | "tweetnacl";
 
     constructor(SK: string, options?: SpireOptions) {
         super();

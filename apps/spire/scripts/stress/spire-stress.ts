@@ -75,8 +75,8 @@ import { DEV_API_KEY_HEADER } from "../../src/server/rateLimit.ts";
 
 import {
     bootstrapChatWorld,
-    oneChatBurst,
     type ChatWorld,
+    oneChatBurst,
 } from "./stress-chat.ts";
 import { createStressClientViz } from "./stress-client-viz.ts";
 import {
@@ -87,8 +87,8 @@ import { StressDashboard } from "./stress-dashboard.ts";
 import { formatStressUncaughtError } from "./stress-error-format.ts";
 import {
     createHttpExpectStats,
-    httpFailureTotal,
     type HttpExpectStats,
+    httpFailureTotal,
     recordHttpFailure,
 } from "./stress-http-stats.ts";
 import { StressKnobs } from "./stress-knobs.ts";
@@ -98,8 +98,8 @@ import {
 } from "./stress-load-pacing.ts";
 import {
     bootstrapNoiseWorld,
-    runNoiseBurst,
     type NoiseWorld,
+    runNoiseBurst,
 } from "./stress-noise.ts";
 import {
     isLikelySpireDown,
@@ -129,331 +129,63 @@ EventEmitter.defaultMaxListeners = 100;
 type StressCryptoProfile = "fips" | "tweetnacl";
 
 let resolvedStressCryptoProfile:
+    | null
     | Promise<StressCryptoProfile>
-    | StressCryptoProfile
-    | null = null;
+    | StressCryptoProfile = null;
 
-function parseStressCryptoProfile(raw: string): null | StressCryptoProfile {
-    if (raw === "fips" || raw === "tweetnacl") {
-        return raw;
+function attachStdinTuning(
+    knobsRef: { knobs: StressKnobs },
+    getTelemetry: () => null | StressTelemetry,
+    requestShutdown: () => void,
+): () => void {
+    if (!process.stdin.isTTY) {
+        return () => {};
     }
-    return null;
-}
+    readline.emitKeypressEvents(process.stdin);
+    const wasRaw = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
 
-function readCryptoProfileField(data: unknown): null | string {
-    if (typeof data !== "object" || data === null) {
-        return null;
-    }
-    if (!("cryptoProfile" in data)) {
-        return null;
-    }
-    const profile = data["cryptoProfile"];
-    return typeof profile === "string" ? profile : null;
-}
-
-async function resolveStressCryptoProfile(
-    host: string,
-): Promise<StressCryptoProfile> {
-    const env = process.env["SPIRE_STRESS_CRYPTO_PROFILE"]?.trim();
-    if (env !== undefined && env.length > 0) {
-        const parsed = parseStressCryptoProfile(env);
-        if (parsed === null) {
-            throw new Error(
-                `SPIRE_STRESS_CRYPTO_PROFILE must be "tweetnacl" or "fips" (received "${env}")`,
-            );
-        }
-        return parsed;
-    }
-
-    if (resolvedStressCryptoProfile !== null) {
-        return await Promise.resolve(resolvedStressCryptoProfile);
-    }
-
-    resolvedStressCryptoProfile = (async (): Promise<StressCryptoProfile> => {
-        const base = httpStatusBase(host);
-        const res = await axios.get<unknown>(`${base}/status`);
-        const profileRaw = readCryptoProfileField(res.data);
-        if (profileRaw === null) {
-            throw new Error(
-                "Could not determine Spire crypto profile from GET /status.",
-            );
-        }
-        const parsed = parseStressCryptoProfile(profileRaw);
-        if (parsed === null) {
-            throw new Error(
-                `Unknown Spire crypto profile from /status: "${profileRaw}"`,
-            );
-        }
-        return parsed;
-    })();
-
-    return await resolvedStressCryptoProfile;
-}
-
-/**
- * Hard exit after `main()` so the harness always quits even when stray libuv handles
- * remain (idle HTTP keep-alive, native sockets, etc.). Does not run if `main()` never settles.
- */
-function exitStressHarness(): void {
-    try {
-        http.globalAgent.destroy();
-        https.globalAgent.destroy();
-    } catch {
-        /* ignore */
-    }
-    const code = typeof process.exitCode === "number" ? process.exitCode : 0;
-    process.exit(code);
-}
-
-function sleepMs(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
-/**
- * Minimum required success rate for counted HTTP-ish operations.
- * - Accepts fraction (`0.8`) or percent (`80`).
- * - Default `1` preserves legacy behavior (any failure => exit 1).
- */
-function minOkRateRequired(): number {
-    const raw = process.env["SPIRE_STRESS_MIN_OK_RATE"]?.trim();
-    if (raw === undefined || raw === "") {
-        return 1;
-    }
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-        return 1;
-    }
-    if (parsed <= 1) {
-        return parsed;
-    }
-    if (parsed <= 100) {
-        return parsed / 100;
-    }
-    return 1;
-}
-
-/** Upper bound on `Client.close()` so a wedged libvex client cannot hang the harness forever. */
-function clientCloseBudgetMs(): number {
-    const raw = process.env["SPIRE_STRESS_CLIENT_CLOSE_MS"]?.trim();
-    if (raw === undefined || raw === "") {
-        return 120_000;
-    }
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
-}
-
-async function closeAllStressClients(
-    clients: readonly Client[],
-): Promise<void> {
-    const budget = clientCloseBudgetMs();
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-            reject(
-                new Error(
-                    `stress: client.close() exceeded ${String(budget)}ms (set SPIRE_STRESS_CLIENT_CLOSE_MS or check libvex/spire)`,
-                ),
-            );
-        }, budget);
-    });
-    try {
-        await Promise.race([
-            Promise.all(clients.map((c) => c.close())),
-            timeoutPromise,
-        ]);
-    } finally {
-        if (timeoutId !== undefined) {
-            clearTimeout(timeoutId);
-        }
-    }
-}
-
-/** One stderr line per wall when `SPIRE_STRESS_WEB=0` — mirrors the web stats strip (dashboard). */
-function writeStressCliWallSnapshot(p: {
-    readonly burstGapMs: number;
-    readonly clients: number;
-    readonly concurrency: number;
-    readonly host: string;
-    readonly lastWallMs: number;
-    readonly loadPacing: StressLoadPacing;
-    readonly offeredSlotsPerSec: number;
-    readonly opsCounted: number;
-    readonly phase: string;
-    readonly scenario: string;
-    readonly wallIndex: number;
-    readonly wallTotal: number | null;
-}): void {
-    const wall =
-        p.wallTotal === null
-            ? String(p.wallIndex)
-            : `${String(p.wallIndex)}/${String(p.wallTotal)}`;
-    const pacedGap =
-        p.loadPacing === "paced" && p.burstGapMs > 0
-            ? `${String(p.burstGapMs)}ms`
-            : "—";
-    process.stderr.write(
-        [
-            "[stress]",
-            `scenario=${p.scenario}`,
-            `target=${p.host}`,
-            `phase=${p.phase}`,
-            `wall#=${wall}`,
-            `pacing=${p.loadPacing}`,
-            `pacedGap=${pacedGap}`,
-            `conc=${String(p.concurrency)}`,
-            `clients=${String(p.clients)}`,
-            `lastWallSlots/s≈${String(p.offeredSlotsPerSec)}`,
-            `opsCounted=${String(p.opsCounted)}`,
-            `lastWall=${String(p.lastWallMs)}ms`,
-        ].join("  ") + "\n",
-    );
-}
-
-async function oneReadBurst(
-    client: Client,
-    scenario: string,
-    n: number,
-    stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
-    phase: string,
-    burst: number,
-): Promise<void> {
-    const ctx = (clientIndex: number): TelemetryTouchCtx => ({
-        burst,
-        clientIndex,
-        phase,
-    });
-    switch (scenario) {
-        case "whoami":
-            await Promise.allSettled(
-                Array.from({ length: n }, (_, i) =>
-                    settleWithTelemetry(
-                        stats,
-                        telemetry,
-                        "Client.whoami | read",
-                        ctx(i),
-                        client.whoami(),
-                        { inputs: { clientSlot: i } },
-                    ),
-                ),
-            );
+    const onKeypress = (_str: string, key: readline.Key | undefined): void => {
+        if (!key) {
             return;
-        case "servers":
-            await Promise.allSettled(
-                Array.from({ length: n }, (_, i) =>
-                    settleWithTelemetry(
-                        stats,
-                        telemetry,
-                        "Client.servers.retrieve | read",
-                        ctx(i),
-                        client.servers.retrieve(),
-                        { inputs: { clientSlot: i } },
-                    ),
-                ),
-            );
+        }
+        if (key.ctrl && key.name === "c") {
+            /* Raw mode: Ctrl+C is a keypress; SIGINT is unreliable — same as q. */
+            requestShutdown();
             return;
-        default:
-            await Promise.allSettled(
-                Array.from({ length: n }, (_, i) =>
-                    i % 2 === 0
-                        ? settleWithTelemetry(
-                              stats,
-                              telemetry,
-                              "Client.servers.retrieve | read",
-                              ctx(i),
-                              client.servers.retrieve(),
-                              { inputs: { clientSlot: i, branch: "servers" } },
-                          )
-                        : settleWithTelemetry(
-                              stats,
-                              telemetry,
-                              "Client.permissions.retrieve | read",
-                              ctx(i),
-                              client.permissions.retrieve(),
-                              {
-                                  inputs: {
-                                      clientSlot: i,
-                                      branch: "permissions",
-                                  },
-                              },
-                          ),
-                ),
-            );
-    }
-}
+        }
+        if (key.name === "q") {
+            requestShutdown();
+            return;
+        }
+        if (key.name === "+" || key.name === "=") {
+            knobsRef.knobs.up(key.shift ? 50 : 10);
+            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
+            return;
+        }
+        if (key.name === "-") {
+            knobsRef.knobs.down(key.shift ? 50 : 10);
+            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
+            return;
+        }
+        if (key.name === "0") {
+            knobsRef.knobs.reset();
+            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
+        }
+    };
 
-/** Returns number of logical operations awaited (per client slot). */
-async function runBurstForAllClients(
-    clients: Client[],
-    scenario: string,
-    perClientConcurrency: number,
-    chatWorld: ChatWorld | null,
-    stats: HttpExpectStats,
-    noiseWorld: NoiseWorld | null,
-    clientViz: ReturnType<typeof createStressClientViz> | null,
-    trace: StressTraceDb | null,
-    crashCtx: StressCrashContext,
-    telemetry: StressTelemetry | null,
-): Promise<number> {
-    if (scenario === "noise") {
-        if (noiseWorld === null || clientViz === null) {
-            throw new Error("noise scenario requires world + client viz.");
-        }
-        await runNoiseBurst(
-            clients,
-            noiseWorld,
-            perClientConcurrency,
-            stats,
-            clientViz,
-            trace,
-            crashCtx,
-            telemetry,
-        );
-        return clients.length * perClientConcurrency;
-    }
-    if (scenario === "chat") {
-        if (chatWorld === null) {
-            throw new Error("chat scenario requires a shared ChatWorld.");
-        }
-        await Promise.allSettled(
-            clients.map((c, i) =>
-                oneChatBurst(
-                    c,
-                    i,
-                    chatWorld,
-                    perClientConcurrency,
-                    stats,
-                    telemetry,
-                    crashCtx.phase,
-                    crashCtx.currentBurst,
-                ),
-            ),
-        );
-        return clients.length * perClientConcurrency;
-    }
-    await Promise.allSettled(
-        clients.map((c) =>
-            oneReadBurst(
-                c,
-                scenario,
-                perClientConcurrency,
-                stats,
-                telemetry,
-                crashCtx.phase,
-                crashCtx.currentBurst,
-            ),
-        ),
-    );
-    return clients.length * perClientConcurrency;
+    process.stdin.on("keypress", onKeypress);
+    return () => {
+        process.stdin.off("keypress", onKeypress);
+        process.stdin.setRawMode(wasRaw);
+    };
 }
 
 async function bootstrapClient(
     host: string,
     scenario: string,
     stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
     phase: string,
     burst: number,
 ): Promise<Client> {
@@ -484,8 +216,8 @@ async function bootstrapClient(
             Client.create(undefined, createOpts),
             {
                 inputs: {
-                    dbFolder: basename(dbFolder),
                     cryptoProfile,
+                    dbFolder: basename(dbFolder),
                     host,
                     inMemoryDb: true,
                     unsafeHttp: true,
@@ -612,99 +344,63 @@ async function bootstrapClient(
     }
 }
 
+/** Upper bound on `Client.close()` so a wedged libvex client cannot hang the harness forever. */
+function clientCloseBudgetMs(): number {
+    const raw = process.env["SPIRE_STRESS_CLIENT_CLOSE_MS"]?.trim();
+    if (raw === undefined || raw === "") {
+        return 120_000;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120_000;
+}
+
+async function closeAllStressClients(
+    clients: readonly Client[],
+): Promise<void> {
+    const budget = clientCloseBudgetMs();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(
+                new Error(
+                    `stress: client.close() exceeded ${String(budget)}ms (set SPIRE_STRESS_CLIENT_CLOSE_MS or check libvex/spire)`,
+                ),
+            );
+        }, budget);
+    });
+    try {
+        await Promise.race([
+            Promise.all(clients.map((c) => c.close())),
+            timeoutPromise,
+        ]);
+    } finally {
+        if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
+/**
+ * Hard exit after `main()` so the harness always quits even when stray libuv handles
+ * remain (idle HTTP keep-alive, native sockets, etc.). Does not run if `main()` never settles.
+ */
+function exitStressHarness(): void {
+    try {
+        http.globalAgent.destroy();
+        https.globalAgent.destroy();
+    } catch {
+        /* ignore */
+    }
+    const code = typeof process.exitCode === "number" ? process.exitCode : 0;
+    process.exit(code);
+}
+
 function httpStatusBase(host: string): string {
     const trimmed = host.trim();
     if (/^https?:\/\//i.test(trimmed)) {
         return trimmed.replace(/\/$/, "");
     }
     return `http://${trimmed}`;
-}
-
-/** Open the dashboard URL in the system default browser (no extra npm deps). */
-function openStressDashboardInBrowser(url: string): void {
-    const child =
-        process.platform === "darwin"
-            ? spawn("open", [url], { detached: true, stdio: "ignore" })
-            : process.platform === "win32"
-              ? spawn("cmd", ["/c", "start", "", url], {
-                    detached: true,
-                    shell: false,
-                    stdio: "ignore",
-                })
-              : spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
-    child.unref();
-}
-
-function attachStdinTuning(
-    knobsRef: { knobs: StressKnobs },
-    getTelemetry: () => StressTelemetry | null,
-    requestShutdown: () => void,
-): () => void {
-    if (!process.stdin.isTTY) {
-        return () => {};
-    }
-    readline.emitKeypressEvents(process.stdin);
-    const wasRaw = process.stdin.isRaw;
-    process.stdin.setRawMode(true);
-
-    const onKeypress = (_str: string, key: readline.Key | undefined): void => {
-        if (!key) {
-            return;
-        }
-        if (key.ctrl && key.name === "c") {
-            /* Raw mode: Ctrl+C is a keypress; SIGINT is unreliable — same as q. */
-            requestShutdown();
-            return;
-        }
-        if (key.name === "q") {
-            requestShutdown();
-            return;
-        }
-        if (key.name === "+" || key.name === "=") {
-            knobsRef.knobs.up(key.shift ? 50 : 10);
-            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
-            return;
-        }
-        if (key.name === "-") {
-            knobsRef.knobs.down(key.shift ? 50 : 10);
-            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
-            return;
-        }
-        if (key.name === "0") {
-            knobsRef.knobs.reset();
-            getTelemetry()?.setConcurrency(knobsRef.knobs.concurrency);
-        }
-    };
-
-    process.stdin.on("keypress", onKeypress);
-    return () => {
-        process.stdin.off("keypress", onKeypress);
-        process.stdin.setRawMode(wasRaw);
-    };
-}
-
-function printSpireStressCliHelp(): void {
-    process.stdout.write(
-        [
-            "spire-stress — libvex clients against a running Spire",
-            "",
-            "Requires DEV_API_KEY (same value as on the Spire process).",
-            "",
-            "Environment (common):",
-            "  SPIRE_STRESS_HOST              default 127.0.0.1:16777",
-            "  SPIRE_STRESS_SCENARIO          mixed | noise | chat | …",
-            "  SPIRE_STRESS_CLIENTS           default 10",
-            "  SPIRE_STRESS_CONCURRENCY       parallel ops per client per wall",
-            "  SPIRE_STRESS_ROUNDS=N          exit after N flood walls",
-            "  SPIRE_STRESS_FOREVER=0         finite run (default 10 walls if ROUNDS unset)",
-            "  SPIRE_STRESS_MAX_WALL_SEC      wall-time cap when FOREVER=1",
-            "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
-            "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
-            "",
-            "npm run stress:web   ·   npm run stress:cli (headless matrix)",
-            "",
-        ].join("\n"),
-    );
 }
 
 async function main(): Promise<void> {
@@ -825,7 +521,7 @@ async function main(): Promise<void> {
     /** Ref object; read stop via `stressRunShouldStop()` so async loops are not wrongly narrowed. */
     const runFlags = { interrupted: false, stop: false };
     const stressRunShouldStop = (): boolean => runFlags.stop;
-    const telemetryRef = { current: null as StressTelemetry | null };
+    const telemetryRef = { current: null as null | StressTelemetry };
     const detachStdin = forever
         ? attachStdinTuning(
               knobsRef,
@@ -960,7 +656,7 @@ async function main(): Promise<void> {
             process.stdout.isTTY &&
             process.env["SPIRE_STRESS_PLAIN"] !== "1";
         const statusBase = httpStatusBase(host);
-        let dashboard: StressDashboard | null = null;
+        let dashboard: null | StressDashboard = null;
 
         let lastHttpStats: HttpExpectStats = createHttpExpectStats();
         let lastBurstWallMs: number[] = [];
@@ -1020,7 +716,7 @@ async function main(): Promise<void> {
             const clients: Client[] = [];
             crashCtx.phase = "bootstrap";
             telemetry.setPhase("bootstrap");
-            dashboard?.setState({ phase: "bootstrap", currentBurst: 0 });
+            dashboard?.setState({ currentBurst: 0, phase: "bootstrap" });
 
             for (let i = 0; i < sessionClientCount; i++) {
                 clients.push(
@@ -1036,7 +732,7 @@ async function main(): Promise<void> {
             }
             trace?.append({
                 burst: 0,
-                detail: { step: "clients_bootstrapped", count: clients.length },
+                detail: { count: clients.length, step: "clients_bootstrapped" },
                 event: "bootstrap",
                 phase: crashCtx.phase,
             });
@@ -1412,10 +1108,10 @@ async function main(): Promise<void> {
                 writeFileSync(
                     facetDumpPath,
                     `${JSON.stringify({
-                        v: 1 as const,
-                        scenario,
-                        host,
                         facets: facetSnap.facets,
+                        host,
+                        scenario,
+                        v: 1 as const,
                     })}\n`,
                     "utf8",
                 );
@@ -1519,6 +1215,310 @@ async function main(): Promise<void> {
         trace?.close();
         uninstallCrashDump();
     }
+}
+
+/**
+ * Minimum required success rate for counted HTTP-ish operations.
+ * - Accepts fraction (`0.8`) or percent (`80`).
+ * - Default `1` preserves legacy behavior (any failure => exit 1).
+ */
+function minOkRateRequired(): number {
+    const raw = process.env["SPIRE_STRESS_MIN_OK_RATE"]?.trim();
+    if (raw === undefined || raw === "") {
+        return 1;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return 1;
+    }
+    if (parsed <= 1) {
+        return parsed;
+    }
+    if (parsed <= 100) {
+        return parsed / 100;
+    }
+    return 1;
+}
+
+async function oneReadBurst(
+    client: Client,
+    scenario: string,
+    n: number,
+    stats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+): Promise<void> {
+    const ctx = (clientIndex: number): TelemetryTouchCtx => ({
+        burst,
+        clientIndex,
+        phase,
+    });
+    switch (scenario) {
+        case "servers":
+            await Promise.allSettled(
+                Array.from({ length: n }, (_, i) =>
+                    settleWithTelemetry(
+                        stats,
+                        telemetry,
+                        "Client.servers.retrieve | read",
+                        ctx(i),
+                        client.servers.retrieve(),
+                        { inputs: { clientSlot: i } },
+                    ),
+                ),
+            );
+            return;
+        case "whoami":
+            await Promise.allSettled(
+                Array.from({ length: n }, (_, i) =>
+                    settleWithTelemetry(
+                        stats,
+                        telemetry,
+                        "Client.whoami | read",
+                        ctx(i),
+                        client.whoami(),
+                        { inputs: { clientSlot: i } },
+                    ),
+                ),
+            );
+            return;
+        default:
+            await Promise.allSettled(
+                Array.from({ length: n }, (_, i) =>
+                    i % 2 === 0
+                        ? settleWithTelemetry(
+                              stats,
+                              telemetry,
+                              "Client.servers.retrieve | read",
+                              ctx(i),
+                              client.servers.retrieve(),
+                              { inputs: { branch: "servers", clientSlot: i } },
+                          )
+                        : settleWithTelemetry(
+                              stats,
+                              telemetry,
+                              "Client.permissions.retrieve | read",
+                              ctx(i),
+                              client.permissions.retrieve(),
+                              {
+                                  inputs: {
+                                      branch: "permissions",
+                                      clientSlot: i,
+                                  },
+                              },
+                          ),
+                ),
+            );
+    }
+}
+
+/** Open the dashboard URL in the system default browser (no extra npm deps). */
+function openStressDashboardInBrowser(url: string): void {
+    const child =
+        process.platform === "darwin"
+            ? spawn("open", [url], { detached: true, stdio: "ignore" })
+            : process.platform === "win32"
+              ? spawn("cmd", ["/c", "start", "", url], {
+                    detached: true,
+                    shell: false,
+                    stdio: "ignore",
+                })
+              : spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
+    child.unref();
+}
+
+function parseStressCryptoProfile(raw: string): null | StressCryptoProfile {
+    if (raw === "fips" || raw === "tweetnacl") {
+        return raw;
+    }
+    return null;
+}
+
+function printSpireStressCliHelp(): void {
+    process.stdout.write(
+        [
+            "spire-stress — libvex clients against a running Spire",
+            "",
+            "Requires DEV_API_KEY (same value as on the Spire process).",
+            "",
+            "Environment (common):",
+            "  SPIRE_STRESS_HOST              default 127.0.0.1:16777",
+            "  SPIRE_STRESS_SCENARIO          mixed | noise | chat | …",
+            "  SPIRE_STRESS_CLIENTS           default 10",
+            "  SPIRE_STRESS_CONCURRENCY       parallel ops per client per wall",
+            "  SPIRE_STRESS_ROUNDS=N          exit after N flood walls",
+            "  SPIRE_STRESS_FOREVER=0         finite run (default 10 walls if ROUNDS unset)",
+            "  SPIRE_STRESS_MAX_WALL_SEC      wall-time cap when FOREVER=1",
+            "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
+            "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
+            "",
+            "npm run stress:web   ·   npm run stress:cli (headless matrix)",
+            "",
+        ].join("\n"),
+    );
+}
+
+function readCryptoProfileField(data: unknown): null | string {
+    if (typeof data !== "object" || data === null) {
+        return null;
+    }
+    if (!("cryptoProfile" in data)) {
+        return null;
+    }
+    const profile = data["cryptoProfile"];
+    return typeof profile === "string" ? profile : null;
+}
+
+async function resolveStressCryptoProfile(
+    host: string,
+): Promise<StressCryptoProfile> {
+    const env = process.env["SPIRE_STRESS_CRYPTO_PROFILE"]?.trim();
+    if (env !== undefined && env.length > 0) {
+        const parsed = parseStressCryptoProfile(env);
+        if (parsed === null) {
+            throw new Error(
+                `SPIRE_STRESS_CRYPTO_PROFILE must be "tweetnacl" or "fips" (received "${env}")`,
+            );
+        }
+        return parsed;
+    }
+
+    if (resolvedStressCryptoProfile !== null) {
+        return await Promise.resolve(resolvedStressCryptoProfile);
+    }
+
+    resolvedStressCryptoProfile = (async (): Promise<StressCryptoProfile> => {
+        const base = httpStatusBase(host);
+        const res = await axios.get<unknown>(`${base}/status`);
+        const profileRaw = readCryptoProfileField(res.data);
+        if (profileRaw === null) {
+            throw new Error(
+                "Could not determine Spire crypto profile from GET /status.",
+            );
+        }
+        const parsed = parseStressCryptoProfile(profileRaw);
+        if (parsed === null) {
+            throw new Error(
+                `Unknown Spire crypto profile from /status: "${profileRaw}"`,
+            );
+        }
+        return parsed;
+    })();
+
+    return await resolvedStressCryptoProfile;
+}
+
+/** Returns number of logical operations awaited (per client slot). */
+async function runBurstForAllClients(
+    clients: Client[],
+    scenario: string,
+    perClientConcurrency: number,
+    chatWorld: ChatWorld | null,
+    stats: HttpExpectStats,
+    noiseWorld: NoiseWorld | null,
+    clientViz: null | ReturnType<typeof createStressClientViz>,
+    trace: null | StressTraceDb,
+    crashCtx: StressCrashContext,
+    telemetry: null | StressTelemetry,
+): Promise<number> {
+    if (scenario === "noise") {
+        if (noiseWorld === null || clientViz === null) {
+            throw new Error("noise scenario requires world + client viz.");
+        }
+        await runNoiseBurst(
+            clients,
+            noiseWorld,
+            perClientConcurrency,
+            stats,
+            clientViz,
+            trace,
+            crashCtx,
+            telemetry,
+        );
+        return clients.length * perClientConcurrency;
+    }
+    if (scenario === "chat") {
+        if (chatWorld === null) {
+            throw new Error("chat scenario requires a shared ChatWorld.");
+        }
+        await Promise.allSettled(
+            clients.map((c, i) =>
+                oneChatBurst(
+                    c,
+                    i,
+                    chatWorld,
+                    perClientConcurrency,
+                    stats,
+                    telemetry,
+                    crashCtx.phase,
+                    crashCtx.currentBurst,
+                ),
+            ),
+        );
+        return clients.length * perClientConcurrency;
+    }
+    await Promise.allSettled(
+        clients.map((c) =>
+            oneReadBurst(
+                c,
+                scenario,
+                perClientConcurrency,
+                stats,
+                telemetry,
+                crashCtx.phase,
+                crashCtx.currentBurst,
+            ),
+        ),
+    );
+    return clients.length * perClientConcurrency;
+}
+
+function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+/** One stderr line per wall when `SPIRE_STRESS_WEB=0` — mirrors the web stats strip (dashboard). */
+function writeStressCliWallSnapshot(p: {
+    readonly burstGapMs: number;
+    readonly clients: number;
+    readonly concurrency: number;
+    readonly host: string;
+    readonly lastWallMs: number;
+    readonly loadPacing: StressLoadPacing;
+    readonly offeredSlotsPerSec: number;
+    readonly opsCounted: number;
+    readonly phase: string;
+    readonly scenario: string;
+    readonly wallIndex: number;
+    readonly wallTotal: null | number;
+}): void {
+    const wall =
+        p.wallTotal === null
+            ? String(p.wallIndex)
+            : `${String(p.wallIndex)}/${String(p.wallTotal)}`;
+    const pacedGap =
+        p.loadPacing === "paced" && p.burstGapMs > 0
+            ? `${String(p.burstGapMs)}ms`
+            : "—";
+    process.stderr.write(
+        [
+            "[stress]",
+            `scenario=${p.scenario}`,
+            `target=${p.host}`,
+            `phase=${p.phase}`,
+            `wall#=${wall}`,
+            `pacing=${p.loadPacing}`,
+            `pacedGap=${pacedGap}`,
+            `conc=${String(p.concurrency)}`,
+            `clients=${String(p.clients)}`,
+            `lastWallSlots/s≈${String(p.offeredSlotsPerSec)}`,
+            `opsCounted=${String(p.opsCounted)}`,
+            `lastWall=${String(p.lastWallMs)}ms`,
+        ].join("  ") + "\n",
+    );
 }
 
 void main()

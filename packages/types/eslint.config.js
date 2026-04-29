@@ -1,10 +1,8 @@
-import perfectionist from "eslint-plugin-perfectionist";
+import { base } from "@vex-chat/eslint-config/base";
 import tseslint from "typescript-eslint";
-import eslintConfigPrettier from "eslint-config-prettier/flat";
 
 export default tseslint.config(
-    ...tseslint.configs.strictTypeChecked,
-    perfectionist.configs["recommended-natural"],
+    ...base,
     {
         languageOptions: {
             parserOptions: {
@@ -13,6 +11,7 @@ export default tseslint.config(
             },
         },
         rules: {
+            // types is the type-foundation package — strictest defaults.
             "@typescript-eslint/no-unsafe-type-assertion": "error",
             "@typescript-eslint/strict-boolean-expressions": [
                 "error",
@@ -23,46 +22,11 @@ export default tseslint.config(
                 },
             ],
             "@typescript-eslint/switch-exhaustiveness-check": "error",
-            "@typescript-eslint/consistent-type-imports": [
-                "error",
-                {
-                    prefer: "type-imports",
-                    fixStyle: "separate-type-imports",
-                },
-            ],
-            "@typescript-eslint/consistent-type-exports": "error",
             "@typescript-eslint/explicit-function-return-type": "error",
             "@typescript-eslint/explicit-module-boundary-types": "error",
             "@typescript-eslint/no-import-type-side-effects": "error",
             "@typescript-eslint/prefer-readonly": "error",
             "@typescript-eslint/require-array-sort-compare": "error",
-
-            "perfectionist/sort-imports": [
-                "error",
-                {
-                    type: "natural",
-                    order: "asc",
-                    ignoreCase: true,
-                    internalPattern: ["^@vex-chat/"],
-                    newlinesBetween: 1,
-                    customGroups: [
-                        {
-                            groupName: "type-imports",
-                            modifiers: ["type"],
-                        },
-                    ],
-                    groups: [
-                        "type-imports",
-                        "builtin",
-                        "internal",
-                        "external",
-                        "parent",
-                        "sibling",
-                        "index",
-                        "unknown",
-                    ],
-                },
-            ],
         },
     },
     {
@@ -74,5 +38,4 @@ export default tseslint.config(
             "@typescript-eslint/no-unused-vars": "off",
         },
     },
-    eslintConfigPrettier,
 );

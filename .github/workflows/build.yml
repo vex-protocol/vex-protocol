@@ -56,11 +56,8 @@ jobs:
             - name: Test
               run: pnpm test
 
-            - name: Lint
+            - name: Lint (includes copyright header check via eslint-plugin-headers)
               run: pnpm lint
-
-            - name: Copyright headers
-              run: pnpm copyright:check
 
             - name: Format check
               run: pnpm format:check

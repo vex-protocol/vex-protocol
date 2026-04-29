@@ -19,10 +19,6 @@ const REDACT_KEYS =
 const MAX_STRING = 240;
 const MAX_DEPTH = 5;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** First `Client.*` segment from catalog `protocolPath` (before `;`) for compact labels. */
 export function facetToLibvexSurface(surfaceKey: string): string {
     const key = normalizeStressSurfaceKey(surfaceKey);
@@ -53,7 +49,7 @@ export function firstClientProtocolCall(protocolPath: string): string {
  */
 export function formatHarnessCallNotation(
     protocolPath: string,
-    requestInputs?: Readonly<Record<string, unknown>> | null,
+    requestInputs?: null | Readonly<Record<string, unknown>>,
 ): string | undefined {
     const head = firstClientProtocolCall(protocolPath);
     if (head.length === 0) {
@@ -77,6 +73,29 @@ export function formatHarnessCallNotation(
     } catch {
         return `${head}(/* [unserializable requestInputs] */)`;
     }
+}
+
+/** JSON-safe, redacted copy for telemetry / issue bundles. */
+export function sanitizeRequestInputs(
+    inputs: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    const out = sanitizeValue(inputs, 0);
+    if (isPlainObject(out)) {
+        return { ...out };
+    }
+    return { value: out };
+}
+
+/** Shorten ids for display while keeping some entropy for correlation debugging. */
+export function shortId(id: string, keep = 10): string {
+    if (id.length <= keep + 2) {
+        return id;
+    }
+    return `${id.slice(0, keep)}…`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function sanitizeValue(value: unknown, depth: number): unknown {
@@ -115,23 +134,4 @@ function sanitizeValue(value: unknown, depth: number): unknown {
         return out;
     }
     return `[${typeof value}]`;
-}
-
-/** JSON-safe, redacted copy for telemetry / issue bundles. */
-export function sanitizeRequestInputs(
-    inputs: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-    const out = sanitizeValue(inputs, 0);
-    if (isPlainObject(out)) {
-        return { ...out };
-    }
-    return { value: out };
-}
-
-/** Shorten ids for display while keeping some entropy for correlation debugging. */
-export function shortId(id: string, keep = 10): string {
-    if (id.length <= keep + 2) {
-        return id;
-    }
-    return `${id.slice(0, keep)}…`;
 }

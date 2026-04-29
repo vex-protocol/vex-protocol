@@ -20,12 +20,12 @@ See [**LICENSING.md**](./LICENSING.md) for the default **AGPL-3.0-or-later** ter
 
 ## Copyright headers
 
-New source files under `src/`, `scripts/`, and `services/` should include the standard header (see any existing `.ts` / `.js` file).
+New source files under `src/` should include the standard Vex copyright header. The `eslint-plugin-headers` rule (configured in `@vex-chat/eslint-config/base`) checks every linted file across the workspace.
 
-- **Check (also runs in CI):** `npm run copyright:check`
-- **Apply missing headers:** `npm run copyright:apply`
+- **Check:** `pnpm lint` (also runs in CI)
+- **Apply missing / fix mismatched headers:** `pnpm lint:fix`
 
-From the **vex-protocol** monorepo root, run all three repos with: `node scripts/add-copyright-headers.mjs` (add) or `node scripts/add-copyright-headers.mjs --check`.
+Test files under `**/__tests__/**` are exempt by per-package config override.
 
 ## Development
 

@@ -30,14 +30,14 @@ export interface StressRunSummary {
 
 function scenarioPlainEnglish(scenario: string): string {
     switch (scenario) {
-        case "whoami":
-            return "whoami (light auth check)";
-        case "servers":
-            return "list servers (repeated)";
         case "chat":
             return "chat-shaped load (WS + one shared server, group + DM + history reads)";
         case "noise":
             return "RNG libvex noise (multi-user server, invites, DMs, group chat, files, emoji, …)";
+        case "servers":
+            return "list servers (repeated)";
+        case "whoami":
+            return "whoami (light auth check)";
         case "mixed":
         default:
             return "mixed reads (servers + permissions, 50/50 per wall)";
@@ -58,80 +58,6 @@ export interface StressFacetDumpV1 {
     readonly v: 1;
 }
 
-function facetStatusFromCounts(
-    ok: number,
-    fail: number,
-): StressUiFacetRow["status"] {
-    const t = ok + fail;
-    if (t === 0) {
-        return "idle";
-    }
-    if (fail === 0) {
-        return "ok";
-    }
-    if (ok === 0) {
-        return "fail";
-    }
-    return "warn";
-}
-
-/**
- * Merge facet rows from multiple stress runs (same scenario catalog) by surface `id`.
- */
-export function mergeStressFacetRowLists(
-    lists: readonly (readonly StressUiFacetRow[])[],
-): StressUiFacetRow[] {
-    const byId = new Map<string, StressUiFacetRow>();
-    for (const list of lists) {
-        for (const f of list) {
-            const p = byId.get(f.id);
-            if (p === undefined) {
-                byId.set(f.id, { ...f });
-            } else {
-                const ok = p.ok + f.ok;
-                const fail = p.fail + f.fail;
-                byId.set(f.id, {
-                    ...p,
-                    fail,
-                    ok,
-                    status: facetStatusFromCounts(ok, fail),
-                });
-            }
-        }
-    }
-    return [...byId.values()].sort(
-        (a, b) => a.group.localeCompare(b.group) || a.id.localeCompare(b.id),
-    );
-}
-
-function padPathCell(s: string, width: number): string {
-    const t = s.length > width ? `${s.slice(0, width - 1)}…` : s;
-    return t + " ".repeat(Math.max(0, width - t.length));
-}
-
-/** Short label for tables — catalog `id` is usually tighter than full protocol prose. */
-function condensedFacetRoute(f: StressUiFacetRow): string {
-    const id = f.id.trim();
-    if (id.length > 0 && id.length <= 44) {
-        return id;
-    }
-    const p = f.protocolPath.trim();
-    return p.length <= 44 ? p : `${p.slice(0, 41)}…`;
-}
-
-function facetGaugeEmoji(status: StressUiFacetRow["status"]): string {
-    switch (status) {
-        case "ok":
-            return "✅";
-        case "warn":
-            return "⚠️";
-        case "fail":
-            return "⛔";
-        default:
-            return "⬚";
-    }
-}
-
 export interface StressFacetReportFormatInput {
     readonly facets: readonly StressUiFacetRow[];
     readonly host: string;
@@ -143,7 +69,7 @@ export interface StressFacetReportFormatInput {
  * Only surfaces with at least one completion (ok+fail &gt; 0) are listed unless `includeIdle` is true.
  */
 export function formatStressFacetCiReport(
-    snap: StressUiSnapshot | StressFacetReportFormatInput,
+    snap: StressFacetReportFormatInput | StressUiSnapshot,
     options?: { readonly headline?: string; readonly includeIdle?: boolean },
 ): string {
     const includeIdle = options?.includeIdle === true;
@@ -190,17 +116,6 @@ export function formatStressFacetCiReport(
         lines.push("   (no facet touches — check harness / telemetry wiring.)");
         lines.push("");
     }
-    return lines.join("\n");
-}
-
-/** Short stdout block for headless / CI (`SPIRE_STRESS_WEB=0`, no tutorial copy). */
-export function formatStressRunSummaryQuiet(s: StressRunSummary): string {
-    const lines = [
-        "",
-        `stress · ${s.host} · ${s.scenario} · ${String(s.burstCount)} walls · clients ${String(s.clientCount)} · conc ${String(s.lastConcurrency)}`,
-        `  HTTP ok ${String(s.httpResponsesOk)} · non-2xx/other ${String(s.httpResponsesOther)} · wall p50 ${String(s.roundMedianMs)}ms p95 ${String(s.roundP95Ms)}ms · ${String(s.totalWallMs)}ms total`,
-        "",
-    ];
     return lines.join("\n");
 }
 
@@ -256,10 +171,50 @@ export function formatStressRunSummary(s: StressRunSummary): string {
     return lines.join("\n");
 }
 
+/** Short stdout block for headless / CI (`SPIRE_STRESS_WEB=0`, no tutorial copy). */
+export function formatStressRunSummaryQuiet(s: StressRunSummary): string {
+    const lines = [
+        "",
+        `stress · ${s.host} · ${s.scenario} · ${String(s.burstCount)} walls · clients ${String(s.clientCount)} · conc ${String(s.lastConcurrency)}`,
+        `  HTTP ok ${String(s.httpResponsesOk)} · non-2xx/other ${String(s.httpResponsesOther)} · wall p50 ${String(s.roundMedianMs)}ms p95 ${String(s.roundP95Ms)}ms · ${String(s.totalWallMs)}ms total`,
+        "",
+    ];
+    return lines.join("\n");
+}
+
+/**
+ * Merge facet rows from multiple stress runs (same scenario catalog) by surface `id`.
+ */
+export function mergeStressFacetRowLists(
+    lists: readonly (readonly StressUiFacetRow[])[],
+): StressUiFacetRow[] {
+    const byId = new Map<string, StressUiFacetRow>();
+    for (const list of lists) {
+        for (const f of list) {
+            const p = byId.get(f.id);
+            if (p === undefined) {
+                byId.set(f.id, { ...f });
+            } else {
+                const ok = p.ok + f.ok;
+                const fail = p.fail + f.fail;
+                byId.set(f.id, {
+                    ...p,
+                    fail,
+                    ok,
+                    status: facetStatusFromCounts(ok, fail),
+                });
+            }
+        }
+    }
+    return [...byId.values()].sort(
+        (a, b) => a.group.localeCompare(b.group) || a.id.localeCompare(b.id),
+    );
+}
+
 export function writeStressRunSummary(
     s: StressRunSummary,
     options?: {
-        readonly facetSnapshot?: StressUiSnapshot | null;
+        readonly facetSnapshot?: null | StressUiSnapshot;
         readonly quiet?: boolean;
     },
 ): void {
@@ -274,10 +229,10 @@ export function writeStressRunSummary(
             clientCount: s.clientCount,
             concurrencySnapshot: s.concurrencySnapshot,
             host: s.host,
-            httpRequestsCompleted: s.httpRequestsCompleted,
             http_responses_by_status: s.httpResponsesByStatus,
             http_responses_ok: s.httpResponsesOk,
             http_responses_other: s.httpResponsesOther,
+            httpRequestsCompleted: s.httpRequestsCompleted,
             lastConcurrency: s.lastConcurrency,
             p50_ms: s.roundMedianMs,
             p95_ms: s.roundP95Ms,
@@ -301,4 +256,49 @@ export function writeStressRunSummary(
         }
         process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     }
+}
+
+/** Short label for tables — catalog `id` is usually tighter than full protocol prose. */
+function condensedFacetRoute(f: StressUiFacetRow): string {
+    const id = f.id.trim();
+    if (id.length > 0 && id.length <= 44) {
+        return id;
+    }
+    const p = f.protocolPath.trim();
+    return p.length <= 44 ? p : `${p.slice(0, 41)}…`;
+}
+
+function facetGaugeEmoji(status: StressUiFacetRow["status"]): string {
+    switch (status) {
+        case "fail":
+            return "⛔";
+        case "ok":
+            return "✅";
+        case "warn":
+            return "⚠️";
+        default:
+            return "⬚";
+    }
+}
+
+function facetStatusFromCounts(
+    ok: number,
+    fail: number,
+): StressUiFacetRow["status"] {
+    const t = ok + fail;
+    if (t === 0) {
+        return "idle";
+    }
+    if (fail === 0) {
+        return "ok";
+    }
+    if (ok === 0) {
+        return "fail";
+    }
+    return "warn";
+}
+
+function padPathCell(s: string, width: number): string {
+    const t = s.length > width ? `${s.slice(0, width - 1)}…` : s;
+    return t + " ".repeat(Math.max(0, width - t.length));
 }

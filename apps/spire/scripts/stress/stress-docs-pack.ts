@@ -29,37 +29,6 @@ const DEFAULT_OUT = join(homedir(), ".spire-stress", "docs-pack.json");
 const MAX_FILES = 60;
 const MAX_CHARS_PER_FILE = 12_000;
 
-function walkMd(root: string, acc: string[], depth: number): void {
-    if (depth > 8 || acc.length >= MAX_FILES) {
-        return;
-    }
-    let names: string[];
-    try {
-        names = readdirSync(root);
-    } catch {
-        return;
-    }
-    for (const name of names) {
-        if (acc.length >= MAX_FILES) {
-            break;
-        }
-        if (name === "node_modules" || name.startsWith(".")) {
-            continue;
-        }
-        const p = join(root, name);
-        try {
-            const st = statSync(p);
-            if (st.isDirectory()) {
-                walkMd(p, acc, depth + 1);
-            } else if (st.isFile() && name.endsWith(".md")) {
-                acc.push(p);
-            }
-        } catch {
-            /* ignore broken symlinks */
-        }
-    }
-}
-
 function defaultDocsRoot(): string {
     const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [
@@ -108,11 +77,11 @@ function main(): void {
     }
 
     const payload = {
+        fileCount: files.length,
+        files,
         generatedAt: new Date().toISOString(),
         root: resolve(root),
         schema: "spire-stress-docs-pack@1",
-        fileCount: files.length,
-        files,
     };
 
     mkdirSync(dirname(outPath), { recursive: true });
@@ -120,6 +89,37 @@ function main(): void {
     process.stdout.write(
         `Wrote ${String(files.length)} markdown files to ${outPath}\n`,
     );
+}
+
+function walkMd(root: string, acc: string[], depth: number): void {
+    if (depth > 8 || acc.length >= MAX_FILES) {
+        return;
+    }
+    let names: string[];
+    try {
+        names = readdirSync(root);
+    } catch {
+        return;
+    }
+    for (const name of names) {
+        if (acc.length >= MAX_FILES) {
+            break;
+        }
+        if (name === "node_modules" || name.startsWith(".")) {
+            continue;
+        }
+        const p = join(root, name);
+        try {
+            const st = statSync(p);
+            if (st.isDirectory()) {
+                walkMd(p, acc, depth + 1);
+            } else if (st.isFile() && name.endsWith(".md")) {
+                acc.push(p);
+            }
+        } catch {
+            /* ignore broken symlinks */
+        }
+    }
 }
 
 main();

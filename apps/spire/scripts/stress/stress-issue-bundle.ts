@@ -32,7 +32,7 @@ export interface StressIssueBundleV1 {
     readonly fatal: {
         readonly kind: "uncaughtException" | "unhandledRejection";
         readonly message: string;
-        readonly stack: string | null;
+        readonly stack: null | string;
     };
     readonly generatedAt: string;
     readonly run: Record<string, unknown>;
@@ -40,26 +40,10 @@ export interface StressIssueBundleV1 {
     readonly telemetry: unknown;
 }
 
-function safeJson(value: unknown): unknown {
-    try {
-        return JSON.parse(JSON.stringify(value)) as unknown;
-    } catch {
-        return { _error: "telemetry_snapshot_not_json_serializable" };
-    }
-}
-
-function readStr(obj: unknown, key: string): string {
-    if (typeof obj !== "object" || obj === null) {
-        return "";
-    }
-    const v: unknown = Reflect.get(obj, key);
-    return typeof v === "string" ? v : "";
-}
-
 export function buildFatalIssueBundle(input: {
-    readonly run: Record<string, unknown>;
     readonly kind: "uncaughtException" | "unhandledRejection";
     readonly reason: unknown;
+    readonly run: Record<string, unknown>;
     readonly telemetrySnapshot: unknown;
 }): StressIssueBundleV1 {
     const err = input.reason;
@@ -145,4 +129,20 @@ export function writeFatalIssueBundle(bundle: StressIssueBundleV1): string {
         "utf8",
     );
     return STRESS_ISSUE_BUNDLE_PATH;
+}
+
+function readStr(obj: unknown, key: string): string {
+    if (typeof obj !== "object" || obj === null) {
+        return "";
+    }
+    const v: unknown = Reflect.get(obj, key);
+    return typeof v === "string" ? v : "";
+}
+
+function safeJson(value: unknown): unknown {
+    try {
+        return JSON.parse(JSON.stringify(value)) as unknown;
+    } catch {
+        return { _error: "telemetry_snapshot_not_json_serializable" };
+    }
 }

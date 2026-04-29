@@ -29,26 +29,6 @@ export interface ChatWorld {
 
 const DURATIONS = ["1h", "24h", "48h", "7d"] as const;
 
-function pickDuration(): string {
-    return DURATIONS[randomInt(0, DURATIONS.length)] ?? "24h";
-}
-
-function pickPeerUserID(world: ChatWorld, clientIndex: number): string | null {
-    const choices = world.userIDs.filter((_id, i) => i !== clientIndex);
-    if (choices.length === 0) {
-        return null;
-    }
-    return choices[randomInt(0, choices.length)] ?? null;
-}
-
-function touchCtx(
-    phase: string,
-    burst: number,
-    clientIndex: number,
-): TelemetryTouchCtx {
-    return { burst, clientIndex, phase };
-}
-
 /**
  * Hub creates one server, invites every other client (same pattern as noise),
  * so all stress clients share #general instead of each living on its own server.
@@ -56,7 +36,7 @@ function touchCtx(
 export async function bootstrapChatWorld(
     clients: Client[],
     stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
     phase: string,
     burst: number,
 ): Promise<ChatWorld> {
@@ -148,13 +128,40 @@ export async function bootstrapChatWorld(
     };
 }
 
+export async function oneChatBurst(
+    client: Client,
+    clientIndex: number,
+    world: ChatWorld,
+    n: number,
+    stats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+): Promise<void> {
+    await allTracked(
+        stats,
+        Array.from({ length: n }, (_, i) =>
+            oneChatOp(
+                client,
+                world,
+                clientIndex,
+                i,
+                stats,
+                telemetry,
+                phase,
+                burst,
+            ),
+        ),
+    );
+}
+
 export async function oneChatOp(
     client: Client,
     world: ChatWorld,
     clientIndex: number,
     slot: number,
     stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
     phase: string,
     burst: number,
 ): Promise<void> {
@@ -309,29 +316,22 @@ export async function oneChatOp(
     );
 }
 
-export async function oneChatBurst(
-    client: Client,
-    clientIndex: number,
-    world: ChatWorld,
-    n: number,
-    stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
+function pickDuration(): string {
+    return DURATIONS[randomInt(0, DURATIONS.length)] ?? "24h";
+}
+
+function pickPeerUserID(world: ChatWorld, clientIndex: number): null | string {
+    const choices = world.userIDs.filter((_id, i) => i !== clientIndex);
+    if (choices.length === 0) {
+        return null;
+    }
+    return choices[randomInt(0, choices.length)] ?? null;
+}
+
+function touchCtx(
     phase: string,
     burst: number,
-): Promise<void> {
-    await allTracked(
-        stats,
-        Array.from({ length: n }, (_, i) =>
-            oneChatOp(
-                client,
-                world,
-                clientIndex,
-                i,
-                stats,
-                telemetry,
-                phase,
-                burst,
-            ),
-        ),
-    );
+    clientIndex: number,
+): TelemetryTouchCtx {
+    return { burst, clientIndex, phase };
 }

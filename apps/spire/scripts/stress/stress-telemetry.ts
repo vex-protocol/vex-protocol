@@ -24,59 +24,12 @@ import {
     groupStressFailures,
     type StressFailureGroupRow,
 } from "./stress-correlation.ts";
-import { settleOne, type HttpExpectStats } from "./stress-http-stats.ts";
+import { type HttpExpectStats, settleOne } from "./stress-http-stats.ts";
 import {
     facetToLibvexSurface,
     formatHarnessCallNotation,
     sanitizeRequestInputs,
 } from "./stress-request-context.ts";
-
-export interface TelemetryTouchCtx {
-    readonly burst: number;
-    readonly clientIndex?: number;
-    readonly extra?: Readonly<Record<string, unknown>>;
-    readonly opId?: string;
-    readonly phase: string;
-    /** Sanitized request params (passwords / tokens redacted). */
-    readonly requestInputs?: Readonly<Record<string, unknown>>;
-}
-
-export interface StressFailureRecord {
-    readonly at: number;
-    readonly axios?: Readonly<{
-        readonly dataSnippet: string | null;
-        readonly message: string | null;
-        readonly method: string | null;
-        readonly status: number | null;
-        readonly statusText: string | null;
-        readonly url: string | null;
-    }>;
-    readonly burst: number;
-    /** Stable key from libvex `protocolPath` + normalized message + top stack line. */
-    readonly correlationKey: string;
-    readonly clientIndex?: number;
-    readonly surfaceKey: string;
-    readonly surfaceTitle?: string;
-    readonly extraContext?: Readonly<Record<string, unknown>>;
-    readonly id: string;
-    /** Primary libvex / API surface label (from facet catalog). */
-    readonly libvexSurface: string;
-    /** Published Client API path(s) from catalog, e.g. `Client.invites.retrieve`. */
-    readonly protocolPath: string;
-    readonly message: string;
-    readonly opId?: string;
-    readonly phase: string;
-    readonly requestInputs?: Readonly<Record<string, unknown>>;
-    readonly stack?: string;
-}
-
-export interface StressRequestLogEntry {
-    readonly at: number;
-    readonly surfaceKey: string;
-    readonly inputs?: Readonly<Record<string, unknown>>;
-    readonly libvexSurface: string;
-    readonly ok: true;
-}
 
 /** Deduped error types on one Client surface (grouped by {@link StressFailureRecord.surfaceKey}). */
 export interface StressFacetErrorGroupRow {
@@ -89,19 +42,66 @@ export interface StressFacetErrorGroupRow {
     readonly sampleRequestInputs?: Readonly<Record<string, unknown>>;
 }
 
-function runPhasePublicLabel(phase: string): string {
-    switch (phase) {
-        case "init":
-            return "Initializing";
-        case "bootstrap":
-            return "Account and session setup";
-        case "flood":
-            return "Flood phase (synchronized walls)";
-        case "done":
-            return "Run finished";
-        default:
-            return phase;
+export interface StressFailureRecord {
+    readonly at: number;
+    readonly axios?: Readonly<{
+        readonly dataSnippet: null | string;
+        readonly message: null | string;
+        readonly method: null | string;
+        readonly status: null | number;
+        readonly statusText: null | string;
+        readonly url: null | string;
+    }>;
+    readonly burst: number;
+    readonly clientIndex?: number;
+    /** Stable key from libvex `protocolPath` + normalized message + top stack line. */
+    readonly correlationKey: string;
+    readonly extraContext?: Readonly<Record<string, unknown>>;
+    readonly id: string;
+    /** Primary libvex / API surface label (from facet catalog). */
+    readonly libvexSurface: string;
+    readonly message: string;
+    readonly opId?: string;
+    readonly phase: string;
+    /** Published Client API path(s) from catalog, e.g. `Client.invites.retrieve`. */
+    readonly protocolPath: string;
+    readonly requestInputs?: Readonly<Record<string, unknown>>;
+    readonly stack?: string;
+    readonly surfaceKey: string;
+    readonly surfaceTitle?: string;
+}
+
+export interface StressRequestLogEntry {
+    readonly at: number;
+    readonly inputs?: Readonly<Record<string, unknown>>;
+    readonly libvexSurface: string;
+    readonly ok: true;
+    readonly surfaceKey: string;
+}
+
+export interface TelemetryTouchCtx {
+    readonly burst: number;
+    readonly clientIndex?: number;
+    readonly extra?: Readonly<Record<string, unknown>>;
+    readonly opId?: string;
+    readonly phase: string;
+    /** Sanitized request params (passwords / tokens redacted). */
+    readonly requestInputs?: Readonly<Record<string, unknown>>;
+}
+
+function catalogOrSynthetic(surfaceKey: string): StressFacetCatalogEntry {
+    const key = normalizeStressSurfaceKey(surfaceKey);
+    const known = STRESS_FACET_CATALOG[key];
+    if (known !== undefined) {
+        return known;
     }
+    return {
+        apiCall: surfaceKey,
+        description: "Surface not listed in catalog.",
+        group: "load",
+        protocolPath: `Unknown (${surfaceKey})`,
+        title: surfaceKey,
+    };
 }
 
 function computeErrorsByFacet(
@@ -141,19 +141,19 @@ function computeErrorsByFacet(
     return out;
 }
 
-function catalogOrSynthetic(surfaceKey: string): StressFacetCatalogEntry {
-    const key = normalizeStressSurfaceKey(surfaceKey);
-    const known = STRESS_FACET_CATALOG[key];
-    if (known !== undefined) {
-        return known;
+function runPhasePublicLabel(phase: string): string {
+    switch (phase) {
+        case "bootstrap":
+            return "Account and session setup";
+        case "done":
+            return "Run finished";
+        case "flood":
+            return "Flood phase (synchronized walls)";
+        case "init":
+            return "Initializing";
+        default:
+            return phase;
     }
-    return {
-        apiCall: surfaceKey,
-        description: "Surface not listed in catalog.",
-        group: "load",
-        protocolPath: `Unknown (${surfaceKey})`,
-        title: surfaceKey,
-    };
 }
 
 /** Cap stored stacks so the failure ring cannot retain MB of V8 stack text each. */
@@ -177,7 +177,7 @@ function serializeAxios(
     }
     const st = err.response?.status;
     const data: unknown = err.response?.data;
-    let dataSnippet: string | null = null;
+    let dataSnippet: null | string = null;
     if (data !== undefined) {
         try {
             const s = typeof data === "string" ? data : JSON.stringify(data);
@@ -201,8 +201,53 @@ function serializeAxios(
 
 const MAX_REQUEST_RING = 80;
 
+export interface StressUiFacetRow {
+    readonly apiCall: string;
+    readonly description: string;
+    readonly fail: number;
+    readonly group: StressFacetCatalogEntry["group"];
+    readonly id: string;
+    readonly ok: number;
+    readonly protocolPath: string;
+    readonly status: "fail" | "idle" | "ok" | "warn";
+    readonly title: string;
+}
+
+export interface StressUiSnapshot {
+    readonly burstGapMs: number;
+    readonly clientCount: number;
+    readonly completedOps: number;
+    readonly concurrency: number;
+    readonly currentBurst: number;
+    readonly errorsByFacet?: Readonly<
+        Record<string, readonly StressFacetErrorGroupRow[]>
+    >;
+    readonly facets: readonly StressUiFacetRow[];
+    readonly failureGroups: readonly StressFailureGroupRow[];
+    readonly failures: readonly StressFailureRecord[];
+    readonly forever: boolean;
+    readonly host: string;
+    readonly lastBurstMs: null | number;
+    /** `ops×1000/wall_ms` for the last finished burst (logical slot completions; not raw HTTP RPS). */
+    readonly lastBurstOfferedSlotsPerSec: null | number;
+    readonly loadPacing: StressLoadPacing;
+    /** Client op completions (telemetry touches) in the last ~1 second. */
+    readonly opsPerSecond1s: number;
+    readonly phase: string;
+    readonly plannedRounds: number;
+    readonly recentRequests?: readonly StressRequestLogEntry[];
+    readonly restartPending: boolean;
+    readonly runStartedAt: number;
+    readonly scenario: string;
+}
+
 export class StressTelemetry {
-    private readonly scenario: string;
+    private burstGapMs = 0;
+    private clientCount = 0;
+    private completedOps = 0;
+    private concurrency = 0;
+    private currentBurst = 0;
+    private dirty = true;
     private readonly facets = new Map<
         string,
         {
@@ -212,28 +257,23 @@ export class StressTelemetry {
         }
     >();
     private readonly failures: StressFailureRecord[] = [];
-    private readonly recentRequests: StressRequestLogEntry[] = [];
-    private readonly listeners = new Set<(snap: StressUiSnapshot) => void>();
-    private dirty = true;
-    private pushTimer: ReturnType<typeof setTimeout> | null = null;
-    private host = "";
-    private clientCount = 0;
-    private concurrency = 0;
-    private currentBurst = 0;
-    private phase = "init";
-    private completedOps = 0;
-    private lastBurstMs: number | null = null;
-    /** Last completed flood burst: `ops × 1000 / wall_ms` from the harness (logical slots, not HTTP count). */
-    private lastBurstOfferedSlotsPerSec: number | null = null;
-    private runStartedAt = Date.now();
     private forever = true;
-    private plannedRounds = 0;
+    private host = "";
+    private lastBurstMs: null | number = null;
+    /** Last completed flood burst: `ops × 1000 / wall_ms` from the harness (logical slots, not HTTP count). */
+    private lastBurstOfferedSlotsPerSec: null | number = null;
+    private readonly listeners = new Set<(snap: StressUiSnapshot) => void>();
     private loadPacing: StressLoadPacing = "immediate";
-    private burstGapMs = 0;
     /** Recent `touchOk` / `touchFail` timestamps for live ops/s (1s window). */
     private readonly opTouchAt: number[] = [];
+    private phase = "init";
+    private plannedRounds = 0;
+    private pushTimer: null | ReturnType<typeof setTimeout> = null;
+    private readonly recentRequests: StressRequestLogEntry[] = [];
     /** Web UI queued a restart (cleared when the harness begins applying it). */
     private restartPending = false;
+    private runStartedAt = Date.now();
+    private readonly scenario: string;
 
     public constructor(scenario: string) {
         this.scenario = scenario;
@@ -246,26 +286,75 @@ export class StressTelemetry {
         }
     }
 
-    public setRunBanner(opts: {
-        readonly burstGapMs?: number;
-        readonly clientCount: number;
-        readonly concurrency: number;
-        readonly forever: boolean;
-        readonly host: string;
-        readonly loadPacing?: StressLoadPacing;
-        readonly plannedRounds: number;
-    }): void {
-        this.host = opts.host;
-        this.clientCount = opts.clientCount;
-        this.concurrency = opts.concurrency;
-        this.forever = opts.forever;
-        this.plannedRounds = opts.plannedRounds;
-        this.loadPacing = opts.loadPacing ?? "immediate";
-        this.burstGapMs =
-            typeof opts.burstGapMs === "number" && opts.burstGapMs >= 0
-                ? opts.burstGapMs
-                : 0;
-        this.markDirty();
+    public getSnapshot(): StressUiSnapshot {
+        const facetRows: StressUiFacetRow[] = [];
+        for (const id of facetIdsForScenario(this.scenario)) {
+            const row = this.facets.get(id);
+            if (row === undefined) {
+                continue;
+            }
+            const total = row.ok + row.fail;
+            let status: "fail" | "idle" | "ok" | "warn";
+            if (total === 0) {
+                status = "idle";
+            } else if (row.fail === 0) {
+                status = "ok";
+            } else if (row.ok === 0) {
+                status = "fail";
+            } else {
+                status = "warn";
+            }
+            facetRows.push({
+                apiCall: row.def.apiCall,
+                description: row.def.description,
+                fail: row.fail,
+                group: row.def.group,
+                id,
+                ok: row.ok,
+                protocolPath: row.def.protocolPath,
+                status,
+                title: row.def.title,
+            });
+        }
+        const failures = [...this.failures];
+        const failureGroups = groupStressFailures(
+            failures.map((f) => ({
+                correlationKey: f.correlationKey,
+                id: f.id,
+                libvexSurface: f.libvexSurface,
+                message: f.message,
+                protocolPath: f.protocolPath,
+                surfaceKey: f.surfaceKey,
+            })),
+        );
+        const errorsByFacet =
+            failures.length > 0 ? computeErrorsByFacet(failures) : undefined;
+        return {
+            burstGapMs: this.burstGapMs,
+            clientCount: this.clientCount,
+            completedOps: this.completedOps,
+            concurrency: this.concurrency,
+            currentBurst: this.currentBurst,
+            errorsByFacet,
+            facets: facetRows,
+            failureGroups,
+            failures,
+            forever: this.forever,
+            host: this.host,
+            lastBurstMs: this.lastBurstMs,
+            lastBurstOfferedSlotsPerSec: this.lastBurstOfferedSlotsPerSec,
+            loadPacing: this.loadPacing,
+            opsPerSecond1s: this.computeOpsPerSecond(),
+            phase: this.phase,
+            plannedRounds: this.plannedRounds,
+            recentRequests:
+                this.recentRequests.length > 0
+                    ? [...this.recentRequests]
+                    : undefined,
+            restartPending: this.restartPending,
+            runStartedAt: this.runStartedAt,
+            scenario: this.scenario,
+        };
     }
 
     /** Full reset between harness sessions (same SSE subscribers). */
@@ -295,16 +384,6 @@ export class StressTelemetry {
         this.markDirty(true);
     }
 
-    public setRestartPending(pending: boolean): void {
-        this.restartPending = pending;
-        this.markDirty();
-    }
-
-    public setPhase(phase: string): void {
-        this.phase = phase;
-        this.markDirty();
-    }
-
     public setBurstContext(burst: number, concurrency: number): void {
         this.currentBurst = burst;
         this.concurrency = concurrency;
@@ -316,10 +395,15 @@ export class StressTelemetry {
         this.markDirty();
     }
 
+    public setPhase(phase: string): void {
+        this.phase = phase;
+        this.markDirty();
+    }
+
     public setProgress(
         completedOps: number,
-        lastBurstMs: number | null,
-        lastBurstOfferedSlotsPerSec: number | null = null,
+        lastBurstMs: null | number,
+        lastBurstOfferedSlotsPerSec: null | number = null,
     ): void {
         this.completedOps = completedOps;
         this.lastBurstMs = lastBurstMs;
@@ -327,50 +411,39 @@ export class StressTelemetry {
         this.markDirty();
     }
 
-    /** Successful operation for this libvex surface (`Client.*` catalog key). */
-    public touchOk(surfaceKey: string, ctx?: TelemetryTouchCtx): void {
-        const key = normalizeStressSurfaceKey(surfaceKey);
-        const row = this.ensureFacet(key);
-        row.ok += 1;
-        if (
-            process.env.SPIRE_STRESS_LOG_REQUESTS === "1" &&
-            ctx?.requestInputs !== undefined
-        ) {
-            this.pushRecentRequest({
-                at: Date.now(),
-                inputs: sanitizeRequestInputs(
-                    ctx.requestInputs as Record<string, unknown>,
-                ),
-                libvexSurface: facetToLibvexSurface(key),
-                ok: true,
-                surfaceKey: key,
-            });
-        }
-        this.recordOpTouch();
+    public setRestartPending(pending: boolean): void {
+        this.restartPending = pending;
         this.markDirty();
     }
 
-    private recordOpTouch(): void {
-        const t = Date.now();
-        this.opTouchAt.push(t);
-        const cutoff = t - 2000;
-        while (this.opTouchAt.length > 0) {
-            const first = this.opTouchAt[0];
-            if (first === undefined || first >= cutoff) {
-                break;
-            }
-            this.opTouchAt.shift();
-        }
-        if (this.opTouchAt.length > 5000) {
-            this.opTouchAt.splice(0, this.opTouchAt.length - 5000);
-        }
+    public setRunBanner(opts: {
+        readonly burstGapMs?: number;
+        readonly clientCount: number;
+        readonly concurrency: number;
+        readonly forever: boolean;
+        readonly host: string;
+        readonly loadPacing?: StressLoadPacing;
+        readonly plannedRounds: number;
+    }): void {
+        this.host = opts.host;
+        this.clientCount = opts.clientCount;
+        this.concurrency = opts.concurrency;
+        this.forever = opts.forever;
+        this.plannedRounds = opts.plannedRounds;
+        this.loadPacing = opts.loadPacing ?? "immediate";
+        this.burstGapMs =
+            typeof opts.burstGapMs === "number" && opts.burstGapMs >= 0
+                ? opts.burstGapMs
+                : 0;
+        this.markDirty();
     }
 
-    private pushRecentRequest(entry: StressRequestLogEntry): void {
-        this.recentRequests.unshift(entry);
-        if (this.recentRequests.length > MAX_REQUEST_RING) {
-            this.recentRequests.length = MAX_REQUEST_RING;
-        }
+    public subscribe(fn: (snap: StressUiSnapshot) => void): () => void {
+        this.listeners.add(fn);
+        fn(this.getSnapshot());
+        return () => {
+            this.listeners.delete(fn);
+        };
     }
 
     /** Failed operation; records failure log entry. */
@@ -433,6 +506,107 @@ export class StressTelemetry {
         this.markDirty(true);
     }
 
+    /** Successful operation for this libvex surface (`Client.*` catalog key). */
+    public touchOk(surfaceKey: string, ctx?: TelemetryTouchCtx): void {
+        const key = normalizeStressSurfaceKey(surfaceKey);
+        const row = this.ensureFacet(key);
+        row.ok += 1;
+        if (
+            process.env.SPIRE_STRESS_LOG_REQUESTS === "1" &&
+            ctx?.requestInputs !== undefined
+        ) {
+            this.pushRecentRequest({
+                at: Date.now(),
+                inputs: sanitizeRequestInputs(
+                    ctx.requestInputs as Record<string, unknown>,
+                ),
+                libvexSurface: facetToLibvexSurface(key),
+                ok: true,
+                surfaceKey: key,
+            });
+        }
+        this.recordOpTouch();
+        this.markDirty();
+    }
+
+    /** Rolling count of client op completions (ok + fail) in the last ~1s. */
+    private computeOpsPerSecond(): number {
+        const t = Date.now();
+        const windowMs = 1000;
+        const cutoff = t - windowMs;
+        let n = 0;
+        for (let i = this.opTouchAt.length - 1; i >= 0; i--) {
+            const touch = this.opTouchAt[i];
+            if (touch === undefined || touch < cutoff) {
+                break;
+            }
+            n++;
+        }
+        return n;
+    }
+
+    private ensureFacet(id: string): {
+        def: StressFacetCatalogEntry;
+        fail: number;
+        ok: number;
+    } {
+        let row = this.facets.get(id);
+        if (row === undefined) {
+            row = { def: catalogOrSynthetic(id), fail: 0, ok: 0 };
+            this.facets.set(id, row);
+        }
+        return row;
+    }
+
+    private flush(): void {
+        if (!this.dirty) {
+            return;
+        }
+        this.dirty = false;
+        const snap = this.getSnapshot();
+        for (const fn of this.listeners) {
+            fn(snap);
+        }
+    }
+
+    private markDirty(immediate = false): void {
+        this.dirty = true;
+        if (immediate) {
+            this.flush();
+            return;
+        }
+        if (this.pushTimer !== null) {
+            return;
+        }
+        this.pushTimer = setTimeout(() => {
+            this.pushTimer = null;
+            this.flush();
+        }, 120);
+    }
+
+    private pushRecentRequest(entry: StressRequestLogEntry): void {
+        this.recentRequests.unshift(entry);
+        if (this.recentRequests.length > MAX_REQUEST_RING) {
+            this.recentRequests.length = MAX_REQUEST_RING;
+        }
+    }
+
+    private recordOpTouch(): void {
+        const t = Date.now();
+        this.opTouchAt.push(t);
+        const cutoff = t - 2000;
+        while (this.opTouchAt.length > 0) {
+            const first = this.opTouchAt[0];
+            if (first === undefined || first >= cutoff) {
+                break;
+            }
+            this.opTouchAt.shift();
+        }
+        if (this.opTouchAt.length > 5000) {
+            this.opTouchAt.splice(0, this.opTouchAt.length - 5000);
+        }
+    }
+
     private serializeFailureSample(
         f: StressFailureRecord,
     ): Record<string, unknown> {
@@ -461,158 +635,12 @@ export class StressTelemetry {
             surfaceTitle: f.surfaceTitle,
         };
     }
-
-    /** Rolling count of client op completions (ok + fail) in the last ~1s. */
-    private computeOpsPerSecond(): number {
-        const t = Date.now();
-        const windowMs = 1000;
-        const cutoff = t - windowMs;
-        let n = 0;
-        for (let i = this.opTouchAt.length - 1; i >= 0; i--) {
-            const touch = this.opTouchAt[i];
-            if (touch === undefined || touch < cutoff) {
-                break;
-            }
-            n++;
-        }
-        return n;
-    }
-
-    public subscribe(fn: (snap: StressUiSnapshot) => void): () => void {
-        this.listeners.add(fn);
-        fn(this.getSnapshot());
-        return () => {
-            this.listeners.delete(fn);
-        };
-    }
-
-    public getSnapshot(): StressUiSnapshot {
-        const facetRows: StressUiFacetRow[] = [];
-        for (const id of facetIdsForScenario(this.scenario)) {
-            const row = this.facets.get(id);
-            if (row === undefined) {
-                continue;
-            }
-            const total = row.ok + row.fail;
-            let status: "idle" | "ok" | "warn" | "fail";
-            if (total === 0) {
-                status = "idle";
-            } else if (row.fail === 0) {
-                status = "ok";
-            } else if (row.ok === 0) {
-                status = "fail";
-            } else {
-                status = "warn";
-            }
-            facetRows.push({
-                apiCall: row.def.apiCall,
-                description: row.def.description,
-                fail: row.fail,
-                group: row.def.group,
-                id,
-                ok: row.ok,
-                protocolPath: row.def.protocolPath,
-                status,
-                title: row.def.title,
-            });
-        }
-        const failures = [...this.failures];
-        const failureGroups = groupStressFailures(
-            failures.map((f) => ({
-                correlationKey: f.correlationKey,
-                id: f.id,
-                libvexSurface: f.libvexSurface,
-                message: f.message,
-                protocolPath: f.protocolPath,
-                surfaceKey: f.surfaceKey,
-            })),
-        );
-        const errorsByFacet =
-            failures.length > 0 ? computeErrorsByFacet(failures) : undefined;
-        return {
-            burstGapMs: this.burstGapMs,
-            clientCount: this.clientCount,
-            completedOps: this.completedOps,
-            concurrency: this.concurrency,
-            currentBurst: this.currentBurst,
-            errorsByFacet,
-            failureGroups,
-            failures,
-            facets: facetRows,
-            forever: this.forever,
-            host: this.host,
-            lastBurstMs: this.lastBurstMs,
-            lastBurstOfferedSlotsPerSec: this.lastBurstOfferedSlotsPerSec,
-            loadPacing: this.loadPacing,
-            phase: this.phase,
-            plannedRounds: this.plannedRounds,
-            opsPerSecond1s: this.computeOpsPerSecond(),
-            restartPending: this.restartPending,
-            recentRequests:
-                this.recentRequests.length > 0
-                    ? [...this.recentRequests]
-                    : undefined,
-            runStartedAt: this.runStartedAt,
-            scenario: this.scenario,
-        };
-    }
-
-    private ensureFacet(id: string): {
-        def: StressFacetCatalogEntry;
-        fail: number;
-        ok: number;
-    } {
-        let row = this.facets.get(id);
-        if (row === undefined) {
-            row = { def: catalogOrSynthetic(id), fail: 0, ok: 0 };
-            this.facets.set(id, row);
-        }
-        return row;
-    }
-
-    private markDirty(immediate = false): void {
-        this.dirty = true;
-        if (immediate) {
-            this.flush();
-            return;
-        }
-        if (this.pushTimer !== null) {
-            return;
-        }
-        this.pushTimer = setTimeout(() => {
-            this.pushTimer = null;
-            this.flush();
-        }, 120);
-    }
-
-    private flush(): void {
-        if (!this.dirty) {
-            return;
-        }
-        this.dirty = false;
-        const snap = this.getSnapshot();
-        for (const fn of this.listeners) {
-            fn(snap);
-        }
-    }
-}
-
-export interface StressUiFacetRow {
-    readonly apiCall: string;
-    readonly description: string;
-    readonly fail: number;
-    readonly group: StressFacetCatalogEntry["group"];
-    readonly id: string;
-    readonly ok: number;
-    readonly protocolPath: string;
-    readonly status: "idle" | "ok" | "warn" | "fail";
-    readonly title: string;
 }
 
 /** Count HTTP outcome and record facet ok/fail for the stress web UI. */
 export async function settleWithTelemetry<T>(
     stats: HttpExpectStats,
-    telemetry: StressTelemetry | null,
+    telemetry: null | StressTelemetry,
     surfaceKey: string,
     ctx: TelemetryTouchCtx,
     p: Promise<T>,
@@ -632,32 +660,4 @@ export async function settleWithTelemetry<T>(
         telemetry?.touchFail(surfaceKey, mergedCtx, err);
         throw err;
     }
-}
-
-export interface StressUiSnapshot {
-    readonly burstGapMs: number;
-    readonly clientCount: number;
-    readonly completedOps: number;
-    readonly concurrency: number;
-    readonly currentBurst: number;
-    readonly errorsByFacet?: Readonly<
-        Record<string, readonly StressFacetErrorGroupRow[]>
-    >;
-    readonly failureGroups: readonly StressFailureGroupRow[];
-    readonly failures: readonly StressFailureRecord[];
-    readonly facets: readonly StressUiFacetRow[];
-    readonly forever: boolean;
-    readonly host: string;
-    readonly lastBurstMs: number | null;
-    /** `ops×1000/wall_ms` for the last finished burst (logical slot completions; not raw HTTP RPS). */
-    readonly lastBurstOfferedSlotsPerSec: number | null;
-    readonly loadPacing: StressLoadPacing;
-    readonly phase: string;
-    readonly plannedRounds: number;
-    /** Client op completions (telemetry touches) in the last ~1 second. */
-    readonly opsPerSecond1s: number;
-    readonly restartPending: boolean;
-    readonly recentRequests?: readonly StressRequestLogEntry[];
-    readonly runStartedAt: number;
-    readonly scenario: string;
 }

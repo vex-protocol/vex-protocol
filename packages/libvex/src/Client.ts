@@ -89,12 +89,54 @@ import {
     isFipsSubsequentExtraV1,
 } from "./utils/fipsMailExtra.js";
 
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+function debugLibvexDm(
+    msg: string,
+    data?: Record<string, boolean | null | number | string | undefined>,
+): void {
+    if (!libvexDebugDmEnabled()) {
+        return;
+    }
+    const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
+    // eslint-disable-next-line no-console -- gated by LIBVEX_DEBUG_DM; remove when debugging is done
+    console.error(`[libvex:debug-dm] ${payload}`);
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
     return typeof x === "object" && x !== null;
+}
+
+/**
+ * Set `LIBVEX_DEBUG_DM=1` (e.g. in vitest / shell) to log DM multi-device / X3DH paths.
+ * Uses indirect `globalThis` lookup so the bare `process` global never appears in
+ * source that the platform-guard plugin scans (browser/RN/Tauri).
+ */
+function libvexDebugDmEnabled(): boolean {
+    try {
+        const g = Object.getOwnPropertyDescriptor(globalThis, "\u0070rocess");
+        if (!g) {
+            return false;
+        }
+        const proc: unknown = typeof g.get === "function" ? g.get() : g.value;
+        if (typeof proc !== "object" || proc === null) {
+            return false;
+        }
+        const envDesc = Object.getOwnPropertyDescriptor(proc, "env");
+        if (!envDesc) {
+            return false;
+        }
+        const env: unknown =
+            typeof envDesc.get === "function" ? envDesc.get() : envDesc.value;
+        if (typeof env !== "object" || env === null) {
+            return false;
+        }
+        return Reflect.get(env, "LIBVEX_DEBUG_DM") === "1";
+    } catch {
+        return false;
+    }
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -147,48 +189,6 @@ function spireErrorBodyMessage(data: unknown, max = 8_000): string {
         }
     }
     return t.length > max ? t.slice(0, max) + "…" : t;
-}
-
-/**
- * Set `LIBVEX_DEBUG_DM=1` (e.g. in vitest / shell) to log DM multi-device / X3DH paths.
- * Uses indirect `globalThis` lookup so the bare `process` global never appears in
- * source that the platform-guard plugin scans (browser/RN/Tauri).
- */
-function libvexDebugDmEnabled(): boolean {
-    try {
-        const g = Object.getOwnPropertyDescriptor(globalThis, "\u0070rocess");
-        if (!g) {
-            return false;
-        }
-        const proc: unknown = typeof g.get === "function" ? g.get() : g.value;
-        if (typeof proc !== "object" || proc === null) {
-            return false;
-        }
-        const envDesc = Object.getOwnPropertyDescriptor(proc, "env");
-        if (!envDesc) {
-            return false;
-        }
-        const env: unknown =
-            typeof envDesc.get === "function" ? envDesc.get() : envDesc.value;
-        if (typeof env !== "object" || env === null) {
-            return false;
-        }
-        return Reflect.get(env, "LIBVEX_DEBUG_DM") === "1";
-    } catch {
-        return false;
-    }
-}
-
-function debugLibvexDm(
-    msg: string,
-    data?: Record<string, string | number | boolean | null | undefined>,
-): void {
-    if (!libvexDebugDmEnabled()) {
-        return;
-    }
-    const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
-    // eslint-disable-next-line no-console -- gated by LIBVEX_DEBUG_DM; remove when debugging is done
-    console.error(`[libvex:debug-dm] ${payload}`);
 }
 
 import { msgpack } from "./codec.js";
@@ -267,33 +267,6 @@ export interface Channels {
  */
 export type { Device } from "@vex-chat/types";
 
-export type PendingDeviceApprovalStatus =
-    | "approved"
-    | "expired"
-    | "pending"
-    | "rejected";
-
-export interface PendingDeviceRequest {
-    approvedDeviceID?: string | undefined;
-    createdAt: string;
-    deviceName: string;
-    error?: string | undefined;
-    expiresAt: string;
-    requestID: string;
-    signKey: string;
-    status: PendingDeviceApprovalStatus;
-    username: string;
-}
-
-export interface PendingDeviceRegistration {
-    challenge: string;
-    expiresAt: string;
-    requestID: string;
-    status: "pending_approval";
-}
-
-export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
-
 /**
  * ClientOptions are the options you can pass into the client.
  */
@@ -306,6 +279,12 @@ export interface ClientOptions {
     cryptoProfile?: "fips" | "tweetnacl";
     /** Folder path where the sqlite file is created. */
     dbFolder?: string;
+    /**
+     * When set (non-empty), sent as `x-dev-api-key` on every HTTP request.
+     * Spire omits in-process rate limits when this matches the server's `DEV_API_KEY`
+     * (local / load-testing only — never use in production).
+     */
+    devApiKey?: string;
     /** Platform label for device registration (e.g. "ios", "macos", "linux"). */
     deviceName?: string;
     /** API host without protocol. Defaults to `api.vex.wtf`. */
@@ -316,13 +295,9 @@ export interface ClientOptions {
     saveHistory?: boolean;
     /** Use `http/ws` instead of `https/wss`. Intended for local/dev environments. */
     unsafeHttp?: boolean;
-    /**
-     * When set (non-empty), sent as `x-dev-api-key` on every HTTP request.
-     * Spire omits in-process rate limits when this matches the server's `DEV_API_KEY`
-     * (local / load-testing only — never use in production).
-     */
-    devApiKey?: string;
 }
+
+export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
 
 /**
  * @ignore
@@ -336,33 +311,13 @@ export interface Devices {
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
     /** Lists pending/processed registration requests for the current user. */
     listRequests: () => Promise<PendingDeviceRequest[]>;
-    /** Rejects a pending device registration request as the current device. */
-    rejectRequest: (requestID: string) => Promise<void>;
     /** Registers the current key material as a new device. */
     register: () => Promise<DeviceRegistrationResult | null>;
+    /** Rejects a pending device registration request as the current device. */
+    rejectRequest: (requestID: string) => Promise<void>;
     /** Fetches one device by ID. */
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
 }
-
-/**
- * Channel is a chat channel on a server.
- *
- * Common fields:
- * - `channelID`
- * - `serverID`
- * - `name`
- */
-export type { Channel } from "@vex-chat/types";
-
-/**
- * Server is a single chat server.
- *
- * Common fields:
- * - `serverID`
- * - `name`
- * - `icon` (optional URL/data)
- */
-export type { Server } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -416,6 +371,26 @@ export interface FileProgress {
  * ```
  */
 export type FileRes = FileResponse;
+
+/**
+ * Channel is a chat channel on a server.
+ *
+ * Common fields:
+ * - `channelID`
+ * - `serverID`
+ * - `name`
+ */
+export type { Channel } from "@vex-chat/types";
+
+/**
+ * Server is a single chat server.
+ *
+ * Common fields:
+ * - `serverID`
+ * - `name`
+ * - `icon` (optional URL/data)
+ */
+export type { Server } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -492,6 +467,31 @@ export interface Message {
     timestamp: string;
 }
 
+export type PendingDeviceApprovalStatus =
+    | "approved"
+    | "expired"
+    | "pending"
+    | "rejected";
+
+export interface PendingDeviceRegistration {
+    challenge: string;
+    expiresAt: string;
+    requestID: string;
+    status: "pending_approval";
+}
+
+export interface PendingDeviceRequest {
+    approvedDeviceID?: string | undefined;
+    createdAt: string;
+    deviceName: string;
+    error?: string | undefined;
+    expiresAt: string;
+    requestID: string;
+    signKey: string;
+    status: PendingDeviceApprovalStatus;
+    username: string;
+}
+
 /** Zod schema matching the {@link Message} interface for forwarded-message decode. */
 const messageSchema: z.ZodType<Message> = z.object({
     authorID: z.string(),
@@ -536,8 +536,6 @@ export interface ClientEvents {
     connected: () => void;
     /** Mail decryption pass is in progress. */
     decryptingMail: () => void;
-    /** WebSocket connection lost. */
-    disconnect: () => void;
     /** Device approval queue changed (pending/approved/rejected). */
     deviceRequest: (update: {
         requestID: string;
@@ -546,6 +544,8 @@ export interface ClientEvents {
             "approved" | "pending" | "rejected"
         >;
     }) => void;
+    /** WebSocket connection lost. */
+    disconnect: () => void;
     /** Progress update for a file upload or download. */
     fileProgress: (progress: FileProgress) => void;
     /** A direct or group message was sent or received. */
@@ -806,8 +806,8 @@ export class Client {
         delete: this.deleteDevice.bind(this),
         getRequest: this.getDeviceRegistrationRequest.bind(this),
         listRequests: this.listDeviceRegistrationRequests.bind(this),
-        rejectRequest: this.rejectDeviceRequest.bind(this),
         register: this.registerDevice.bind(this),
+        rejectRequest: this.rejectDeviceRequest.bind(this),
         retrieve: this.getDeviceByID.bind(this),
     };
 
@@ -1025,6 +1025,8 @@ export class Client {
         retrieve: this.fetchUser.bind(this),
     };
 
+    private readonly cryptoProfile: CryptoProfile;
+
     private readonly database: Storage;
 
     private readonly dbPath: string;
@@ -1035,13 +1037,20 @@ export class Client {
 
     // ── Event subscription (composition over inheritance) ───────────────
     private readonly emitter = new EventEmitter<ClientEvents>();
-
     private fetchingMail: boolean = false;
+
     private firstMailFetch = true;
 
     private readonly forwarded = new Set<string>();
-
     private readonly host: string;
+    private readonly http: AxiosInstance;
+    /** Cancels in-flight axios work on `close()` so `postAuth`/`getMail` cannot hang forever. */
+    private readonly httpAbortController = new AbortController();
+    private readonly idKeys: KeyPair | null;
+    private isAlive: boolean = true;
+    private readonly mailInterval?: NodeJS.Timeout;
+
+    private manuallyClosing: boolean = false;
     /**
      * Node-only: per-client HTTP(S) agents (see `init()` + `storage/node/http-agents`).
      * Dropped on `close()` so idle keep-alive sockets do not keep the process alive.
@@ -1050,19 +1059,6 @@ export class Client {
         http: { destroy(): void };
         https: { destroy(): void };
     };
-    /** Cancels in-flight axios work on `close()` so `postAuth`/`getMail` cannot hang forever. */
-    private readonly httpAbortController = new AbortController();
-    private readonly http: AxiosInstance;
-    private readonly idKeys: KeyPair | null;
-    private isAlive: boolean = true;
-    private readonly mailInterval?: NodeJS.Timeout;
-
-    private manuallyClosing: boolean = false;
-    /**
-     * Bumped when the WebSocket is torn down and re-opened so the previous
-     * `postAuth` loop exits instead of overlapping a new one.
-     */
-    private postAuthVersion = 0;
     /* Retrieves the userID with the user identifier.
     user identifier is checked for userID, then signkey,
     and finally falls back to username. */
@@ -1072,24 +1068,28 @@ export class Client {
     private readonly options?: ClientOptions | undefined;
 
     private pingInterval: null | ReturnType<typeof setTimeout> = null;
+    /**
+     * Bumped when the WebSocket is torn down and re-opened so the previous
+     * `postAuth` loop exits instead of overlapping a new one.
+     */
+    private postAuthVersion = 0;
+
     private readonly prefixes:
         | { HTTP: "http://"; WS: "ws://" }
         | { HTTP: "https://"; WS: "wss://" };
-
     private reading: boolean = false;
     private readonly seenMailIDs: Set<string> = new Set();
     private sessionRecords: Record<string, SessionCrypto> = {};
+
     // these are created from one set of sign keys
     private readonly signKeys: KeyPair;
-
     private socket: WebSocketLike;
     private token: null | string = null;
+
     private user?: User;
 
     private userRecords: Record<string, User> = {};
-
     private xKeyRing?: XKeyRing;
-    private readonly cryptoProfile: CryptoProfile;
 
     private constructor(
         material: {
@@ -1305,32 +1305,6 @@ export class Client {
     }
 
     /**
-     * True when running under Node (has `process.versions`).
-     * Uses indirect lookup so the bare `process` global never appears in
-     * source that the platform-guard plugin scans.
-     */
-    private static isNodeRuntime(): boolean {
-        try {
-            const g = Object.getOwnPropertyDescriptor(
-                globalThis,
-                "\u0070rocess",
-            );
-            if (!g) return false;
-            const proc: unknown =
-                typeof g.get === "function" ? g.get() : g.value;
-            if (typeof proc !== "object" || proc === null) {
-                return false;
-            }
-            return (
-                "versions" in proc &&
-                typeof (proc as { versions?: unknown }).versions === "object"
-            );
-        } catch {
-            return false;
-        }
-    }
-
-    /**
      * Browser-safe NODE_ENV accessor.
      * Uses indirect lookup so the bare `process` global never appears in
      * source that the platform-guard plugin scans.
@@ -1370,12 +1344,29 @@ export class Client {
     }
 
     /**
-     * Fresh read of the `manuallyClosing` flag for async loops — direct property checks
-     * after `await` are flagged as always-false by control-flow analysis even though
-     * `close()` can run concurrently.
+     * True when running under Node (has `process.versions`).
+     * Uses indirect lookup so the bare `process` global never appears in
+     * source that the platform-guard plugin scans.
      */
-    private isManualCloseInFlight(): boolean {
-        return this.manuallyClosing;
+    private static isNodeRuntime(): boolean {
+        try {
+            const g = Object.getOwnPropertyDescriptor(
+                globalThis,
+                "\u0070rocess",
+            );
+            if (!g) return false;
+            const proc: unknown =
+                typeof g.get === "function" ? g.get() : g.value;
+            if (typeof proc !== "object" || proc === null) {
+                return false;
+            }
+            return (
+                "versions" in proc &&
+                typeof (proc as { versions?: unknown }).versions === "object"
+            );
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -1448,62 +1439,6 @@ export class Client {
         // auth message before OTK generation blocks for ~5s on mobile.
         await new Promise((r) => setTimeout(r, 0));
         await this.negotiateOTK();
-    }
-
-    /**
-     * Tears down the current WebSocket and opens a new one, keeping the same
-     * session (user + device in storage). Restarts the post-auth mail loop.
-     * Use for long-running processes or e2e where a fresh socket matches a
-     * newly-registered second device.
-     */
-    public async reconnectWebsocket(): Promise<void> {
-        this.postAuthVersion++;
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-            this.pingInterval = null;
-        }
-        this.socket.close();
-        try {
-            await new Promise<void>((resolve, reject) => {
-                const t = setTimeout(() => {
-                    this.off("connected", onC);
-                    reject(
-                        new Error(
-                            "reconnectWebsocket: timed out waiting for authorized",
-                        ),
-                    );
-                }, 15_000);
-                const onC = () => {
-                    clearTimeout(t);
-                    this.off("connected", onC);
-                    resolve();
-                };
-                this.on("connected", onC);
-                try {
-                    this.initSocket();
-                } catch (err: unknown) {
-                    clearTimeout(t);
-                    this.off("connected", onC);
-                    const e =
-                        err instanceof Error
-                            ? err
-                            : new Error(String(err), { cause: err });
-                    reject(e);
-                }
-            });
-        } catch (e: unknown) {
-            throw e instanceof Error ? e : new Error(String(e), { cause: e });
-        }
-        await new Promise((r) => setTimeout(r, 0));
-        await this.negotiateOTK();
-    }
-
-    /**
-     * Triggers an immediate inbox sync by fetching `/mail` once.
-     * Useful on mobile foreground resume where background work may pause.
-     */
-    public async syncInboxNow(): Promise<void> {
-        await this.getMail();
     }
 
     /**
@@ -1685,6 +1620,54 @@ export class Client {
     }
 
     /**
+     * Tears down the current WebSocket and opens a new one, keeping the same
+     * session (user + device in storage). Restarts the post-auth mail loop.
+     * Use for long-running processes or e2e where a fresh socket matches a
+     * newly-registered second device.
+     */
+    public async reconnectWebsocket(): Promise<void> {
+        this.postAuthVersion++;
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
+        this.socket.close();
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const t = setTimeout(() => {
+                    this.off("connected", onC);
+                    reject(
+                        new Error(
+                            "reconnectWebsocket: timed out waiting for authorized",
+                        ),
+                    );
+                }, 15_000);
+                const onC = () => {
+                    clearTimeout(t);
+                    this.off("connected", onC);
+                    resolve();
+                };
+                this.on("connected", onC);
+                try {
+                    this.initSocket();
+                } catch (err: unknown) {
+                    clearTimeout(t);
+                    this.off("connected", onC);
+                    const e =
+                        err instanceof Error
+                            ? err
+                            : new Error(String(err), { cause: err });
+                    reject(e);
+                }
+            });
+        } catch (e: unknown) {
+            throw e instanceof Error ? e : new Error(String(e), { cause: e });
+        }
+        await new Promise((r) => setTimeout(r, 0));
+        await this.negotiateOTK();
+    }
+
+    /**
      * Registers a new account on the server.
      *
      * @param username - The username to register. Must be unique.
@@ -1758,6 +1741,14 @@ export class Client {
     }
 
     /**
+     * Triggers an immediate inbox sync by fetching `/mail` once.
+     * Useful on mobile foreground resume where background work may pause.
+     */
+    public async syncInboxNow(): Promise<void> {
+        await this.getMail();
+    }
+
+    /**
      * Returns a compact `<username><deviceID>` debug label.
      */
     public toString(): string {
@@ -1788,6 +1779,36 @@ export class Client {
 
         const whoami = decodeAxios(WhoamiCodec, res.data);
         return whoami;
+    }
+
+    private async approveDeviceRequest(requestID: string): Promise<Device> {
+        const req = await this.getDeviceRegistrationRequest(requestID);
+        if (!req) {
+            throw new Error("Device approval request not found.");
+        }
+        if (req.status !== "pending") {
+            throw new Error(
+                "Device approval request is not pending: " + req.status,
+            );
+        }
+        const signed = XUtils.encodeHex(
+            await xSignAsync(
+                XUtils.decodeUTF8(requestID),
+                this.signKeys.secretKey,
+            ),
+        );
+        const response = await this.http.post(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests/" +
+                requestID +
+                "/approve",
+            msgpack.encode({ signed }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeAxios(DeviceCodec, response.data);
     }
 
     private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
@@ -1914,27 +1935,6 @@ export class Client {
             this.getHost() + "/server/" + globalThis.btoa(name),
         );
         return decodeAxios(ServerCodec, res.data);
-    }
-
-    /**
-     * `xDHAsync` and other helpers in `@vex-chat/crypto` use the process-wide
-     * active profile. When several {@link Client} instances use different
-     * `cryptoProfile` values, scope the global to this instance for the duration
-     * of that crypto work.
-     */
-    private async runWithThisCryptoProfile<T>(
-        fn: () => Promise<T>,
-    ): Promise<T> {
-        const prev = getCryptoProfile();
-        if (prev === this.cryptoProfile) {
-            return await fn();
-        }
-        setCryptoProfile(this.cryptoProfile);
-        try {
-            return await fn();
-        } finally {
-            setCryptoProfile(prev);
-        }
     }
 
     private async createSession(
@@ -2144,36 +2144,6 @@ export class Client {
         await this.http.delete(this.getHost() + "/channel/" + channelID);
     }
 
-    private async approveDeviceRequest(requestID: string): Promise<Device> {
-        const req = await this.getDeviceRegistrationRequest(requestID);
-        if (!req) {
-            throw new Error("Device approval request not found.");
-        }
-        if (req.status !== "pending") {
-            throw new Error(
-                "Device approval request is not pending: " + req.status,
-            );
-        }
-        const signed = XUtils.encodeHex(
-            await xSignAsync(
-                XUtils.decodeUTF8(requestID),
-                this.signKeys.secretKey,
-            ),
-        );
-        const response = await this.http.post(
-            this.prefixes.HTTP +
-                this.host +
-                "/user/" +
-                this.getUser().userID +
-                "/devices/requests/" +
-                requestID +
-                "/approve",
-            msgpack.encode({ signed }),
-            { headers: { "Content-Type": "application/msgpack" } },
-        );
-        return decodeAxios(DeviceCodec, response.data);
-    }
-
     private async deleteDevice(deviceID: string): Promise<void> {
         if (deviceID === this.getDevice().deviceID) {
             throw new Error("You can't delete the device you're logged in to.");
@@ -2188,52 +2158,6 @@ export class Client {
         );
     }
 
-    private async getDeviceRegistrationRequest(
-        requestID: string,
-    ): Promise<null | PendingDeviceRequest> {
-        try {
-            const response = await this.http.get(
-                this.prefixes.HTTP +
-                    this.host +
-                    "/user/" +
-                    this.getUser().userID +
-                    "/devices/requests/" +
-                    requestID,
-            );
-            return decodeAxios(PendingDeviceRequestCodec, response.data);
-        } catch (err: unknown) {
-            if (isAxiosError(err) && err.response?.status === 404) {
-                return null;
-            }
-            throw err;
-        }
-    }
-
-    private async listDeviceRegistrationRequests(): Promise<
-        PendingDeviceRequest[]
-    > {
-        const response = await this.http.get(
-            this.prefixes.HTTP +
-                this.host +
-                "/user/" +
-                this.getUser().userID +
-                "/devices/requests",
-        );
-        return decodeAxios(PendingDeviceRequestArrayCodec, response.data);
-    }
-
-    private async rejectDeviceRequest(requestID: string): Promise<void> {
-        await this.http.post(
-            this.prefixes.HTTP +
-                this.host +
-                "/user/" +
-                this.getUser().userID +
-                "/devices/requests/" +
-                requestID +
-                "/reject",
-        );
-    }
-
     private async deleteHistory(channelOrUserID: string): Promise<void> {
         await this.database.deleteHistory(channelOrUserID);
     }
@@ -2245,6 +2169,21 @@ export class Client {
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
+
+    private deviceListFailureDetail(err: unknown): string {
+        if (!isAxiosError(err)) {
+            return "";
+        }
+        const st = err.response?.status;
+        if (typeof st === "number") {
+            return ` (HTTP ${String(st)})`;
+        }
+        if (err.code !== undefined) {
+            return ` (${err.code})`;
+        }
+        return "";
+    }
+
     /**
      * Gets a list of permissions for a server.
      *
@@ -2294,6 +2233,56 @@ export class Client {
         }
     }
 
+    private async fetchUserDeviceListOnce(userID: string): Promise<Device[]> {
+        if (this.isManualCloseInFlight()) {
+            return [];
+        }
+        const res = await this.http.get(
+            this.getHost() + "/user/" + userID + "/devices",
+        );
+        const devices = decodeAxios(DeviceArrayCodec, res.data);
+        for (const device of devices) {
+            this.deviceRecords[device.deviceID] = device;
+        }
+        return devices;
+    }
+
+    /**
+     * DM / forward paths need the peer’s (or self) device rows under load: bounded
+     * retries with exponential backoff (same shape as session pubkey hydration).
+     */
+    private async fetchUserDeviceListWithBackoff(
+        userID: string,
+        label: "own" | "peer",
+    ): Promise<Device[]> {
+        const base =
+            label === "own"
+                ? "Couldn't get own devices"
+                : "Couldn't get device list";
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            if (this.isManualCloseInFlight()) {
+                return [];
+            }
+            if (attempt > 0) {
+                const delayMs = 100 * 2 ** (attempt - 1);
+                // Chunk the delay so close() can finish before we retry HTTP.
+                const chunkMs = 10;
+                for (let elapsed = 0; elapsed < delayMs; elapsed += chunkMs) {
+                    if (this.isManualCloseInFlight()) {
+                        return [];
+                    }
+                    await sleep(Math.min(chunkMs, delayMs - elapsed));
+                }
+            }
+            try {
+                return await this.fetchUserDeviceListOnce(userID);
+            } catch (err: unknown) {
+                lastErr = err;
+            }
+        }
+        throw new Error(`${base}${this.deviceListFailureDetail(lastErr)}`);
+    }
     private async forward(message: Message) {
         if (this.isManualCloseInFlight()) {
             return;
@@ -2386,6 +2375,27 @@ export class Client {
         }
     }
 
+    private async getDeviceRegistrationRequest(
+        requestID: string,
+    ): Promise<null | PendingDeviceRequest> {
+        try {
+            const response = await this.http.get(
+                this.prefixes.HTTP +
+                    this.host +
+                    "/user/" +
+                    this.getUser().userID +
+                    "/devices/requests/" +
+                    requestID,
+            );
+            return decodeAxios(PendingDeviceRequestCodec, response.data);
+        } catch (err: unknown) {
+            if (isAxiosError(err) && err.response?.status === 404) {
+                return null;
+            }
+            throw err;
+        }
+    }
+
     /* Retrieves the current list of users you have sessions with. */
     private async getFamiliars(): Promise<User[]> {
         const sessions = await this.database.getAllSessions();
@@ -2448,8 +2458,8 @@ export class Client {
                     }
                 })();
                 debugLibvexDm("getMail: inbox", {
-                    deviceID: did,
                     count: String(inbox.length),
+                    deviceID: did,
                 });
             }
 
@@ -2459,8 +2469,8 @@ export class Client {
                     if (libvexDebugDmEnabled()) {
                         debugLibvexDm("getMail: readMail one", {
                             mailID: mailBody.mailID,
-                            type: String(mailBody.mailType),
                             recipient: mailBody.recipient,
+                            type: String(mailBody.mailType),
                         });
                     }
                     await this.readMail(mailHeader, mailBody, timestamp);
@@ -2598,20 +2608,6 @@ export class Client {
         return this.user;
     }
 
-    private deviceListFailureDetail(err: unknown): string {
-        if (!isAxiosError(err)) {
-            return "";
-        }
-        const st = err.response?.status;
-        if (typeof st === "number") {
-            return ` (HTTP ${String(st)})`;
-        }
-        if (err.code !== undefined) {
-            return ` (${err.code})`;
-        }
-        return "";
-    }
-
     /**
      * Single GET for `/user/:id/devices`. On failure returns `null` (swallows errors)
      * — callers that need reliability should use `fetchUserDeviceListWithBackoff`.
@@ -2626,57 +2622,6 @@ export class Client {
         }
     }
 
-    private async fetchUserDeviceListOnce(userID: string): Promise<Device[]> {
-        if (this.isManualCloseInFlight()) {
-            return [];
-        }
-        const res = await this.http.get(
-            this.getHost() + "/user/" + userID + "/devices",
-        );
-        const devices = decodeAxios(DeviceArrayCodec, res.data);
-        for (const device of devices) {
-            this.deviceRecords[device.deviceID] = device;
-        }
-        return devices;
-    }
-
-    /**
-     * DM / forward paths need the peer’s (or self) device rows under load: bounded
-     * retries with exponential backoff (same shape as session pubkey hydration).
-     */
-    private async fetchUserDeviceListWithBackoff(
-        userID: string,
-        label: "peer" | "own",
-    ): Promise<Device[]> {
-        const base =
-            label === "own"
-                ? "Couldn't get own devices"
-                : "Couldn't get device list";
-        let lastErr: unknown;
-        for (let attempt = 0; attempt < 5; attempt++) {
-            if (this.isManualCloseInFlight()) {
-                return [];
-            }
-            if (attempt > 0) {
-                const delayMs = 100 * 2 ** (attempt - 1);
-                // Chunk the delay so close() can finish before we retry HTTP.
-                const chunkMs = 10;
-                for (let elapsed = 0; elapsed < delayMs; elapsed += chunkMs) {
-                    if (this.isManualCloseInFlight()) {
-                        return [];
-                    }
-                    await sleep(Math.min(chunkMs, delayMs - elapsed));
-                }
-            }
-            try {
-                return await this.fetchUserDeviceListOnce(userID);
-            } catch (err: unknown) {
-                lastErr = err;
-            }
-        }
-        throw new Error(`${base}${this.deviceListFailureDetail(lastErr)}`);
-    }
-
     private async getUserList(channelID: string): Promise<User[]> {
         const res = await this.http.post(
             this.getHost() + "/userList/" + channelID,
@@ -2686,10 +2631,6 @@ export class Client {
 
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
-            case "mail":
-                await this.getMail();
-                this.fetchingMail = false;
-                break;
             case "deviceRequest": {
                 const parsed = deviceRequestNotifyData.safeParse(msg.data);
                 if (parsed.success) {
@@ -2697,6 +2638,10 @@ export class Client {
                 }
                 break;
             }
+            case "mail":
+                await this.getMail();
+                this.fetchingMail = false;
+                break;
             case "permission":
                 this.emitter.emit(
                     "permission",
@@ -2710,28 +2655,6 @@ export class Client {
                 break;
         }
     }
-
-    /**
-     * Pipeline for decrypted messages — registered in `init`. After `close()` sets
-     * `manuallyClosing`, this becomes a no-op so fire-and-forget `forward` does not
-     * race HTTP teardown (we avoid `off()` here — it can interact badly with emit).
-     */
-    private readonly onInternalMessage = (message: Message): void => {
-        if (this.isManualCloseInFlight()) {
-            return;
-        }
-        if (message.direction === "outgoing" && !message.forward) {
-            void this.forward(message);
-        }
-
-        if (
-            message.direction === "incoming" &&
-            message.recipient === message.sender
-        ) {
-            return;
-        }
-        void this.database.saveMessage(message);
-    };
 
     /**
      * Initializes the keyring. This must be called before anything else.
@@ -2834,6 +2757,15 @@ export class Client {
         }
     }
 
+    /**
+     * Fresh read of the `manuallyClosing` flag for async loops — direct property checks
+     * after `await` are flagged as always-false by control-flow analysis even though
+     * `close()` can run concurrently.
+     */
+    private isManualCloseInFlight(): boolean {
+        return this.manuallyClosing;
+    }
+
     private async kickUser(userID: string, serverID: string): Promise<void> {
         const permissionList = await this.fetchPermissionList(serverID);
         for (const permission of permissionList) {
@@ -2852,6 +2784,19 @@ export class Client {
                 await this.deletePermission(permission.permissionID);
             }
         }
+    }
+
+    private async listDeviceRegistrationRequests(): Promise<
+        PendingDeviceRequest[]
+    > {
+        const response = await this.http.get(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests",
+        );
+        return decodeAxios(PendingDeviceRequestArrayCodec, response.data);
     }
 
     private async markSessionVerified(sessionID: string) {
@@ -2877,6 +2822,28 @@ export class Client {
         }
         this.xKeyRing.ephemeralKeys = await xBoxKeyPairAsync();
     }
+
+    /**
+     * Pipeline for decrypted messages — registered in `init`. After `close()` sets
+     * `manuallyClosing`, this becomes a no-op so fire-and-forget `forward` does not
+     * race HTTP teardown (we avoid `off()` here — it can interact badly with emit).
+     */
+    private readonly onInternalMessage = (message: Message): void => {
+        if (this.isManualCloseInFlight()) {
+            return;
+        }
+        if (message.direction === "outgoing" && !message.forward) {
+            void this.forward(message);
+        }
+
+        if (
+            message.direction === "incoming" &&
+            message.recipient === message.sender
+        ) {
+            return;
+        }
+        void this.database.saveMessage(message);
+    };
 
     private ping() {
         if (!this.isAlive) {
@@ -3064,10 +3031,10 @@ export class Client {
                                         "readMail initial: abort (otk index mismatch)",
                                         {
                                             mailID: mail.mailID,
-                                            preKeyIndex: String(preKeyIndex),
                                             otkIndex: String(
                                                 otk?.index ?? "null",
                                             ),
+                                            preKeyIndex: String(preKeyIndex),
                                             thisDevice:
                                                 this.getDevice().deviceID,
                                         },
@@ -3104,8 +3071,8 @@ export class Client {
                                     debugLibvexDm(
                                         "readMail initial: abort (IK_A null, Ed→X25519?)",
                                         {
-                                            mailID: mail.mailID,
                                             fips: String(fipsRead),
+                                            mailID: mail.mailID,
                                             thisDevice:
                                                 this.getDevice().deviceID,
                                         },
@@ -3232,12 +3199,12 @@ export class Client {
                                         "readMail initial: ok (emit message)",
                                         {
                                             mailID: mail.mailID,
-                                            preKeyIndex: String(preKeyIndex),
-                                            thisDevice:
-                                                this.getDevice().deviceID,
                                             plaintextLen: String(
                                                 plaintext.length,
                                             ),
+                                            preKeyIndex: String(preKeyIndex),
+                                            thisDevice:
+                                                this.getDevice().deviceID,
                                         },
                                     );
                                 } catch {
@@ -3480,6 +3447,18 @@ export class Client {
         return decodeAxios(DeviceRegistrationResultCodec, res.data);
     }
 
+    private async rejectDeviceRequest(requestID: string): Promise<void> {
+        await this.http.post(
+            this.prefixes.HTTP +
+                this.host +
+                "/user/" +
+                this.getUser().userID +
+                "/devices/requests/" +
+                requestID +
+                "/reject",
+        );
+    }
+
     private async respond(msg: ChallMsg) {
         const response: RespMsg = {
             signed: await xSignAsync(
@@ -3602,6 +3581,27 @@ export class Client {
         return device;
     }
 
+    /**
+     * `xDHAsync` and other helpers in `@vex-chat/crypto` use the process-wide
+     * active profile. When several {@link Client} instances use different
+     * `cryptoProfile` values, scope the global to this instance for the duration
+     * of that crypto work.
+     */
+    private async runWithThisCryptoProfile<T>(
+        fn: () => Promise<T>,
+    ): Promise<T> {
+        const prev = getCryptoProfile();
+        if (prev === this.cryptoProfile) {
+            return await fn();
+        }
+        setCryptoProfile(this.cryptoProfile);
+        try {
+            return await fn();
+        } finally {
+            setCryptoProfile(prev);
+        }
+    }
+
     /* header is 32 bytes and is either empty
     or contains an HMAC of the message with
     a derived SK */
@@ -3679,9 +3679,9 @@ export class Client {
             if (!session || retry) {
                 if (libvexDebugDmEnabled()) {
                     debugLibvexDm("sendMail: createSession path", {
+                        hasSession: String(!!session),
                         peerDevice: device.deviceID,
                         retry: String(retry),
-                        hasSession: String(!!session),
                     });
                 }
                 await this.createSession(
@@ -3830,11 +3830,11 @@ export class Client {
                 debugLibvexDm(
                     "sendMessage: peer device list (merged, sorted)",
                     {
-                        userID,
                         nAfterBackoff: String(afterBackoff.length),
                         nMerged: String(deviceListRaw.length),
                         nSorted: String(deviceList.length),
                         ourDevice: this.getDevice().deviceID,
+                        userID,
                     },
                 );
                 for (const [i, d] of deviceList.entries()) {
@@ -3852,8 +3852,8 @@ export class Client {
                 try {
                     if (libvexDebugDmEnabled()) {
                         debugLibvexDm("sendMessage: sendMail start", {
-                            recipientDevice: device.deviceID,
                             mailID: messageMailID,
+                            recipientDevice: device.deviceID,
                         });
                     }
                     await this.sendMail(

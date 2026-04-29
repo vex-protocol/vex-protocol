@@ -35,178 +35,31 @@ const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 
 const BOX = {
-    h: "─",
-    tl: "┌",
-    tr: "┐",
     bl: "└",
     br: "┘",
-    v: "│",
+    h: "─",
     lj: "├",
     rj: "┤",
+    tl: "┌",
+    tr: "┐",
+    v: "│",
 } as const;
-
-function isRecord(x: unknown): x is Record<string, unknown> {
-    return typeof x === "object" && x !== null;
-}
-
-function readStatusPayload(raw: unknown): {
-    checkDurationMs?: number;
-    dbHealthy?: boolean;
-    metrics?: { requestsTotal?: number };
-} {
-    if (!isRecord(raw)) {
-        return {};
-    }
-    const metricsRaw = raw["metrics"];
-    let metrics: { requestsTotal?: number } | undefined;
-    if (isRecord(metricsRaw)) {
-        const rt = metricsRaw["requestsTotal"];
-        if (typeof rt === "number") {
-            metrics = { requestsTotal: rt };
-        }
-    }
-    const chk = raw["checkDurationMs"];
-    const db = raw["dbHealthy"];
-    const okFlag = raw["ok"];
-    const out: {
-        checkDurationMs?: number;
-        dbHealthy?: boolean;
-        metrics?: { requestsTotal?: number };
-    } = {};
-    if (typeof chk === "number") {
-        out.checkDurationMs = chk;
-    }
-    if (typeof db === "boolean") {
-        out.dbHealthy = db;
-    } else if (typeof okFlag === "boolean") {
-        out.dbHealthy = okFlag;
-    }
-    if (metrics !== undefined) {
-        out.metrics = metrics;
-    }
-    return out;
-}
-
-function readProcessSnapshot(raw: unknown): {
-    hostOs?: { freemem: number; loadavg: number[]; totalmem: number };
-    memory?: { heapUsed?: number; rss?: number };
-    pid?: number;
-    resourceUsage?: {
-        fsRead?: number;
-        fsWrite?: number;
-        systemMicros?: number;
-        userMicros?: number;
-    };
-    uptimeSeconds?: number;
-    websocketClients?: number;
-} | null {
-    if (!isRecord(raw)) {
-        return null;
-    }
-    const out: {
-        hostOs?: { freemem: number; loadavg: number[]; totalmem: number };
-        memory?: { heapUsed?: number; rss?: number };
-        pid?: number;
-        resourceUsage?: {
-            fsRead?: number;
-            fsWrite?: number;
-            systemMicros?: number;
-            userMicros?: number;
-        };
-        uptimeSeconds?: number;
-        websocketClients?: number;
-    } = {};
-    const pid = raw["pid"];
-    if (typeof pid === "number") {
-        out.pid = pid;
-    }
-    const up = raw["uptimeSeconds"];
-    if (typeof up === "number") {
-        out.uptimeSeconds = up;
-    }
-    const ws = raw["websocketClients"];
-    if (typeof ws === "number") {
-        out.websocketClients = ws;
-    }
-    const memRaw = raw["memory"];
-    if (isRecord(memRaw)) {
-        const rss = memRaw["rss"];
-        const heapUsed = memRaw["heapUsed"];
-        const mem: { heapUsed?: number; rss?: number } = {};
-        if (typeof rss === "number") {
-            mem.rss = rss;
-        }
-        if (typeof heapUsed === "number") {
-            mem.heapUsed = heapUsed;
-        }
-        if (mem.rss !== undefined || mem.heapUsed !== undefined) {
-            out.memory = mem;
-        }
-    }
-    const ruRaw = raw["resourceUsage"];
-    if (isRecord(ruRaw)) {
-        const ru: NonNullable<(typeof out)["resourceUsage"]> = {};
-        const fr = ruRaw["fsRead"];
-        const fw = ruRaw["fsWrite"];
-        const um = ruRaw["userMicros"];
-        const sm = ruRaw["systemMicros"];
-        if (typeof fr === "number") {
-            ru.fsRead = fr;
-        }
-        if (typeof fw === "number") {
-            ru.fsWrite = fw;
-        }
-        if (typeof um === "number") {
-            ru.userMicros = um;
-        }
-        if (typeof sm === "number") {
-            ru.systemMicros = sm;
-        }
-        if (Object.keys(ru).length > 0) {
-            out.resourceUsage = ru;
-        }
-    }
-    const hoRaw = raw["hostOs"];
-    if (isRecord(hoRaw)) {
-        const fm = hoRaw["freemem"];
-        const tm = hoRaw["totalmem"];
-        const la = hoRaw["loadavg"];
-        if (
-            typeof fm === "number" &&
-            typeof tm === "number" &&
-            Array.isArray(la)
-        ) {
-            const laNums: number[] = [];
-            for (const x of la) {
-                if (typeof x !== "number") {
-                    laNums.length = 0;
-                    break;
-                }
-                laNums.push(x);
-            }
-            if (laNums.length === 3) {
-                out.hostOs = { freemem: fm, loadavg: laNums, totalmem: tm };
-            }
-        }
-    }
-    return out;
-}
 
 export interface StressDashboardConfig {
     readonly clientCount: number;
-    readonly clientViz: StressClientViz[] | null;
+    readonly clientViz: null | StressClientViz[];
     readonly concurrencySnapshot: number;
+    /** Same as Spire `DEV_API_KEY` — sent on `/status` polls when set. */
+    readonly devApiKey?: string;
     readonly forever: boolean;
     readonly host: string;
     readonly httpStats: HttpExpectStats | null;
-    readonly knobs: StressKnobs | null;
+    readonly knobs: null | StressKnobs;
     readonly plannedRounds: number;
     readonly scenario: string;
     readonly statusBaseUrl: string;
-    /** Same as Spire `DEV_API_KEY` — sent on `/status` polls when set. */
-    readonly devApiKey?: string;
     /** Read-only poll of harness trace SQLite (same file stress may write). */
-    readonly traceLogPath: string | null;
+    readonly traceLogPath: null | string;
 }
 
 export interface StressDashboardState {
@@ -214,96 +67,7 @@ export interface StressDashboardState {
     currentBurst: number;
     inFlight: number;
     lastBurstMs: number;
-    phase: "bootstrap" | "flood" | "done";
-}
-
-function termWidth(): number {
-    const c = process.stdout.columns;
-    if (typeof c === "number" && c >= 56) {
-        return Math.min(132, c);
-    }
-    return 100;
-}
-
-/** Full-width top bar (top-style title line). */
-function topBar(w: number, title: string): string {
-    const t = ` ${title} `;
-    const inner = w - 2;
-    if (t.length >= inner) {
-        return BOX.tl + t.slice(0, inner).padEnd(inner, BOX.h) + BOX.tr + "\n";
-    }
-    const pad = inner - t.length;
-    const left = Math.floor(pad / 2);
-    const right = pad - left;
-    return (
-        BOX.tl + BOX.h.repeat(left) + t + BOX.h.repeat(right) + BOX.tr + "\n"
-    );
-}
-
-function sep(w: number): string {
-    return BOX.lj + BOX.h.repeat(w - 2) + BOX.rj + "\n";
-}
-
-function row(w: number, text: string): string {
-    const inner = w - 4;
-    let s = text;
-    if (s.length > inner) {
-        s = `${s.slice(0, Math.max(0, inner - 1))}…`;
-    }
-    return `${BOX.v} ${s.padEnd(inner)} ${BOX.v}\n`;
-}
-
-function fmtBytes(n: number): string {
-    if (n < 1024) return `${String(n)} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function readSqliteMonitor(raw: unknown): string {
-    if (!isRecord(raw)) {
-        return "bad json";
-    }
-    if (raw["ok"] !== true) {
-        return "unavailable";
-    }
-    const sq = raw["sqlite"];
-    if (!isRecord(sq)) {
-        return "no sqlite block";
-    }
-    const abs = sq["absPath"];
-    const jm = sq["journalMode"];
-    const pc = sq["pageCount"];
-    const ps = sq["pageSize"];
-    const fb = sq["fileBytes"];
-    let wal = "?";
-    let main = "?";
-    if (isRecord(fb)) {
-        const w = fb["wal"];
-        const m = fb["main"];
-        if (typeof w === "number") {
-            wal = fmtBytes(w);
-        }
-        if (typeof m === "number") {
-            main = fmtBytes(m);
-        }
-    }
-    const absS = typeof abs === "string" ? abs.slice(-36) : "?";
-    return `db ${absS}  ${String(jm)}  main ${main}  wal ${wal}  pages ${String(pc)}×${String(ps)}`;
-}
-
-function fmtMs(n: number): string {
-    if (!Number.isFinite(n) || n < 0) return "—";
-    if (n < 0.05) return "<0.1ms";
-    if (n < 1) return `${n.toFixed(2)}ms`;
-    return `${n.toFixed(1)}ms`;
-}
-
-function padL(s: string, w: number): string {
-    return s.length >= w ? s.slice(0, w) : s.padStart(w);
-}
-
-function padR(s: string, w: number): string {
-    return s.length >= w ? s.slice(0, w) : s.padEnd(w);
+    phase: "bootstrap" | "done" | "flood";
 }
 
 interface SpireProcSample {
@@ -315,23 +79,19 @@ interface SpireProcSample {
 }
 
 export class StressDashboard {
-    private readonly elHistogram = monitorEventLoopDelay({ resolution: 20 });
     private readonly cfg: StressDashboardConfig;
-    private interval: ReturnType<typeof setInterval> | null = null;
+    private readonly elHistogram = monitorEventLoopDelay({ resolution: 20 });
+    private interval: null | ReturnType<typeof setInterval> = null;
     private intervalMs = 400;
     private lastCpu = process.cpuUsage();
     private lastElu = performance.eventLoopUtilization();
     private lastRequestsTotal: null | number = null;
-    private lastSpireProc: SpireProcSample | null = null;
+    private lastSpireProc: null | SpireProcSample = null;
     private pulseInFlight = false;
     private serverProcessLine = "";
     private serverPulseLine = "";
     private serverSpireLine = "";
     private serverSqliteLine = "";
-    private traceHarnessLine = "";
-    /** Read-only trace DB; eslint struggles with better-sqlite3 default export types. */
-    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
-    private traceRo: Database | null = null;
     private state: StressDashboardState = {
         completedHttpOps: 0,
         currentBurst: 0,
@@ -339,10 +99,24 @@ export class StressDashboard {
         lastBurstMs: 0,
         phase: "bootstrap",
     };
+    private traceHarnessLine = "";
+    /** Read-only trace DB; eslint struggles with better-sqlite3 default export types. */
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+    private traceRo: Database | null = null;
     private useAltScreen = false;
 
     public constructor(cfg: StressDashboardConfig) {
         this.cfg = cfg;
+    }
+
+    public renderFinalSummary(summary: StressRunSummary): void {
+        this.stop();
+        process.stdout.write(CLEAR);
+        writeStressRunSummary(summary);
+    }
+
+    public setState(patch: Partial<StressDashboardState>): void {
+        this.state = { ...this.state, ...patch };
     }
 
     public start(): void {
@@ -361,10 +135,6 @@ export class StressDashboard {
         this.interval = setInterval(() => {
             this.render();
         }, this.intervalMs);
-    }
-
-    public setState(patch: Partial<StressDashboardState>): void {
-        this.state = { ...this.state, ...patch };
     }
 
     public stop(): void {
@@ -389,12 +159,6 @@ export class StressDashboard {
             }
             process.stdout.write(SHOW_CURSOR);
         }
-    }
-
-    public renderFinalSummary(summary: StressRunSummary): void {
-        this.stop();
-        process.stdout.write(CLEAR);
-        writeStressRunSummary(summary);
     }
 
     private ensureTraceRo(): void {
@@ -446,152 +210,6 @@ export class StressDashboard {
             this.traceHarnessLine = "trace DB busy/unreadable";
         }
         /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
-    }
-
-    private scheduleServerPulse(): void {
-        if (this.pulseInFlight) {
-            return;
-        }
-        this.pulseInFlight = true;
-        const base = this.cfg.statusBaseUrl.replace(/\/$/, "");
-        const statusUrl = `${base}/status`;
-        const processUrl = `${base}/status/process`;
-        const sqliteUrl = `${base}/status/sqlite`;
-        const devKey = this.cfg.devApiKey?.trim() ?? "";
-        const devHeaders =
-            devKey.length > 0 ? { [DEV_API_KEY_HEADER]: devKey } : undefined;
-
-        void Promise.all([
-            axios.get(statusUrl, {
-                timeout: 1200,
-                validateStatus: () => true,
-                headers: devHeaders,
-            }),
-            axios.get(processUrl, {
-                timeout: 1200,
-                validateStatus: () => true,
-                headers: devHeaders,
-            }),
-            axios.get(sqliteUrl, {
-                timeout: 1200,
-                validateStatus: () => true,
-                headers: devHeaders,
-            }),
-        ])
-            .then(([statusRes, procRes, sqliteRes]) => {
-                if (statusRes.status !== 200) {
-                    this.serverPulseLine = `HTTP ${String(statusRes.status)}`;
-                } else {
-                    const data = readStatusPayload(statusRes.data);
-                    const chk = data.checkDurationMs ?? 0;
-                    const ok = data.dbHealthy === true ? "ok" : "?";
-                    let line = `health db=${ok} chk=${String(chk)}ms`;
-                    const total = data.metrics?.requestsTotal;
-                    if (typeof total === "number") {
-                        if (this.lastRequestsTotal !== null) {
-                            line += `  req Δ${String(total - this.lastRequestsTotal)}/tick`;
-                        }
-                        this.lastRequestsTotal = total;
-                    }
-                    this.serverPulseLine = line;
-                }
-
-                if (procRes.status === 404) {
-                    this.serverProcessLine =
-                        "dev snapshot off — set DEV_API_KEY on Spire (same as stress)";
-                    this.serverSpireLine = this.serverProcessLine;
-                } else if (procRes.status !== 200) {
-                    this.serverProcessLine = `process HTTP ${String(procRes.status)}`;
-                    this.serverSpireLine = this.serverProcessLine;
-                } else {
-                    const snap = readProcessSnapshot(procRes.data);
-                    if (snap === null) {
-                        this.serverProcessLine = "bad json";
-                        this.serverSpireLine = this.serverProcessLine;
-                    } else {
-                        const rss = snap.memory?.rss;
-                        const heap = snap.memory?.heapUsed;
-                        const ru = snap.resourceUsage;
-                        const now = Date.now();
-                        let cpuApprox = "—";
-                        let fsRd = "—";
-                        let fsWr = "—";
-                        if (
-                            ru !== undefined &&
-                            typeof ru.userMicros === "number" &&
-                            typeof ru.systemMicros === "number" &&
-                            typeof ru.fsRead === "number" &&
-                            typeof ru.fsWrite === "number"
-                        ) {
-                            const prev = this.lastSpireProc;
-                            if (prev !== null) {
-                                const dt = (now - prev.t) / 1000;
-                                if (dt > 0.05) {
-                                    const du =
-                                        (ru.userMicros - prev.userMicros) /
-                                        1_000_000;
-                                    const ds =
-                                        (ru.systemMicros - prev.systemMicros) /
-                                        1_000_000;
-                                    cpuApprox = `${(((du + ds) / dt) * 100).toFixed(0)}%`;
-                                    fsRd = `${String(Math.round((ru.fsRead - prev.fsRead) / dt))}/s`;
-                                    fsWr = `${String(Math.round((ru.fsWrite - prev.fsWrite) / dt))}/s`;
-                                }
-                            }
-                            this.lastSpireProc = {
-                                fsRead: ru.fsRead,
-                                fsWrite: ru.fsWrite,
-                                systemMicros: ru.systemMicros,
-                                t: now,
-                                userMicros: ru.userMicros,
-                            };
-                        }
-                        const ho = snap.hostOs;
-                        let hostBit = "";
-                        if (ho !== undefined) {
-                            const freePct = Math.round(
-                                (100 * ho.freemem) / ho.totalmem,
-                            );
-                            const la0 = ho.loadavg[0]?.toFixed(2) ?? "?";
-                            hostBit = `  host load[0]=${la0}  freeRAM=${String(freePct)}%`;
-                        }
-                        const rssS =
-                            typeof rss === "number" ? fmtBytes(rss) : "?";
-                        const heapS =
-                            typeof heap === "number" ? fmtBytes(heap) : "?";
-                        const pid =
-                            typeof snap.pid === "number"
-                                ? String(snap.pid)
-                                : "?";
-                        const ws =
-                            typeof snap.websocketClients === "number"
-                                ? String(snap.websocketClients)
-                                : "?";
-                        this.serverSpireLine =
-                            `pid ${pid}  rss ${rssS}  heap ${heapS}  ws ${ws}` +
-                            `  Spire-CPU~${cpuApprox}  fs rd ${fsRd} wr ${fsWr}${hostBit}`;
-                        this.serverProcessLine = this.serverSpireLine;
-                    }
-                }
-
-                if (sqliteRes.status === 404) {
-                    this.serverSqliteLine =
-                        "sqlite dev off (same DEV_API_KEY gate)";
-                } else if (sqliteRes.status !== 200) {
-                    this.serverSqliteLine = `sqlite HTTP ${String(sqliteRes.status)}`;
-                } else {
-                    this.serverSqliteLine = readSqliteMonitor(sqliteRes.data);
-                }
-            })
-            .catch(() => {
-                this.serverPulseLine = "unreachable";
-                this.serverProcessLine = "unreachable";
-                this.serverSpireLine = "unreachable";
-                this.serverSqliteLine = "unreachable";
-            })
-            .finally(() => {
-                this.pulseInFlight = false;
-            });
     }
 
     private render(): void {
@@ -786,4 +404,386 @@ export class StressDashboard {
             process.stdout.write(out.join(""));
         }
     }
+
+    private scheduleServerPulse(): void {
+        if (this.pulseInFlight) {
+            return;
+        }
+        this.pulseInFlight = true;
+        const base = this.cfg.statusBaseUrl.replace(/\/$/, "");
+        const statusUrl = `${base}/status`;
+        const processUrl = `${base}/status/process`;
+        const sqliteUrl = `${base}/status/sqlite`;
+        const devKey = this.cfg.devApiKey?.trim() ?? "";
+        const devHeaders =
+            devKey.length > 0 ? { [DEV_API_KEY_HEADER]: devKey } : undefined;
+
+        void Promise.all([
+            axios.get(statusUrl, {
+                headers: devHeaders,
+                timeout: 1200,
+                validateStatus: () => true,
+            }),
+            axios.get(processUrl, {
+                headers: devHeaders,
+                timeout: 1200,
+                validateStatus: () => true,
+            }),
+            axios.get(sqliteUrl, {
+                headers: devHeaders,
+                timeout: 1200,
+                validateStatus: () => true,
+            }),
+        ])
+            .then(([statusRes, procRes, sqliteRes]) => {
+                if (statusRes.status !== 200) {
+                    this.serverPulseLine = `HTTP ${String(statusRes.status)}`;
+                } else {
+                    const data = readStatusPayload(statusRes.data);
+                    const chk = data.checkDurationMs ?? 0;
+                    const ok = data.dbHealthy === true ? "ok" : "?";
+                    let line = `health db=${ok} chk=${String(chk)}ms`;
+                    const total = data.metrics?.requestsTotal;
+                    if (typeof total === "number") {
+                        if (this.lastRequestsTotal !== null) {
+                            line += `  req Δ${String(total - this.lastRequestsTotal)}/tick`;
+                        }
+                        this.lastRequestsTotal = total;
+                    }
+                    this.serverPulseLine = line;
+                }
+
+                if (procRes.status === 404) {
+                    this.serverProcessLine =
+                        "dev snapshot off — set DEV_API_KEY on Spire (same as stress)";
+                    this.serverSpireLine = this.serverProcessLine;
+                } else if (procRes.status !== 200) {
+                    this.serverProcessLine = `process HTTP ${String(procRes.status)}`;
+                    this.serverSpireLine = this.serverProcessLine;
+                } else {
+                    const snap = readProcessSnapshot(procRes.data);
+                    if (snap === null) {
+                        this.serverProcessLine = "bad json";
+                        this.serverSpireLine = this.serverProcessLine;
+                    } else {
+                        const rss = snap.memory?.rss;
+                        const heap = snap.memory?.heapUsed;
+                        const ru = snap.resourceUsage;
+                        const now = Date.now();
+                        let cpuApprox = "—";
+                        let fsRd = "—";
+                        let fsWr = "—";
+                        if (
+                            ru !== undefined &&
+                            typeof ru.userMicros === "number" &&
+                            typeof ru.systemMicros === "number" &&
+                            typeof ru.fsRead === "number" &&
+                            typeof ru.fsWrite === "number"
+                        ) {
+                            const prev = this.lastSpireProc;
+                            if (prev !== null) {
+                                const dt = (now - prev.t) / 1000;
+                                if (dt > 0.05) {
+                                    const du =
+                                        (ru.userMicros - prev.userMicros) /
+                                        1_000_000;
+                                    const ds =
+                                        (ru.systemMicros - prev.systemMicros) /
+                                        1_000_000;
+                                    cpuApprox = `${(((du + ds) / dt) * 100).toFixed(0)}%`;
+                                    fsRd = `${String(Math.round((ru.fsRead - prev.fsRead) / dt))}/s`;
+                                    fsWr = `${String(Math.round((ru.fsWrite - prev.fsWrite) / dt))}/s`;
+                                }
+                            }
+                            this.lastSpireProc = {
+                                fsRead: ru.fsRead,
+                                fsWrite: ru.fsWrite,
+                                systemMicros: ru.systemMicros,
+                                t: now,
+                                userMicros: ru.userMicros,
+                            };
+                        }
+                        const ho = snap.hostOs;
+                        let hostBit = "";
+                        if (ho !== undefined) {
+                            const freePct = Math.round(
+                                (100 * ho.freemem) / ho.totalmem,
+                            );
+                            const la0 = ho.loadavg[0]?.toFixed(2) ?? "?";
+                            hostBit = `  host load[0]=${la0}  freeRAM=${String(freePct)}%`;
+                        }
+                        const rssS =
+                            typeof rss === "number" ? fmtBytes(rss) : "?";
+                        const heapS =
+                            typeof heap === "number" ? fmtBytes(heap) : "?";
+                        const pid =
+                            typeof snap.pid === "number"
+                                ? String(snap.pid)
+                                : "?";
+                        const ws =
+                            typeof snap.websocketClients === "number"
+                                ? String(snap.websocketClients)
+                                : "?";
+                        this.serverSpireLine =
+                            `pid ${pid}  rss ${rssS}  heap ${heapS}  ws ${ws}` +
+                            `  Spire-CPU~${cpuApprox}  fs rd ${fsRd} wr ${fsWr}${hostBit}`;
+                        this.serverProcessLine = this.serverSpireLine;
+                    }
+                }
+
+                if (sqliteRes.status === 404) {
+                    this.serverSqliteLine =
+                        "sqlite dev off (same DEV_API_KEY gate)";
+                } else if (sqliteRes.status !== 200) {
+                    this.serverSqliteLine = `sqlite HTTP ${String(sqliteRes.status)}`;
+                } else {
+                    this.serverSqliteLine = readSqliteMonitor(sqliteRes.data);
+                }
+            })
+            .catch(() => {
+                this.serverPulseLine = "unreachable";
+                this.serverProcessLine = "unreachable";
+                this.serverSpireLine = "unreachable";
+                this.serverSqliteLine = "unreachable";
+            })
+            .finally(() => {
+                this.pulseInFlight = false;
+            });
+    }
+}
+
+function fmtBytes(n: number): string {
+    if (n < 1024) return `${String(n)} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function fmtMs(n: number): string {
+    if (!Number.isFinite(n) || n < 0) return "—";
+    if (n < 0.05) return "<0.1ms";
+    if (n < 1) return `${n.toFixed(2)}ms`;
+    return `${n.toFixed(1)}ms`;
+}
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+    return typeof x === "object" && x !== null;
+}
+
+function padL(s: string, w: number): string {
+    return s.length >= w ? s.slice(0, w) : s.padStart(w);
+}
+
+function padR(s: string, w: number): string {
+    return s.length >= w ? s.slice(0, w) : s.padEnd(w);
+}
+
+function readProcessSnapshot(raw: unknown): null | {
+    hostOs?: { freemem: number; loadavg: number[]; totalmem: number };
+    memory?: { heapUsed?: number; rss?: number };
+    pid?: number;
+    resourceUsage?: {
+        fsRead?: number;
+        fsWrite?: number;
+        systemMicros?: number;
+        userMicros?: number;
+    };
+    uptimeSeconds?: number;
+    websocketClients?: number;
+} {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const out: {
+        hostOs?: { freemem: number; loadavg: number[]; totalmem: number };
+        memory?: { heapUsed?: number; rss?: number };
+        pid?: number;
+        resourceUsage?: {
+            fsRead?: number;
+            fsWrite?: number;
+            systemMicros?: number;
+            userMicros?: number;
+        };
+        uptimeSeconds?: number;
+        websocketClients?: number;
+    } = {};
+    const pid = raw["pid"];
+    if (typeof pid === "number") {
+        out.pid = pid;
+    }
+    const up = raw["uptimeSeconds"];
+    if (typeof up === "number") {
+        out.uptimeSeconds = up;
+    }
+    const ws = raw["websocketClients"];
+    if (typeof ws === "number") {
+        out.websocketClients = ws;
+    }
+    const memRaw = raw["memory"];
+    if (isRecord(memRaw)) {
+        const rss = memRaw["rss"];
+        const heapUsed = memRaw["heapUsed"];
+        const mem: { heapUsed?: number; rss?: number } = {};
+        if (typeof rss === "number") {
+            mem.rss = rss;
+        }
+        if (typeof heapUsed === "number") {
+            mem.heapUsed = heapUsed;
+        }
+        if (mem.rss !== undefined || mem.heapUsed !== undefined) {
+            out.memory = mem;
+        }
+    }
+    const ruRaw = raw["resourceUsage"];
+    if (isRecord(ruRaw)) {
+        const ru: NonNullable<(typeof out)["resourceUsage"]> = {};
+        const fr = ruRaw["fsRead"];
+        const fw = ruRaw["fsWrite"];
+        const um = ruRaw["userMicros"];
+        const sm = ruRaw["systemMicros"];
+        if (typeof fr === "number") {
+            ru.fsRead = fr;
+        }
+        if (typeof fw === "number") {
+            ru.fsWrite = fw;
+        }
+        if (typeof um === "number") {
+            ru.userMicros = um;
+        }
+        if (typeof sm === "number") {
+            ru.systemMicros = sm;
+        }
+        if (Object.keys(ru).length > 0) {
+            out.resourceUsage = ru;
+        }
+    }
+    const hoRaw = raw["hostOs"];
+    if (isRecord(hoRaw)) {
+        const fm = hoRaw["freemem"];
+        const tm = hoRaw["totalmem"];
+        const la = hoRaw["loadavg"];
+        if (
+            typeof fm === "number" &&
+            typeof tm === "number" &&
+            Array.isArray(la)
+        ) {
+            const laNums: number[] = [];
+            for (const x of la) {
+                if (typeof x !== "number") {
+                    laNums.length = 0;
+                    break;
+                }
+                laNums.push(x);
+            }
+            if (laNums.length === 3) {
+                out.hostOs = { freemem: fm, loadavg: laNums, totalmem: tm };
+            }
+        }
+    }
+    return out;
+}
+
+function readSqliteMonitor(raw: unknown): string {
+    if (!isRecord(raw)) {
+        return "bad json";
+    }
+    if (raw["ok"] !== true) {
+        return "unavailable";
+    }
+    const sq = raw["sqlite"];
+    if (!isRecord(sq)) {
+        return "no sqlite block";
+    }
+    const abs = sq["absPath"];
+    const jm = sq["journalMode"];
+    const pc = sq["pageCount"];
+    const ps = sq["pageSize"];
+    const fb = sq["fileBytes"];
+    let wal = "?";
+    let main = "?";
+    if (isRecord(fb)) {
+        const w = fb["wal"];
+        const m = fb["main"];
+        if (typeof w === "number") {
+            wal = fmtBytes(w);
+        }
+        if (typeof m === "number") {
+            main = fmtBytes(m);
+        }
+    }
+    const absS = typeof abs === "string" ? abs.slice(-36) : "?";
+    return `db ${absS}  ${String(jm)}  main ${main}  wal ${wal}  pages ${String(pc)}×${String(ps)}`;
+}
+
+function readStatusPayload(raw: unknown): {
+    checkDurationMs?: number;
+    dbHealthy?: boolean;
+    metrics?: { requestsTotal?: number };
+} {
+    if (!isRecord(raw)) {
+        return {};
+    }
+    const metricsRaw = raw["metrics"];
+    let metrics: undefined | { requestsTotal?: number };
+    if (isRecord(metricsRaw)) {
+        const rt = metricsRaw["requestsTotal"];
+        if (typeof rt === "number") {
+            metrics = { requestsTotal: rt };
+        }
+    }
+    const chk = raw["checkDurationMs"];
+    const db = raw["dbHealthy"];
+    const okFlag = raw["ok"];
+    const out: {
+        checkDurationMs?: number;
+        dbHealthy?: boolean;
+        metrics?: { requestsTotal?: number };
+    } = {};
+    if (typeof chk === "number") {
+        out.checkDurationMs = chk;
+    }
+    if (typeof db === "boolean") {
+        out.dbHealthy = db;
+    } else if (typeof okFlag === "boolean") {
+        out.dbHealthy = okFlag;
+    }
+    if (metrics !== undefined) {
+        out.metrics = metrics;
+    }
+    return out;
+}
+
+function row(w: number, text: string): string {
+    const inner = w - 4;
+    let s = text;
+    if (s.length > inner) {
+        s = `${s.slice(0, Math.max(0, inner - 1))}…`;
+    }
+    return `${BOX.v} ${s.padEnd(inner)} ${BOX.v}\n`;
+}
+
+function sep(w: number): string {
+    return BOX.lj + BOX.h.repeat(w - 2) + BOX.rj + "\n";
+}
+
+function termWidth(): number {
+    const c = process.stdout.columns;
+    if (typeof c === "number" && c >= 56) {
+        return Math.min(132, c);
+    }
+    return 100;
+}
+
+/** Full-width top bar (top-style title line). */
+function topBar(w: number, title: string): string {
+    const t = ` ${title} `;
+    const inner = w - 2;
+    if (t.length >= inner) {
+        return BOX.tl + t.slice(0, inner).padEnd(inner, BOX.h) + BOX.tr + "\n";
+    }
+    const pad = inner - t.length;
+    const left = Math.floor(pad / 2);
+    const right = pad - left;
+    return (
+        BOX.tl + BOX.h.repeat(left) + t + BOX.h.repeat(right) + BOX.tr + "\n"
+    );
 }

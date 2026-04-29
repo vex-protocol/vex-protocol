@@ -1,10 +1,9 @@
 /**
- * Type-level tests for @vex-chat/types public API.
- *
- * No test runner — `tsc` catches violations at build time via
- * `tsconfig.test-types.json`. This file is excluded from the main
- * `tsconfig.json` so it never ships in `dist/`.
+ * Copyright (c) 2020-2026 Vex Heavy Industries LLC
+ * Licensed under AGPL-3.0. See LICENSE for details.
+ * Commercial licenses available at vex.wtf
  */
+
 import {
     type BaseMsg,
     type Device,

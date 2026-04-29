@@ -37,6 +37,48 @@ interface ManifestFile {
     readonly size: number;
 }
 
+function main(): void {
+    const cwd = process.cwd();
+    const rawRoots =
+        process.env["STRESS_MANIFEST_ROOTS"]?.trim() ??
+        "src,scripts/stress,../libvex-js/src";
+    const roots = rawRoots
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    const outPath = process.env["STRESS_MANIFEST_OUT"]?.trim() || DEFAULT_OUT;
+
+    const files: ManifestFile[] = [];
+    for (const r of roots) {
+        const abs = resolve(cwd, r);
+        try {
+            if (!statSync(abs).isDirectory()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        const relBase = relative(cwd, abs) || r;
+        walkTsFiles(abs, relBase, files);
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path));
+
+    const payload = {
+        cwd,
+        files,
+        generatedAt: new Date().toISOString(),
+        note: "Paths are relative to cwd. Full-file bodies are not included; attach slices per incident or use your editor/IDE.",
+        roots,
+        schema: "spire-stress-repo-manifest@1",
+        totalBytes: files.reduce((s, f) => s + f.size, 0),
+        totalFiles: files.length,
+    };
+
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    process.stderr.write(`Wrote ${outPath} (${String(files.length)} files).\n`);
+}
+
 function walkTsFiles(
     rootAbs: string,
     relBase: string,
@@ -83,48 +125,6 @@ function walkTsFiles(
             });
         }
     }
-}
-
-function main(): void {
-    const cwd = process.cwd();
-    const rawRoots =
-        process.env["STRESS_MANIFEST_ROOTS"]?.trim() ??
-        "src,scripts/stress,../libvex-js/src";
-    const roots = rawRoots
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    const outPath = process.env["STRESS_MANIFEST_OUT"]?.trim() || DEFAULT_OUT;
-
-    const files: ManifestFile[] = [];
-    for (const r of roots) {
-        const abs = resolve(cwd, r);
-        try {
-            if (!statSync(abs).isDirectory()) {
-                continue;
-            }
-        } catch {
-            continue;
-        }
-        const relBase = relative(cwd, abs) || r;
-        walkTsFiles(abs, relBase, files);
-    }
-    files.sort((a, b) => a.path.localeCompare(b.path));
-
-    const payload = {
-        cwd,
-        files,
-        generatedAt: new Date().toISOString(),
-        note: "Paths are relative to cwd. Full-file bodies are not included; attach slices per incident or use your editor/IDE.",
-        roots,
-        schema: "spire-stress-repo-manifest@1",
-        totalBytes: files.reduce((s, f) => s + f.size, 0),
-        totalFiles: files.length,
-    };
-
-    mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    process.stderr.write(`Wrote ${outPath} (${String(files.length)} files).\n`);
 }
 
 main();
