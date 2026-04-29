@@ -2,6 +2,10 @@ node_modules
 dist
 *.tsbuildinfo
 
+# api-extractor intermediate output (the canonical report is at <pkg>/api/)
+**/temp/*.api.md
+**/temp/tsdoc-metadata.json
+
 # Per-app env overrides — only .env.example is committed
 .env
 .env.local
