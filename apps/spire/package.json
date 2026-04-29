@@ -17,15 +17,12 @@
         "node": ">=24.0.0",
         "npm": ">=10.0.0"
     },
-    "packageManager": "npm@10.9.2",
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
     },
     "scripts": {
-        "preinstall": "npx only-allow npm",
-        "postinstall": "npm rebuild better-sqlite3",
-        "rebuild:sqlite": "npm rebuild better-sqlite3",
+        "rebuild:sqlite": "pnpm rebuild better-sqlite3",
         "start": "node --experimental-strip-types src/run.ts",
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc && node scripts/clean-dist-tests.mjs",
@@ -59,9 +56,9 @@
         "@types/jsonwebtoken": "9.0.10",
         "@types/morgan": "1.9.10",
         "@types/multer": "2.1.0",
-        "@types/node": "25.6.0",
+        "@types/node": "catalog:",
         "@types/ws": "8.18.1",
-        "@vex-chat/libvex": "5.3.1",
+        "@vex-chat/libvex": "workspace:*",
         "@vitest/eslint-plugin": "1.6.15",
         "axios": "1.15.0",
         "eslint": "10.2.0",
@@ -74,9 +71,9 @@
         "prettier": "3.8.2",
         "type-coverage": "2.29.7",
         "typedoc": "0.28.18",
-        "typescript": "6.0.2",
+        "typescript": "catalog:",
         "typescript-eslint": "8.58.1",
-        "vitest": "4.1.4"
+        "vitest": "catalog:"
     },
     "typeCoverage": {
         "atLeast": 95,
@@ -101,8 +98,8 @@
     "dependencies": {
         "@asyncapi/web-component": "2.6.5",
         "@scalar/express-api-reference": "0.9.7",
-        "@vex-chat/crypto": "2.1.2",
-        "@vex-chat/types": "2.0.0",
+        "@vex-chat/crypto": "workspace:*",
+        "@vex-chat/types": "workspace:*",
         "argon2": "0.44.0",
         "better-sqlite3": "11.10.0",
         "cors": "2.8.6",
@@ -112,14 +109,14 @@
         "file-type": "22.0.1",
         "helmet": "8.1.0",
         "jsonwebtoken": "9.0.3",
-        "kysely": "0.28.16",
+        "kysely": "catalog:",
         "morgan": "1.10.1",
-        "msgpackr": "1.11.8",
+        "msgpackr": "catalog:",
         "multer": "2.1.1",
         "parse-duration": "2.1.6",
         "tweetnacl": "1.0.3",
-        "uuid": "14.0.0",
+        "uuid": "catalog:",
         "ws": "8.20.0",
-        "zod": "4.3.6"
+        "zod": "catalog:"
     }
 }
