@@ -14,8 +14,7 @@ yarn.lock
 # Local registry config
 .npmrc
 
-# Beads / Dolt files (added by bd init)
+# Beads (not used in this repo; if installed locally, ignore everything)
+.beads/
 .dolt/
 *.db
-.beads-credential-key
-.beads/backup/
