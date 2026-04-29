@@ -2989,9 +2989,7 @@ export class Client {
                         void this.createSession(
                             deviceEntry,
                             user,
-                            XUtils.decodeUTF8(
-                                `��RETRY_REQUEST:${mail.mailID}��`,
-                            ),
+                            new Uint8Array(),
                             mail.group,
                             uuid.v4(),
                             false,

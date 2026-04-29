@@ -51,6 +51,12 @@ export default tseslint.config(
             "@typescript-eslint/no-unsafe-member-access": "off",
             "@typescript-eslint/no-unsafe-call": "off",
             "@typescript-eslint/no-unsafe-argument": "off",
+            // Client pulls many wire types from workspace packages; when local
+            // resolution fails, TS emits `error` types and stricter rules spam
+            // the whole file — same rationale as the no-unsafe-* carve-out.
+            "@typescript-eslint/no-redundant-type-constituents": "off",
+            "@typescript-eslint/no-unsafe-return": "off",
+            "@typescript-eslint/restrict-plus-operands": "off",
         },
     },
 );
