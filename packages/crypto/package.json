@@ -23,8 +23,7 @@
     "author": "Extra <extrahash@protonmail.com>",
     "license": "AGPL-3.0-or-later",
     "engines": {
-        "node": ">=24.0.0",
-        "npm": ">=10.0.0"
+        "node": ">=24.0.0"
     },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
@@ -89,9 +88,6 @@
     },
     "directories": {
         "doc": "docs"
-    },
-    "overrides": {
-        "postcss": "8.5.10"
     },
     "typeCoverage": {
         "atLeast": 100,

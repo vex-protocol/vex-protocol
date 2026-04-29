@@ -59,8 +59,7 @@
     "author": "Extra <extrahash@protonmail.com>",
     "license": "AGPL-3.0-or-later",
     "engines": {
-        "node": ">=24.0.0",
-        "npm": ">=10.0.0"
+        "node": ">=24.0.0"
     },
     "scripts": {
         "build": "rimraf dist && tsc -p tsconfig.build.json",
@@ -115,9 +114,6 @@
         "msgpackr": "catalog:",
         "uuid": "catalog:",
         "zod": "catalog:"
-    },
-    "overrides": {
-        "postcss": "8.5.10"
     },
     "peerDependencies": {
         "better-sqlite3": ">=11.0.0"

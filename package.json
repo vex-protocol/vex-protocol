@@ -17,8 +17,18 @@
     },
     "packageManager": "pnpm@10.30.3",
     "engines": {
-        "node": ">=24.0.0",
-        "pnpm": ">=10.0.0"
+        "node": ">=24.0.0"
+    },
+    "pnpm": {
+        "overrides": {
+            "@types/readable-stream": "4.0.11",
+            "@types/ws": "8.18.1",
+            "lodash": "^4.18.1",
+            "minimatch": "^10.2.5",
+            "postcss": "8.5.10",
+            "rollup": "^4.60.1",
+            "uuid": "14.0.0"
+        }
     },
     "devDependencies": {
         "@changesets/changelog-github": "0.5.1",

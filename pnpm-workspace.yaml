@@ -6,9 +6,6 @@ blockExoticSubdeps: true
 
 catalog:
     "@types/node": ^25.6.0
-    "@vex-chat/crypto": workspace:*
-    "@vex-chat/libvex": workspace:*
-    "@vex-chat/types": workspace:*
     kysely: ^0.28.16
     msgpackr: ^1.11.9
     typescript: 6.0.2
