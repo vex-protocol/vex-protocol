@@ -1,5 +1,13 @@
 # @vex-chat/spire
 
+## 1.1.0
+
+### Minor Changes
+
+- [`03f6bb7`](https://github.com/vex-protocol/protocol/commit/03f6bb7ad4d020d9e29897135f963e979f237e01) Thanks [@dream9x](https://github.com/dream9x)! - Adding a second device to an account now requires approval from an existing device. `POST /:id/devices` returns `202` with a `requestID` and `challenge` when the user already has enrolled devices; the first device enrolled on a fresh account is still created immediately. New endpoints — `GET /:id/devices/requests`, `GET /:id/devices/requests/:requestID`, `POST /:id/devices/requests/:requestID/approve`, and `POST /:id/devices/requests/:requestID/reject` — let existing devices list, approve, or reject pending enrollment requests. Enrollment requests expire after 10 minutes; resolved requests are pruned after 30 minutes.
+
+- [`03f6bb7`](https://github.com/vex-protocol/protocol/commit/03f6bb7ad4d020d9e29897135f963e979f237e01) Thanks [@dream9x](https://github.com/dream9x)! - Set `SPIRE_FIPS=1` (or `SPIRE_FIPS=true`) to run Spire in FIPS-compliant mode. In FIPS mode the server uses P-256 (Web Crypto `subtle`) instead of tweetnacl for all signing operations, and `GET /status` now returns a `cryptoProfile` field (`"fips"` or `"tweetnacl"`) so monitoring can confirm the active crypto backend. A `postinstall` hook now rebuilds `better-sqlite3` from source automatically, removing the need to run `npm rebuild better-sqlite3` manually after install on glibc-based systems.
+
 ## 1.0.4
 
 ### Patch Changes
