@@ -42,6 +42,8 @@ export {
     PreKeysSQLSchema,
     type PreKeysWS,
     PreKeysWSSchema,
+    type RatchetHeader,
+    RatchetHeaderSchema,
 } from "./keys.js";
 
 export {

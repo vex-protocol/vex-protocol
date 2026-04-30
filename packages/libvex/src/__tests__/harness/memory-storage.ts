@@ -234,7 +234,12 @@ export class MemoryStorage extends EventEmitter implements Storage {
     }
 
     saveSession(session: SessionSQL): Promise<void> {
-        if (!this.sessions.find((s) => s.SK === session.SK)) {
+        const idx = this.sessions.findIndex(
+            (s) => s.sessionID === session.sessionID,
+        );
+        if (idx >= 0) {
+            this.sessions[idx] = session;
+        } else {
             this.sessions.push(session);
         }
         return Promise.resolve();
@@ -261,14 +266,31 @@ export class MemoryStorage extends EventEmitter implements Storage {
     }
 
     private sqlToCrypto(s: SessionSQL): SessionCrypto {
+        let skippedKeys: Record<string, string> = {};
+        try {
+            skippedKeys = JSON.parse(s.skippedKeys) as Record<string, string>;
+        } catch {
+            skippedKeys = {};
+        }
         return {
+            CKr: s.CKr ? XUtils.decodeHex(s.CKr) : null,
+            CKs: s.CKs ? XUtils.decodeHex(s.CKs) : null,
+            DHr: s.DHr ? XUtils.decodeHex(s.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(s.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(s.DHsPublic),
             fingerprint: XUtils.decodeHex(s.fingerprint),
             lastUsed: s.lastUsed,
             mode: s.mode,
+            Nr: s.Nr,
+            Ns: s.Ns,
+            PN: s.PN,
             publicKey: XUtils.decodeHex(s.publicKey),
+            RK: XUtils.decodeHex(s.RK),
             sessionID: s.sessionID,
             SK: XUtils.decodeHex(s.SK),
+            skippedKeys,
             userID: s.userID,
+            verified: s.verified,
         };
     }
 }
