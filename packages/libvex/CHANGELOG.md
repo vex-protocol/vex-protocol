@@ -1,5 +1,28 @@
 # @vex-chat/libvex
 
+## 6.0.0
+
+### Major Changes
+
+- [#7](https://github.com/vex-protocol/vex-protocol/pull/7) [`6de0018`](https://github.com/vex-protocol/vex-protocol/commit/6de001880ea5fa761211cc17c86d4aaa4ddb9425) Thanks [@yuki111888](https://github.com/yuki111888)! - Add Signal-style Double Ratchet support for post-X3DH direct messages.
+
+    `@vex-chat/libvex` now uses per-message ratchet keys and persists ratchet state
+    (root key, chain keys, DH ratchet state, counters, skipped keys). `@vex-chat/types`
+    adds ratchet header/session fields required by this strict protocol break.
+
+    `@vex-chat/spire` continues to store and forward `mail.extra` as opaque client
+    metadata to support ratchet and future protocol extensions.
+
+### Minor Changes
+
+- [#7](https://github.com/vex-protocol/vex-protocol/pull/7) [`06bb384`](https://github.com/vex-protocol/vex-protocol/commit/06bb38498d370babf203699aff44e9ff49fa2e5f) Thanks [@yuki111888](https://github.com/yuki111888)! - Messaging sessions now use a Double Ratchet algorithm for per-message forward secrecy. `@vex-chat/types` exports `RatchetHeader` and `RatchetHeaderSchema` for the new subsequent-mail header format; `@vex-chat/libvex`'s `SessionCrypto` gains ratchet state fields (`RK`, `CKs`, `CKr`, `DHsPublic`, `DHsPrivate`, `DHr`, `Ns`, `Nr`, `PN`, `skippedKeys`, `verified`).
+
+### Patch Changes
+
+- Updated dependencies [[`06bb384`](https://github.com/vex-protocol/vex-protocol/commit/06bb38498d370babf203699aff44e9ff49fa2e5f), [`6de0018`](https://github.com/vex-protocol/vex-protocol/commit/6de001880ea5fa761211cc17c86d4aaa4ddb9425)]:
+    - @vex-chat/types@3.0.0
+    - @vex-chat/crypto@3.0.0
+
 ## 5.5.2
 
 ### Patch Changes
