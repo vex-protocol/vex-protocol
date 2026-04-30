@@ -492,6 +492,16 @@ export interface PendingDeviceRequest {
     username: string;
 }
 
+/**
+ * Retry request emitted when message decryption fails and session healing starts.
+ */
+export interface RetryRequest {
+    /** Mail ID that should be retried after session healing. */
+    mailID: string;
+    /** Origin of the retry signal. */
+    source: "decrypt_failure" | "server_notify";
+}
+
 /** Zod schema matching the {@link Message} interface for forwarded-message decode. */
 const messageSchema: z.ZodType<Message> = z.object({
     authorID: z.string(),
@@ -522,6 +532,12 @@ const deviceRequestNotifyData = z.object({
         z.literal("rejected"),
     ]),
 });
+const retryRequestNotifyData = z.union([
+    z.string(),
+    z.object({
+        mailID: z.string(),
+    }),
+]);
 
 /**
  * Event signatures emitted by {@link Client}.
@@ -554,6 +570,8 @@ export interface ClientEvents {
     permission: (permission: Permission) => void;
     /** Post-auth setup complete — safe to call messaging/user APIs. */
     ready: () => void;
+    /** Session healing requested a retry for a specific mail ID. */
+    retryRequest: (retry: RetryRequest) => void;
     /** A new encryption session was established with a peer device. */
     session: (session: Session, user: User) => void;
 }
@@ -2649,7 +2667,19 @@ export class Client {
                 );
                 break;
             case "retryRequest":
-                // msg.data is the messageID for retry
+                {
+                    const parsed = retryRequestNotifyData.safeParse(msg.data);
+                    if (parsed.success) {
+                        const mailID =
+                            typeof parsed.data === "string"
+                                ? parsed.data
+                                : parsed.data.mailID;
+                        this.emitter.emit("retryRequest", {
+                            mailID,
+                            source: "server_notify",
+                        });
+                    }
+                }
                 break;
             default:
                 break;
@@ -3349,27 +3379,10 @@ export class Client {
                             );
                         } else {
                             void healSession();
-
-                            // emit the message
-                            const message: Message = {
-                                authorID: mail.authorID,
-                                decrypted: false,
-                                direction: "incoming",
-                                forward: mail.forward,
-                                group: mail.group
-                                    ? uuid.stringify(mail.group)
-                                    : null,
+                            this.emitter.emit("retryRequest", {
                                 mailID: mail.mailID,
-                                message: "",
-                                nonce: XUtils.encodeHex(
-                                    new Uint8Array(mail.nonce),
-                                ),
-                                readerID: mail.readerID,
-                                recipient: mail.recipient,
-                                sender: mail.sender,
-                                timestamp: timestamp,
-                            };
-                            this.emitter.emit("message", message);
+                                source: "decrypt_failure",
+                            });
                         }
                         break;
                     }
