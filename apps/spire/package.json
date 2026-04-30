@@ -15,13 +15,13 @@
     "license": "AGPL-3.0-or-later",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/vex-protocol/protocol.git",
+        "url": "git+https://github.com/vex-protocol/vex-protocol.git",
         "directory": "apps/spire"
     },
     "bugs": {
-        "url": "https://github.com/vex-protocol/protocol/issues"
+        "url": "https://github.com/vex-protocol/vex-protocol/issues"
     },
-    "homepage": "https://github.com/vex-protocol/protocol/tree/master/apps/spire#readme",
+    "homepage": "https://github.com/vex-protocol/vex-protocol/tree/master/apps/spire#readme",
     "engines": {
         "node": ">=24.0.0"
     },

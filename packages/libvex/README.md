@@ -1,16 +1,16 @@
 # @vex-chat/libvex
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/libvex?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/libvex)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/vex-protocol?style=flat-square&label=released)](https://github.com/vex-protocol/vex-protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/libvex?style=flat-square&color=blue)](./LICENSE)
 [![Types](https://img.shields.io/npm/types/@vex-chat/libvex?style=flat-square&logo=typescript&color=3178c6)](./dist/index.d.ts)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/packages/libvex/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/packages/libvex/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/libvex?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/libvex)](https://socket.dev/npm/package/@vex-chat/libvex)
 
-Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/protocol/tree/master/apps/spire) server.
+Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/vex-protocol/tree/master/apps/spire) server.
 
 [Documentation](https://lib.vex.wtf/)
 

@@ -196,7 +196,7 @@ const doc = {
         license: { name: "AGPL-3.0-or-later" },
         contact: {
             name: "Vex Protocol",
-            url: "https://github.com/vex-protocol/protocol/tree/master/packages/types",
+            url: "https://github.com/vex-protocol/vex-protocol/tree/master/packages/types",
         },
         tags: [
             {

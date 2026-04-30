@@ -1,12 +1,12 @@
 # @vex-chat/spire
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/spire?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/spire)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/vex-protocol?style=flat-square&label=released)](https://github.com/vex-protocol/vex-protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/spire?style=flat-square&color=blue)](./LICENSE)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/apps/spire/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/apps/spire/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/spire?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/spire)](https://socket.dev/npm/package/@vex-chat/spire)
 
 Reference server implementation for the [Vex](https://vex.wtf) protocol.
@@ -17,10 +17,10 @@ Reference server implementation for the [Vex](https://vex.wtf) protocol.
 
 ## Install
 
-Spire is part of the [vex-protocol/protocol](https://github.com/vex-protocol/protocol) monorepo. Clone the monorepo and install workspace deps:
+Spire is part of the [vex-protocol/vex-protocol](https://github.com/vex-protocol/vex-protocol) monorepo. Clone the monorepo and install workspace deps:
 
 ```sh
-git clone git@github.com:vex-protocol/protocol
+git clone git@github.com:vex-protocol/vex-protocol
 cd protocol
 pnpm install
 ```

@@ -40,7 +40,7 @@ Each of the four published packages versions independently. The full loop:
 
 ### Why OIDC, no NPM_TOKEN
 
-The release workflow has `permissions: id-token: write` and **no `NPM_TOKEN` env var anywhere** — npm's CLI authenticates via the OIDC token directly. Per the security ADR carried over from chat-ui-monorepo: when both OIDC and a classic token are present, npm CLI prefers the token, defeating the supply-chain protection. An empty-string `NPM_TOKEN` still defeats OIDC fallback (npm/cli#8976), so it must not be declared at all. Trusted publisher entries are configured per-package on npmjs.com pointing at `vex-protocol/protocol` + `release.yml`.
+The release workflow has `permissions: id-token: write` and **no `NPM_TOKEN` env var anywhere** — npm's CLI authenticates via the OIDC token directly. Per the security ADR carried over from chat-ui-monorepo: when both OIDC and a classic token are present, npm CLI prefers the token, defeating the supply-chain protection. An empty-string `NPM_TOKEN` still defeats OIDC fallback (npm/cli#8976), so it must not be declared at all. Trusted publisher entries are configured per-package on npmjs.com pointing at `vex-protocol/vex-protocol` + `release.yml`.
 
 ## NEVER do these (locally OR in CI)
 

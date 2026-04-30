@@ -22,7 +22,7 @@ jobs:
             # npm CLI prefers the token, defeating supply-chain protections.
             # Trusted publisher must be configured per-package on npmjs.com:
             # https://www.npmjs.com/package/<name>/access — repo
-            # vex-protocol/protocol, workflow release.yml.
+            # vex-protocol/vex-protocol, workflow release.yml.
             # Requires npm CLI >=11.5.1 and Node >=22.14.0 (both satisfied by
             # .tool-versions: node 24.14.0 ships npm 11.x).
             id-token: write
