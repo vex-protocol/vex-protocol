@@ -25,14 +25,25 @@ export interface PreKeysCrypto extends UnsavedPreKey {
 
 /** In-memory representation of an encryption session (not yet persisted to SQL). */
 export interface SessionCrypto {
+    CKr: null | Uint8Array;
+    CKs: null | Uint8Array;
+    DHr: null | Uint8Array;
+    DHsPrivate: Uint8Array;
+    DHsPublic: Uint8Array;
     fingerprint: Uint8Array;
     lastUsed: string;
     mode: "initiator" | "receiver";
+    Nr: number;
+    Ns: number;
+    PN: number;
     publicKey: Uint8Array;
+    RK: Uint8Array;
     sessionID: string;
     /** Shared secret key derived during X3DH. */
     SK: Uint8Array;
+    skippedKeys: Record<string, string>;
     userID: string;
+    verified: boolean;
 }
 
 /** Prekey before DB storage — no index yet. */

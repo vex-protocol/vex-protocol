@@ -957,6 +957,7 @@ export class Database extends EventEmitter {
         const entry: MailSQL = {
             authorID: userID,
             cipher: XUtils.encodeHex(mail.cipher),
+            // Opaque transport metadata (X3DH initial payload or ratchet header).
             extra: XUtils.encodeHex(mail.extra),
             forward: mail.forward,
             group: mail.group ? XUtils.encodeHex(mail.group) : null,

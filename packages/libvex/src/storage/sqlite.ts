@@ -18,7 +18,6 @@ import type {
     SessionRow,
 } from "./schema.js";
 import type { Device, PreKeysSQL, SessionSQL } from "@vex-chat/types";
-import type { Kysely } from "kysely";
 
 /**
  * Unified Kysely-based SQLite storage implementation.
@@ -43,6 +42,7 @@ import {
 } from "@vex-chat/crypto";
 
 import { EventEmitter } from "eventemitter3";
+import { type Kysely, sql } from "kysely";
 
 export class SqliteStorage extends EventEmitter implements Storage {
     public ready = false;
@@ -273,7 +273,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const rows = await this.db
             .selectFrom("sessions")
             .selectAll()
-            .where("publicKey", "=", hex)
+            .where((eb) =>
+                eb.or([eb("publicKey", "=", hex), eb("DHr", "=", hex)]),
+            )
             .limit(1)
             .execute();
 
@@ -331,7 +333,20 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     .addColumn("mode", "text")
                     .addColumn("lastUsed", "text")
                     .addColumn("verified", "integer")
+                    .addColumn("RK", "text")
+                    .addColumn("DHsPublic", "text")
+                    .addColumn("DHsPrivate", "text")
+                    .addColumn("DHr", "text")
+                    .addColumn("CKs", "text")
+                    .addColumn("CKr", "text")
+                    .addColumn("Ns", "integer", (col) => col.defaultTo(0))
+                    .addColumn("Nr", "integer", (col) => col.defaultTo(0))
+                    .addColumn("PN", "integer", (col) => col.defaultTo(0))
+                    .addColumn("skippedKeys", "text", (col) =>
+                        col.defaultTo("{}"),
+                    )
                     .execute();
+                await this.ensureSessionRatchetColumns();
 
                 await this.db.schema
                     .createTable("preKeys")
@@ -531,24 +546,62 @@ export class SqliteStorage extends EventEmitter implements Storage {
         if (this.closing) {
             return;
         }
+        const sealedCKr = session.CKr ? await this.sealHex(session.CKr) : null;
+        const sealedCKs = session.CKs ? await this.sealHex(session.CKs) : null;
+        const sealedDHsPrivate = await this.sealHex(session.DHsPrivate);
+        const sealedRK = await this.sealHex(session.RK);
+        const sealedSK = await this.sealHex(session.SK);
         try {
             await this.db
                 .insertInto("sessions")
                 .values({
+                    CKr: sealedCKr,
+                    CKs: sealedCKs,
                     deviceID: session.deviceID,
+                    DHr: session.DHr,
+                    DHsPrivate: sealedDHsPrivate,
+                    DHsPublic: session.DHsPublic,
                     fingerprint: session.fingerprint,
                     lastUsed: session.lastUsed,
                     mode: session.mode,
+                    Nr: session.Nr,
+                    Ns: session.Ns,
+                    PN: session.PN,
                     publicKey: session.publicKey,
+                    RK: sealedRK,
                     sessionID: session.sessionID,
-                    SK: await this.sealHex(session.SK),
+                    SK: sealedSK,
+                    skippedKeys: session.skippedKeys,
                     userID: session.userID,
                     verified: session.verified ? 1 : 0,
                 })
                 .execute();
         } catch (err: unknown) {
             if (this.isDuplicateError(err)) {
-                // duplicate SK — ignore
+                await this.db
+                    .updateTable("sessions")
+                    .set({
+                        CKr: sealedCKr,
+                        CKs: sealedCKs,
+                        deviceID: session.deviceID,
+                        DHr: session.DHr,
+                        DHsPrivate: sealedDHsPrivate,
+                        DHsPublic: session.DHsPublic,
+                        fingerprint: session.fingerprint,
+                        lastUsed: session.lastUsed,
+                        mode: session.mode,
+                        Nr: session.Nr,
+                        Ns: session.Ns,
+                        PN: session.PN,
+                        publicKey: session.publicKey,
+                        RK: sealedRK,
+                        SK: sealedSK,
+                        skippedKeys: session.skippedKeys,
+                        userID: session.userID,
+                        verified: session.verified ? 1 : 0,
+                    })
+                    .where("sessionID", "=", session.sessionID)
+                    .execute();
             } else {
                 throw err;
             }
@@ -614,6 +667,35 @@ export class SqliteStorage extends EventEmitter implements Storage {
         };
     }
 
+    private async ensureSessionRatchetColumns(): Promise<void> {
+        const add = async (
+            column: string,
+            type: "integer" | "text",
+            defaultSql: null | string = null,
+        ) => {
+            const defaultClause = defaultSql ? ` DEFAULT ${defaultSql}` : "";
+            try {
+                await sql
+                    .raw(
+                        `ALTER TABLE sessions ADD COLUMN ${column} ${type}${defaultClause}`,
+                    )
+                    .execute(this.db);
+            } catch {
+                // Existing databases may already have this column.
+            }
+        };
+        await add("RK", "text");
+        await add("DHsPublic", "text");
+        await add("DHsPrivate", "text");
+        await add("DHr", "text");
+        await add("CKs", "text");
+        await add("CKr", "text");
+        await add("Ns", "integer", "0");
+        await add("Nr", "integer", "0");
+        await add("PN", "integer", "0");
+        await add("skippedKeys", "text", "'{}'");
+    }
+
     /**
      * Read `closing` where TypeScript would incorrectly assume it cannot
      * become true after an earlier guard (e.g. across `await`).
@@ -648,6 +730,24 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return false;
     }
 
+    private parseSkippedKeys(raw: string): Record<string, string> {
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (typeof parsed !== "object" || parsed === null) {
+                return {};
+            }
+            const out: Record<string, string> = {};
+            for (const [k, v] of Object.entries(parsed)) {
+                if (typeof v === "string") {
+                    out[k] = v;
+                }
+            }
+            return out;
+        } catch {
+            return {};
+        }
+    }
+
     /**
      * Encrypt a hex-encoded secret for at-rest storage.
      * Returns hex(nonce || ciphertext) where nonce is 24 random bytes.
@@ -669,28 +769,54 @@ export class SqliteStorage extends EventEmitter implements Storage {
     }
 
     private async sessionRowToSQLAsync(row: SessionRow): Promise<SessionSQL> {
+        const rawSK = await this.unsealHex(row.SK);
+        const rawRK = row.RK ? await this.unsealHex(row.RK) : rawSK;
         return {
+            CKr: row.CKr ? await this.unsealHex(row.CKr) : null,
+            CKs: row.CKs ? await this.unsealHex(row.CKs) : null,
             deviceID: row.deviceID,
+            DHr: row.DHr,
+            DHsPrivate: row.DHsPrivate
+                ? await this.unsealHex(row.DHsPrivate)
+                : rawSK,
+            DHsPublic: row.DHsPublic,
             fingerprint: row.fingerprint,
             lastUsed: row.lastUsed,
             mode: row.mode === "initiator" ? "initiator" : "receiver",
+            Nr: row.Nr,
+            Ns: row.Ns,
+            PN: row.PN,
             publicKey: row.publicKey,
+            RK: rawRK,
             sessionID: row.sessionID,
-            SK: await this.unsealHex(row.SK),
+            SK: rawSK,
+            skippedKeys: row.skippedKeys,
             userID: row.userID,
             verified: row.verified !== 0,
         };
     }
 
     private sqlToCrypto(session: SessionSQL): SessionCrypto {
+        const skippedKeys = this.parseSkippedKeys(session.skippedKeys);
         return {
+            CKr: session.CKr ? XUtils.decodeHex(session.CKr) : null,
+            CKs: session.CKs ? XUtils.decodeHex(session.CKs) : null,
+            DHr: session.DHr ? XUtils.decodeHex(session.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(session.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(session.DHsPublic),
             fingerprint: XUtils.decodeHex(session.fingerprint),
             lastUsed: session.lastUsed,
             mode: session.mode,
+            Nr: session.Nr,
+            Ns: session.Ns,
+            PN: session.PN,
             publicKey: XUtils.decodeHex(session.publicKey),
+            RK: XUtils.decodeHex(session.RK),
             sessionID: session.sessionID,
             SK: XUtils.decodeHex(session.SK),
+            skippedKeys,
             userID: session.userID,
+            verified: session.verified,
         };
     }
 

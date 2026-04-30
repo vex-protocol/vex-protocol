@@ -73,6 +73,14 @@ export interface PreKeysSQL {
 /** WebSocket pre-key payload. */
 export type PreKeysWS = KeyBundleEntry;
 
+/** Ratchet header carried in `MailWS.extra` for `MailType.subsequent`. */
+export interface RatchetHeader {
+    dhPub: Uint8Array;
+    n: number;
+    pn: number;
+    version: 1;
+}
+
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 const keyBundleEntry = z.object({
@@ -121,7 +129,9 @@ export const MailWSSchema: z.ZodType<MailWS> = z
     .object({
         authorID: z.string().describe("Original author user ID"),
         cipher: uint8.describe("Encrypted message content"),
-        extra: uint8.describe("Extra metadata"),
+        extra: uint8.describe(
+            "Extra metadata (initial: X3DH fields, subsequent: encoded ratchet header)",
+        ),
         forward: z.boolean().describe("Whether this is a multi-device forward"),
         group: uint8.nullable().describe("Channel ID for group messages"),
         mailID: z.string().describe("Unique mail identifier"),
@@ -134,6 +144,16 @@ export const MailWSSchema: z.ZodType<MailWS> = z
         sender: z.string().describe("Sender device ID"),
     })
     .describe("Encrypted mail message");
+
+/** Structured ratchet header shape used before serialization into `MailWS.extra`. */
+export const RatchetHeaderSchema: z.ZodType<RatchetHeader> = z
+    .object({
+        dhPub: uint8.describe("Current DH ratchet public key"),
+        n: z.number().int().nonnegative().describe("Message number in chain"),
+        pn: z.number().int().nonnegative().describe("Previous chain length"),
+        version: z.literal(1).describe("Ratchet header version"),
+    })
+    .describe("Double-ratchet message header");
 
 /** Mail message (SQL/database format). */
 export const MailSQLSchema: z.ZodType<MailSQL> = z

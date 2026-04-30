@@ -88,13 +88,23 @@ interface PreKeysTable {
     userID: ColumnType<string, string | undefined, string>;
 }
 interface SessionsTable {
+    CKr: null | string;
+    CKs: null | string;
     deviceID: string;
+    DHr: null | string;
+    DHsPrivate: string;
+    DHsPublic: string;
     fingerprint: string;
     lastUsed: string;
     mode: string;
+    Nr: number;
+    Ns: number;
+    PN: number;
     publicKey: string;
+    RK: string;
     sessionID: string;
     SK: string;
+    skippedKeys: string;
     userID: string;
     verified: number;
 }

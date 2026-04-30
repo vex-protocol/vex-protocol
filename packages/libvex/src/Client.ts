@@ -80,14 +80,22 @@ import { z } from "zod/v4";
 import { WebSocketAdapter } from "./transport/websocket.js";
 import {
     decodeFipsInitialExtraV1,
-    decodeFipsSubsequentExtraV1,
     encodeFipsInitialExtraV1,
-    encodeFipsSubsequentExtraV1,
     fipsP256AdFromIdentityPubs,
     fipsP256PreKeySignPayload,
     isFipsInitialExtraV1,
-    isFipsSubsequentExtraV1,
 } from "./utils/fipsMailExtra.js";
+import {
+    decodeRatchetHeader,
+    encodeRatchetHeader,
+    hasRemoteDhChanged,
+    initRatchetSession,
+    ratchetStepReceive,
+    ratchetStepSend,
+    sessionToSqlPatch,
+    takeReceiveMessageKey,
+    takeSendMessageKey,
+} from "./utils/ratchet.js";
 
 function debugLibvexDm(
     msg: string,
@@ -1309,9 +1317,6 @@ export class Client {
                 return [signKey, ephKey, ad, index];
             }
             case MailType.subsequent:
-                if (isFipsSubsequentExtraV1(extra)) {
-                    return [decodeFipsSubsequentExtraV1(extra)];
-                }
                 return [extra];
             default:
                 return [];
@@ -2094,7 +2099,9 @@ export class Client {
             // discard the ephemeral keys
             await this.newEphemeralKeys();
 
+            const ratchet = await initRatchetSession(SK, "initiator");
             const sessionEntry: SessionSQL = {
+                ...ratchet,
                 deviceID: device.deviceID,
                 fingerprint: XUtils.encodeHex(AD),
                 lastUsed: new Date().toISOString(),
@@ -3271,7 +3278,12 @@ export class Client {
                                 deviceEntry;
 
                             // save session
+                            const ratchet = await initRatchetSession(
+                                SK,
+                                "receiver",
+                            );
                             const newSession: SessionSQL = {
+                                ...ratchet,
                                 deviceID: mail.sender,
                                 fingerprint: XUtils.encodeHex(AD),
                                 lastUsed: new Date().toISOString(),
@@ -3305,19 +3317,12 @@ export class Client {
                         }
                         break;
                     case MailType.subsequent: {
-                        const extraBuf = new Uint8Array(mail.extra);
-                        const publicKey = isFipsSubsequentExtraV1(extraBuf)
-                            ? decodeFipsSubsequentExtraV1(extraBuf)
-                            : Client.deserializeExtra(
-                                  mail.mailType,
-                                  extraBuf,
-                              )[0];
-                        if (!publicKey) {
-                            throw new Error(
-                                "Malformed subsequent mail extra: missing publicKey",
-                            );
-                        }
-                        let session = await this.getSessionByPubkey(publicKey);
+                        const ratchetHeader = decodeRatchetHeader(
+                            new Uint8Array(mail.extra),
+                        );
+                        let session = await this.database.getSessionByDeviceID(
+                            mail.sender,
+                        );
                         let retries = 0;
                         while (!session) {
                             if (retries >= 3) {
@@ -3325,14 +3330,32 @@ export class Client {
                             }
                             await sleep(100 * 2 ** retries);
                             retries++;
-                            session = await this.getSessionByPubkey(publicKey);
+                            session = await this.database.getSessionByDeviceID(
+                                mail.sender,
+                            );
                         }
 
                         if (!session) {
                             void healSession();
                             return;
                         }
-                        const HMAC = xHMAC(mail, session.SK);
+
+                        if (
+                            hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
+                        ) {
+                            await ratchetStepReceive(
+                                session,
+                                ratchetHeader.dhPub,
+                                ratchetHeader.pn,
+                            );
+                        }
+
+                        const messageKey = takeReceiveMessageKey(
+                            session,
+                            ratchetHeader.dhPub,
+                            ratchetHeader.n,
+                        );
+                        const HMAC = xHMAC(mail, messageKey);
 
                         if (!XUtils.bytesEqual(HMAC, header)) {
                             void healSession();
@@ -3342,7 +3365,7 @@ export class Client {
                         const decrypted = await xSecretboxOpenAsync(
                             new Uint8Array(mail.cipher),
                             new Uint8Array(mail.nonce),
-                            session.SK,
+                            messageKey,
                         );
 
                         if (decrypted) {
@@ -3374,9 +3397,34 @@ export class Client {
                                   };
                             this.emitter.emit("message", message);
 
-                            void this.database.markSessionUsed(
-                                session.sessionID,
-                            );
+                            const sqlPatch = sessionToSqlPatch(session);
+                            const persisted: SessionSQL = {
+                                CKr: sqlPatch.CKr,
+                                CKs: sqlPatch.CKs,
+                                deviceID: mail.sender,
+                                DHr: sqlPatch.DHr,
+                                DHsPrivate: sqlPatch.DHsPrivate,
+                                DHsPublic: sqlPatch.DHsPublic,
+                                fingerprint: XUtils.encodeHex(
+                                    session.fingerprint,
+                                ),
+                                lastUsed: new Date().toISOString(),
+                                mode: session.mode,
+                                Nr: sqlPatch.Nr,
+                                Ns: sqlPatch.Ns,
+                                PN: sqlPatch.PN,
+                                publicKey: XUtils.encodeHex(session.publicKey),
+                                RK: sqlPatch.RK,
+                                sessionID: session.sessionID,
+                                SK: XUtils.encodeHex(session.SK),
+                                skippedKeys: sqlPatch.skippedKeys,
+                                userID: session.userID,
+                                verified: session.verified,
+                            };
+                            await this.database.saveSession(persisted);
+                            this.sessionRecords[
+                                XUtils.encodeHex(session.publicKey)
+                            ] = session;
                         } else {
                             void healSession();
                             this.emitter.emit("retryRequest", {
@@ -3718,12 +3766,19 @@ export class Client {
                 });
             }
 
+            if (!session.CKs) {
+                await ratchetStepSend(session);
+            }
+            const { messageKey, n } = takeSendMessageKey(session);
+            const ratchetHeader = {
+                dhPub: session.DHsPublic,
+                n,
+                pn: session.PN,
+                version: 1 as const,
+            };
             const nonce = xMakeNonce();
-            const cipher = await xSecretboxAsync(msg, nonce, session.SK);
-            const extra =
-                this.cryptoProfile === "fips"
-                    ? encodeFipsSubsequentExtraV1(session.publicKey)
-                    : session.publicKey;
+            const cipher = await xSecretboxAsync(msg, nonce, messageKey);
+            const extra = encodeRatchetHeader(ratchetHeader);
 
             const mail: MailWS = {
                 authorID: this.getUser().userID,
@@ -3747,7 +3802,7 @@ export class Client {
                 type: "resource",
             };
 
-            const hmac = xHMAC(mail, session.SK);
+            const hmac = xHMAC(mail, messageKey);
 
             const fwdOut = forward
                 ? messageSchema.parse(msgpack.decode(msg))
@@ -3769,6 +3824,31 @@ export class Client {
                       timestamp: new Date().toISOString(),
                   };
             this.emitter.emit("message", outMsg);
+
+            const sqlPatch = sessionToSqlPatch(session);
+            const persisted: SessionSQL = {
+                CKr: sqlPatch.CKr,
+                CKs: sqlPatch.CKs,
+                deviceID: device.deviceID,
+                DHr: sqlPatch.DHr,
+                DHsPrivate: sqlPatch.DHsPrivate,
+                DHsPublic: sqlPatch.DHsPublic,
+                fingerprint: XUtils.encodeHex(session.fingerprint),
+                lastUsed: new Date().toISOString(),
+                mode: session.mode,
+                Nr: sqlPatch.Nr,
+                Ns: sqlPatch.Ns,
+                PN: sqlPatch.PN,
+                publicKey: XUtils.encodeHex(session.publicKey),
+                RK: sqlPatch.RK,
+                sessionID: session.sessionID,
+                SK: XUtils.encodeHex(session.SK),
+                skippedKeys: sqlPatch.skippedKeys,
+                userID: session.userID,
+                verified: session.verified,
+            };
+            await this.database.saveSession(persisted);
+            this.sessionRecords[XUtils.encodeHex(session.publicKey)] = session;
 
             await new Promise((res, rej) => {
                 const callback = (packedMsg: Uint8Array) => {
