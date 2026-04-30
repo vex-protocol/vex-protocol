@@ -10,21 +10,7 @@ permissions:
     contents: read
 
 jobs:
-    disable-default-setup:
-        runs-on: ubuntu-latest
-        permissions:
-            security-events: write
-        steps:
-            - name: Disable Default Code Scanning Setup
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  gh api --method PATCH \
-                    /repos/${{ github.repository }}/code-scanning/default-setup \
-                    -f state=not-configured
-
     analyze:
-        needs: disable-default-setup
         runs-on: ubuntu-latest
         permissions:
             actions: read
