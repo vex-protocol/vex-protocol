@@ -10,7 +10,7 @@
 
 ### Patch Changes
 
-- [#2](https://github.com/vex-protocol/protocol/pull/2) [`1680fa8`](https://github.com/vex-protocol/protocol/commit/1680fa8824db3578f40f8a446cc228dfed32cc9f) Thanks [@yuki111888](https://github.com/yuki111888)! - Session recovery after a failed subsequent-mail decrypt no longer puts a `RETRY_REQUEST:<mailID>` string in the healing initial message; the initial mail still re-establishes the session with empty plaintext.
+- [#2](https://github.com/vex-protocol/vex-protocol/pull/2) [`1680fa8`](https://github.com/vex-protocol/vex-protocol/commit/1680fa8824db3578f40f8a446cc228dfed32cc9f) Thanks [@yuki111888](https://github.com/yuki111888)! - Session recovery after a failed subsequent-mail decrypt no longer puts a `RETRY_REQUEST:<mailID>` string in the healing initial message; the initial mail still re-establishes the session with empty plaintext.
 
 ## 5.5.0
 

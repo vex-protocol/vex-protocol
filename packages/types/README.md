@@ -1,14 +1,14 @@
 # @vex-chat/types
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/types?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/types)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/vex-protocol?style=flat-square&label=released)](https://github.com/vex-protocol/vex-protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/types?style=flat-square&color=blue)](./LICENSE)
 [![Types](https://img.shields.io/npm/types/@vex-chat/types?style=flat-square&logo=typescript&color=3178c6)](./dist/index.d.ts)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/packages/types/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/packages/types/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/types?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
 [![Bundle](https://deno.bundlejs.com/badge?q=@vex-chat/types&treeshake=[*])](https://bundlejs.com/?q=@vex-chat/types&treeshake=[*])
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/types)](https://socket.dev/npm/package/@vex-chat/types)
 
 Wire protocol types for the [Vex](https://vex.wtf) encrypted chat platform. Used by both the server and client so they speak the same shapes.

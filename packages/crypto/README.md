@@ -1,13 +1,13 @@
 # @vex-chat/crypto
 
 [![npm](https://img.shields.io/npm/v/@vex-chat/crypto?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/crypto)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/protocol/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/protocol?style=flat-square&label=released)](https://github.com/vex-protocol/protocol/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
+[![Released](https://img.shields.io/github/release-date/vex-protocol/vex-protocol?style=flat-square&label=released)](https://github.com/vex-protocol/vex-protocol/releases)
 [![License](https://img.shields.io/npm/l/@vex-chat/crypto?style=flat-square&color=blue)](./LICENSE)
 [![Types](https://img.shields.io/npm/types/@vex-chat/crypto?style=flat-square&logo=typescript&color=3178c6)](./dist/index.d.ts)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/protocol/master/packages/crypto/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
+[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/packages/crypto/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/crypto?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/protocol)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/crypto)](https://socket.dev/npm/package/@vex-chat/crypto)
 
 Crypto primitives for the [Vex](https://vex.wtf) protocol. Sign, encrypt, hash, derive keys, and encode bytes — everything the client and server need to speak the protocol.

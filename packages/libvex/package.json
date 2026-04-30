@@ -126,13 +126,13 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/vex-protocol/protocol.git",
+        "url": "git+https://github.com/vex-protocol/vex-protocol.git",
         "directory": "packages/libvex"
     },
     "bugs": {
-        "url": "https://github.com/vex-protocol/protocol/issues"
+        "url": "https://github.com/vex-protocol/vex-protocol/issues"
     },
-    "homepage": "https://github.com/vex-protocol/protocol/tree/master/packages/libvex#readme",
+    "homepage": "https://github.com/vex-protocol/vex-protocol/tree/master/packages/libvex#readme",
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
