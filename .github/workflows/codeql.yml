@@ -1,8 +1,3 @@
-# Advanced CodeQL (this workflow). Do not enable "Default setup" for Code
-# scanning on the same repo — GitHub rejects SARIF uploads with:
-# "CodeQL analyses from advanced configurations cannot be processed when the
-# default setup is enabled". Fix: repo Settings → Code security → Code scanning
-# → use Advanced / workflow-based setup only (or remove this workflow).
 name: CodeQL
 
 on:
@@ -15,7 +10,21 @@ permissions:
     contents: read
 
 jobs:
+    disable-default-setup:
+        runs-on: ubuntu-latest
+        permissions:
+            security-events: write
+        steps:
+            - name: Disable Default Code Scanning Setup
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  gh api --method PATCH \
+                    /repos/${{ github.repository }}/code-scanning/default-setup \
+                    -f state=not-configured
+
     analyze:
+        needs: disable-default-setup
         runs-on: ubuntu-latest
         permissions:
             actions: read
