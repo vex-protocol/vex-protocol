@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 5.5.2
+
+### Patch Changes
+
+- [#4](https://github.com/vex-protocol/vex-protocol/pull/4) [`f0ae11e`](https://github.com/vex-protocol/vex-protocol/commit/f0ae11e1f6bcc559a122533a760d25c2513e34bf) Thanks [@yuki111888](https://github.com/yuki111888)! - Session-heal retry signals now emit through a dedicated `retryRequest` client event instead of the chat `message` stream. This prevents decrypt-failure recovery paths from surfacing as empty chat messages in client UIs.
+
 ## 5.5.1
 
 ### Patch Changes
