@@ -16,6 +16,8 @@ import {
 } from "@vex-chat/crypto";
 
 const VERSION = 1;
+export const MAX_SKIP_MESSAGE_GAP = 1024;
+export const MAX_SKIPPED_KEYS = 4096;
 
 const encoder = new TextEncoder();
 
@@ -103,6 +105,25 @@ export async function initRatchetSession(
     };
 }
 
+export function parseSkippedKeysStrict(raw: string): Record<string, string> {
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null) {
+            return {};
+        }
+        const entries = Object.entries(parsed).slice(0, MAX_SKIPPED_KEYS);
+        const out: Record<string, string> = {};
+        for (const [k, v] of entries) {
+            if (typeof v === "string" && isHex(v) && isSkippedKeyIdFormat(k)) {
+                out[k] = v;
+            }
+        }
+        return out;
+    } catch {
+        return {};
+    }
+}
+
 export async function ratchetStepReceive(
     state: {
         CKr: null | Uint8Array;
@@ -120,11 +141,17 @@ export async function ratchetStepReceive(
     pn: number,
 ): Promise<void> {
     if (state.CKr && state.DHr) {
+        if (pn - state.Nr > MAX_SKIP_MESSAGE_GAP) {
+            throw new Error("Ratchet skip window exceeded for PN.");
+        }
         while (state.Nr < pn) {
             const { chainKey, messageKey } = kdfChain(state.CKr);
             state.CKr = chainKey;
-            state.skippedKeys[skippedKeyId(state.DHr, state.Nr)] =
-                XUtils.encodeHex(messageKey);
+            state.skippedKeys = putSkippedMessageKey(
+                state.skippedKeys,
+                skippedKeyId(state.DHr, state.Nr),
+                XUtils.encodeHex(messageKey),
+            );
             state.Nr += 1;
         }
     }
@@ -230,14 +257,21 @@ export function takeReceiveMessageKey(
         throw new Error("Missing receiving chain key.");
     }
 
+    if (n - state.Nr > MAX_SKIP_MESSAGE_GAP) {
+        throw new Error("Ratchet skip window exceeded for message index.");
+    }
+
     while (state.Nr < n) {
         const { chainKey, messageKey } = kdfChain(state.CKr);
         state.CKr = chainKey;
         if (!state.DHr) {
             throw new Error("Missing DHr when storing skipped key.");
         }
-        state.skippedKeys[skippedKeyId(state.DHr, state.Nr)] =
-            XUtils.encodeHex(messageKey);
+        state.skippedKeys = putSkippedMessageKey(
+            state.skippedKeys,
+            skippedKeyId(state.DHr, state.Nr),
+            XUtils.encodeHex(messageKey),
+        );
         state.Nr += 1;
     }
 
@@ -261,6 +295,20 @@ export function takeSendMessageKey(state: {
     return { messageKey, n };
 }
 
+function isHex(value: string): boolean {
+    return value.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(value);
+}
+
+function isSkippedKeyIdFormat(value: string): boolean {
+    const idx = value.lastIndexOf(":");
+    if (idx <= 0 || idx === value.length - 1) {
+        return false;
+    }
+    const dhHex = value.slice(0, idx);
+    const nPart = value.slice(idx + 1);
+    return isHex(dhHex) && /^[0-9]+$/.test(nPart);
+}
+
 function kdfChain(ck: Uint8Array): {
     chainKey: Uint8Array;
     messageKey: Uint8Array;
@@ -280,6 +328,19 @@ function kdfRoot(
         chainKey: xHMAC({ label: "chain", version: VERSION }, material),
         rootKey: xHMAC({ label: "root", version: VERSION }, material),
     };
+}
+
+function putSkippedMessageKey(
+    skippedKeys: Record<string, string>,
+    id: string,
+    keyHex: string,
+): Record<string, string> {
+    let entries = Object.entries(skippedKeys).filter(([key]) => key !== id);
+    if (entries.length >= MAX_SKIPPED_KEYS) {
+        entries = entries.slice(entries.length - MAX_SKIPPED_KEYS + 1);
+    }
+    entries.push([id, keyHex]);
+    return Object.fromEntries(entries);
 }
 
 function skippedKeyId(dhPub: Uint8Array, n: number): string {

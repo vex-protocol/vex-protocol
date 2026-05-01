@@ -14,6 +14,9 @@ import {
     encodeRatchetHeader,
     hasRemoteDhChanged,
     initRatchetSession,
+    MAX_SKIP_MESSAGE_GAP,
+    MAX_SKIPPED_KEYS,
+    parseSkippedKeysStrict,
     ratchetStepReceive,
     ratchetStepSend,
     sessionToSqlPatch,
@@ -416,6 +419,47 @@ describe("double ratchet helpers", () => {
         }
 
         expect(alice.Nr + alice.Ns + bob.Nr + bob.Ns).toBeGreaterThan(500);
+    });
+
+    it("rejects excessive receive message gap", () => {
+        const state = {
+            CKr: XUtils.decodeHex(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            DHr: XUtils.decodeHex(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            Nr: 0,
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        expect(() =>
+            takeReceiveMessageKey(state, state.DHr, MAX_SKIP_MESSAGE_GAP + 1),
+        ).toThrow("Ratchet skip window exceeded");
+    });
+
+    it("sanitizes skipped-keys payload bounds and format", () => {
+        const validDh = "aa".repeat(32);
+        const validValue = "bb".repeat(32);
+        const oversized = Object.fromEntries(
+            Array.from({ length: MAX_SKIPPED_KEYS + 50 }, (_v, i) => [
+                `${validDh}:${String(i)}`,
+                validValue,
+            ]),
+        ) as Record<string, string>;
+        const bounded = parseSkippedKeysStrict(JSON.stringify(oversized));
+        expect(Object.keys(bounded).length).toBe(MAX_SKIPPED_KEYS);
+
+        const filtered = parseSkippedKeysStrict(
+            JSON.stringify({
+                [`${validDh}:0`]: "not-hex",
+                [`${validDh}:1`]: validValue,
+                "bad-key-format": validValue,
+            }),
+        );
+        expect(filtered["bad-key-format"]).toBeUndefined();
+        expect(filtered[`${validDh}:0`]).toBeUndefined();
+        expect(filtered[`${validDh}:1`]).toBe(validValue);
     });
 });
 
