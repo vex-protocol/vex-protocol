@@ -44,6 +44,8 @@ import {
 import { EventEmitter } from "eventemitter3";
 import { type Kysely, sql } from "kysely";
 
+import { parseSkippedKeysStrict } from "../utils/ratchet.js";
+
 export class SqliteStorage extends EventEmitter implements Storage {
     public ready = false;
     /** 32-byte AES-256 (or nacl) key for local at-rest `secretbox` (see `XUtils.deriveLocalAtRestAesKey`). */
@@ -730,24 +732,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return false;
     }
 
-    private parseSkippedKeys(raw: string): Record<string, string> {
-        try {
-            const parsed: unknown = JSON.parse(raw);
-            if (typeof parsed !== "object" || parsed === null) {
-                return {};
-            }
-            const out: Record<string, string> = {};
-            for (const [k, v] of Object.entries(parsed)) {
-                if (typeof v === "string") {
-                    out[k] = v;
-                }
-            }
-            return out;
-        } catch {
-            return {};
-        }
-    }
-
     /**
      * Encrypt a hex-encoded secret for at-rest storage.
      * Returns hex(nonce || ciphertext) where nonce is 24 random bytes.
@@ -797,7 +781,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
     }
 
     private sqlToCrypto(session: SessionSQL): SessionCrypto {
-        const skippedKeys = this.parseSkippedKeys(session.skippedKeys);
+        const skippedKeys = parseSkippedKeysStrict(session.skippedKeys);
         return {
             CKr: session.CKr ? XUtils.decodeHex(session.CKr) : null,
             CKs: session.CKs ? XUtils.decodeHex(session.CKs) : null,
