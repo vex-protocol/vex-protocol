@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.0.1
+
+### Patch Changes
+
+- [#9](https://github.com/vex-protocol/vex-protocol/pull/9) [`e2355e7`](https://github.com/vex-protocol/vex-protocol/commit/e2355e78618e7c995aa3a95ead9613821231792e) Thanks [@yuki111888](https://github.com/yuki111888)! - Fix Double Ratchet session initialization and message emission: both initiator and receiver now derive the initial chain key from the same HKDF label, the receiver's `CKr` is correctly seeded on session start, DHr is set on the first inbound ratchet step, and empty handshake payloads no longer surface as spurious entries in the `message` event stream.
+
 ## 6.0.0
 
 ### Major Changes
