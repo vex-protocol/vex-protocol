@@ -22,12 +22,10 @@ const convertedX25519Keys = {
 test("convertKeyPair", () => {
     const keys = keyPairFromString(ed25519Keys);
     const converted = XKeyConvert.convertKeyPair(keys);
-    // ed2curve returns null if conversion fails, though for valid keys it shouldn't.
-    // We cast to any to allow lodash comparison or check for existence
-    expect(converted).toBeDefined();
-    if (converted) {
-        expect(keyPairToString(converted)).toEqual(convertedX25519Keys);
+    if (!converted) {
+        throw new Error("Conversion failed.");
     }
+    expect(keyPairToString(converted)).toEqual(convertedX25519Keys);
 });
 
 test("convertPublicKey", () => {
