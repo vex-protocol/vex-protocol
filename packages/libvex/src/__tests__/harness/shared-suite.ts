@@ -127,20 +127,38 @@ export function platformSuite(
         });
 
         test("two-user DM round-trip decrypts on both clients", async () => {
+            const SK1 = await e2eGenerateSecretKey();
+            const opts1: ClientOptions = e2eClientOptionsBase();
+            const storage1 = await makeStorage(SK1, opts1);
+            const client1 = await Client.create(SK1, opts1, storage1);
+            const username1 = Client.randomUsername();
+            const password1 = "test-pw-1";
+
             const SK2 = await e2eGenerateSecretKey();
             const opts2: ClientOptions = e2eClientOptionsBase();
             const storage2 = await makeStorage(SK2, opts2);
             const client2 = await Client.create(SK2, opts2, storage2);
             const username2 = Client.randomUsername();
+            const password2 = "test-pw-2";
 
             try {
+                const [_user1, regErr1] = await client1.register(
+                    username1,
+                    password1,
+                );
+                expect(regErr1).toBeNull();
+
+                const loginErr1 = await client1.login(username1, password1);
+                expect(loginErr1.ok).toBe(true);
+                await connectAndWait(client1, "client1-roundtrip");
+
                 const [user2, regErr] = await client2.register(
                     username2,
-                    "test-pw-2",
+                    password2,
                 );
                 expect(regErr).toBeNull();
 
-                const loginErr = await client2.login(username2, "test-pw-2");
+                const loginErr = await client2.login(username2, password2);
                 expect(loginErr.ok).toBe(true);
                 await connectAndWait(client2, "client2-roundtrip");
 
@@ -149,19 +167,19 @@ export function platformSuite(
                     client2,
                     (m) =>
                         m.direction === "incoming" &&
-                        m.authorID === client.me.user().userID &&
+                        m.authorID === client1.me.user().userID &&
                         m.message === outbound1,
                     `[${platformName}] roundtrip receive on client2`,
                     15_000,
                 );
-                void client.messages.send(user2!.userID, outbound1);
+                await client1.messages.send(user2!.userID, outbound1);
                 const inbound2 = await receiveOnClient2;
                 expect(inbound2.decrypted).toBe(true);
                 expect(inbound2.message).toBe(outbound1);
 
                 const outbound2 = "roundtrip u2->u1";
                 const receiveOnClient1 = waitForMessage(
-                    client,
+                    client1,
                     (m) =>
                         m.direction === "incoming" &&
                         m.authorID === user2!.userID &&
@@ -169,14 +187,18 @@ export function platformSuite(
                     `[${platformName}] roundtrip receive on client1`,
                     15_000,
                 );
-                void client2.messages.send(client.me.user().userID, outbound2);
+                await client2.messages.send(
+                    client1.me.user().userID,
+                    outbound2,
+                );
                 const inbound1 = await receiveOnClient1;
                 expect(inbound1.decrypted).toBe(true);
                 expect(inbound1.message).toBe(outbound2);
             } finally {
+                await client1.close().catch(() => {});
                 await client2.close().catch(() => {});
             }
-        });
+        }, 60_000);
 
         test("group messaging in channel", async () => {
             const SK2 = await e2eGenerateSecretKey();

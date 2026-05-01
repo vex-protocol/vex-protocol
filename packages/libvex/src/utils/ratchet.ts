@@ -39,6 +39,10 @@ export function decodeRatchetHeader(extra: Uint8Array): RatchetHeader {
     return { dhPub, n, pn, version: 1 };
 }
 
+export function deriveBootstrapSendChain(rootKey: Uint8Array): Uint8Array {
+    return xHMAC({ label: "bootstrap-send-chain", version: VERSION }, rootKey);
+}
+
 export function deriveInitialRootKey(sk: Uint8Array): Uint8Array {
     return xKDF(xConcat(sk, encoder.encode("dr-root-v1")));
 }
@@ -151,10 +155,7 @@ export async function ratchetStepSend(state: {
 }): Promise<void> {
     if (!state.DHr) {
         if (!state.CKs) {
-            state.CKs = xHMAC(
-                { label: "bootstrap-send-chain", version: VERSION },
-                state.RK,
-            );
+            state.CKs = deriveBootstrapSendChain(state.RK);
         }
         return;
     }

@@ -87,6 +87,7 @@ import {
 } from "./utils/fipsMailExtra.js";
 import {
     decodeRatchetHeader,
+    deriveBootstrapSendChain,
     encodeRatchetHeader,
     hasRemoteDhChanged,
     initRatchetSession,
@@ -3347,10 +3348,18 @@ export class Client {
                             return;
                         }
 
-                        const firstInboundChain =
-                            !session.DHr && session.CKr !== null;
-                        if (firstInboundChain) {
+                        const firstInboundFromSubsequent = !session.DHr;
+                        if (firstInboundFromSubsequent) {
                             session.DHr = ratchetHeader.dhPub;
+                            // First inbound after X3DH initial mail has no prior DH ratchet.
+                            // If this side has no receiving chain yet (initiator path),
+                            // derive the bootstrap receive chain to match peer's first
+                            // bootstrap send chain.
+                            if (!session.CKr) {
+                                session.CKr = deriveBootstrapSendChain(
+                                    session.RK,
+                                );
+                            }
                         } else if (
                             hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
                         ) {
