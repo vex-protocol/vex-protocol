@@ -88,6 +88,13 @@ export function createPendingDeviceEnrollmentRequest(
     };
 }
 
+function buildApprovalChallenge(
+    requestID: string,
+    signKey: string,
+): Uint8Array {
+    return XUtils.decodeUTF8(`${requestID}:${signKey.toLowerCase()}`);
+}
+
 function pruneDeviceEnrollmentRequests(nowMs = Date.now()): void {
     for (const [requestID, req] of deviceEnrollments.entries()) {
         if (
@@ -376,7 +383,10 @@ export const getUserRouter = (
                 return;
             }
 
-            const expected = XUtils.decodeUTF8(requestID);
+            const expected = buildApprovalChallenge(
+                requestID,
+                pending.devicePayload.signKey,
+            );
             if (!XUtils.bytesEqual(opened, expected)) {
                 res.status(401).send({ error: "Approval challenge mismatch." });
                 return;
