@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.1.1
+
+### Patch Changes
+
+- [`65c6d0a`](https://github.com/vex-protocol/vex-protocol/commit/65c6d0ac046126b729d00cb1e47615f513915dab) Thanks [@yuki111888](https://github.com/yuki111888)! - Refresh internal dependency alignment with `@vex-chat/crypto@4.0.1` for the SDK and server packages.
+
 ## 6.1.0
 
 ### Minor Changes
