@@ -498,7 +498,7 @@ export interface PendingDeviceRequest {
     requestID: string;
     signKey: string;
     status: PendingDeviceApprovalStatus;
-    username: string;
+    username?: string | undefined;
 }
 
 /**
@@ -1694,8 +1694,8 @@ export class Client {
     /**
      * Registers a new account on the server.
      *
-     * @param username - The username to register. Must be unique.
-     * @param password - Account password.
+     * @param username - Optional username to register (must be unique when provided).
+     * @param password - Optional account password (device-key auth works without it).
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
@@ -1704,14 +1704,22 @@ export class Client {
      * ```
      */
     public async register(
-        username: string,
-        password: string,
+        username?: string,
+        password?: string,
     ): Promise<[null | User, Error | null]> {
         while (!this.xKeyRing) {
             await sleep(100);
         }
         const regKey = await this.getToken("register");
         if (regKey) {
+            const resolvedUsername =
+                username?.trim().length !== 0 && username !== undefined
+                    ? username.trim()
+                    : Client.randomUsername();
+            const resolvedPassword =
+                password?.trim().length !== 0 && password !== undefined
+                    ? password
+                    : crypto.randomUUID();
             const signKey = XUtils.encodeHex(this.signKeys.publicKey);
             const signed = XUtils.encodeHex(
                 await xSignAsync(
@@ -1722,7 +1730,7 @@ export class Client {
             const preKeyIndex = this.xKeyRing.preKeys.index;
             const regMsg: RegistrationPayload = {
                 deviceName: this.options?.deviceName ?? "unknown",
-                password,
+                password: resolvedPassword,
                 preKey: XUtils.encodeHex(
                     this.xKeyRing.preKeys.keyPair.publicKey,
                 ),
@@ -1732,7 +1740,7 @@ export class Client {
                 ),
                 signed,
                 signKey,
-                username,
+                username: resolvedUsername,
             };
             try {
                 const res = await this.http.post(
@@ -3476,18 +3484,7 @@ export class Client {
         }
 
         const token = await this.getToken("device");
-
-        const username = this.user?.username;
-        if (!username) {
-            throw new Error("No user set — log in first.");
-        }
-        const [userDetails, err] = await this.fetchUser(username);
-        if (!userDetails) {
-            throw new Error("Username not found " + username);
-        }
-        if (err) {
-            throw err;
-        }
+        const userDetails = this.getUser();
         if (!token) {
             throw new Error("Couldn't fetch token.");
         }
@@ -3504,6 +3501,10 @@ export class Client {
         );
 
         const devPreKeyIndex = this.xKeyRing.preKeys.index;
+        const normalizedUsername =
+            userDetails.username.trim().length > 0
+                ? userDetails.username
+                : `key_${userDetails.userID.replaceAll("-", "").slice(0, 12)}`;
         const devMsg: DevicePayload = {
             deviceName: this.options?.deviceName ?? "unknown",
             preKey: XUtils.encodeHex(this.xKeyRing.preKeys.keyPair.publicKey),
@@ -3511,7 +3512,7 @@ export class Client {
             preKeySignature: XUtils.encodeHex(this.xKeyRing.preKeys.signature),
             signed,
             signKey,
-            username: userDetails.username,
+            username: normalizedUsername,
         };
 
         const res = await this.http.post(

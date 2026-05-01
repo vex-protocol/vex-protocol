@@ -824,16 +824,26 @@ export class Spire extends EventEmitter {
                     return;
                 }
                 const regPayload = regParsed.data;
-                if (!usernameRegex.test(regPayload.username)) {
+                if (
+                    regPayload.username !== undefined &&
+                    !usernameRegex.test(regPayload.username)
+                ) {
                     res.status(400).send({
                         error: "Username must be between three and nineteen letters, digits, or underscores.",
                     });
                     return;
                 }
+                const normalizedPayload = {
+                    ...regPayload,
+                    username: normalizeRegistrationUsername(
+                        regPayload.username,
+                        regPayload.signKey,
+                    ),
+                };
 
                 const regKey = await spireXSignOpenAsync(
-                    XUtils.decodeHex(regPayload.signed),
-                    XUtils.decodeHex(regPayload.signKey),
+                    XUtils.decodeHex(normalizedPayload.signed),
+                    XUtils.decodeHex(normalizedPayload.signKey),
                 );
 
                 if (
@@ -846,42 +856,37 @@ export class Spire extends EventEmitter {
                 ) {
                     const [user, err] = await this.db.createUser(
                         regKey,
-                        regPayload,
+                        normalizedPayload,
                     );
                     if (err !== null) {
                         const errCode =
                             "code" in err && typeof err.code === "string"
                                 ? err.code
                                 : undefined;
-                        switch (errCode) {
-                            case "ER_DUP_ENTRY":
-                                const usernameConflict = String(err).includes(
-                                    "users_username_unique",
-                                );
-                                const signKeyConflict = String(err).includes(
-                                    "users_signkey_unique",
-                                );
-
-                                if (usernameConflict) {
-                                    res.status(400).send({
-                                        error: "Username is already registered.",
-                                    });
-                                    return;
-                                }
-                                if (signKeyConflict) {
-                                    res.status(400).send({
-                                        error: "Public key is already registered.",
-                                    });
-                                    return;
-                                }
-                                res.status(500).send({
-                                    error: "An error occurred registering.",
-                                });
-                                break;
-                            default:
-                                res.sendStatus(500);
-                                break;
+                        const errText = String(err);
+                        const usernameConflict = errText.includes(
+                            "users_username_unique",
+                        );
+                        const signKeyConflict = errText.includes(
+                            "devices_signKey_unique",
+                        );
+                        const isUniqueConstraint =
+                            errCode === "ER_DUP_ENTRY" ||
+                            errCode === "SQLITE_CONSTRAINT_UNIQUE" ||
+                            errText.includes("UNIQUE constraint failed");
+                        if (isUniqueConstraint && usernameConflict) {
+                            res.status(400).send({
+                                error: "Username is already registered.",
+                            });
+                            return;
                         }
+                        if (isUniqueConstraint && signKeyConflict) {
+                            res.status(400).send({
+                                error: "Public key is already registered.",
+                            });
+                            return;
+                        }
+                        res.sendStatus(500);
                     } else {
                         if (!user) {
                             res.sendStatus(500);
@@ -975,4 +980,19 @@ export class Spire extends EventEmitter {
         }
         return false;
     }
+}
+
+function normalizeRegistrationUsername(
+    username: string | undefined,
+    signKeyHex: string,
+): string {
+    const trimmed = username?.trim();
+    if (trimmed && trimmed.length > 0) {
+        return trimmed;
+    }
+    const seed = signKeyHex
+        .toLowerCase()
+        .replace(/[^a-f0-9]/g, "")
+        .slice(0, 12);
+    return `key_${seed}`;
 }

@@ -28,12 +28,12 @@ export interface DevicePayload {
     preKeySignature: string;
     signed: string;
     signKey: string;
-    username: string;
+    username?: string | undefined;
 }
 
 /** User registration payload (HTTP). */
 export interface RegistrationPayload extends DevicePayload {
-    password: string;
+    password?: string | undefined;
 }
 
 /** Public user profile. */
@@ -89,7 +89,7 @@ const _devicePayloadSchema = z.object({
     preKeySignature: z.string().describe("Pre-key signature (hex)"),
     signed: z.string().describe("Signed registration data"),
     signKey: z.string().describe("Ed25519 public signing key (hex)"),
-    username: z.string().describe("Account username"),
+    username: z.string().optional().describe("Account username"),
 });
 
 /** Device registration payload. */
@@ -100,6 +100,6 @@ export const DevicePayloadSchema: z.ZodType<DevicePayload> =
 export const RegistrationPayloadSchema: z.ZodType<RegistrationPayload> =
     _devicePayloadSchema
         .extend({
-            password: z.string().describe("Account password"),
+            password: z.string().optional().describe("Account password"),
         })
         .describe("User registration payload");

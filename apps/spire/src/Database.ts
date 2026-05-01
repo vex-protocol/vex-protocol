@@ -312,21 +312,32 @@ export class Database extends EventEmitter {
         regPayload: RegistrationPayload,
     ): Promise<[null | UserRecord, Error | null]> {
         try {
-            const passwordHash = await hashPasswordArgon2(regPayload.password);
+            const userID = uuidStringify(regKey);
+            const username = normalizeRegistrationUsername(
+                regPayload.username,
+                userID,
+            );
+            const passwordHash =
+                typeof regPayload.password === "string" &&
+                regPayload.password.length > 0
+                    ? await hashPasswordArgon2(regPayload.password)
+                    : "";
+            const hashAlgo =
+                passwordHash.length > 0 ? "argon2id" : "keycluster";
 
             const user: UserRecord = {
                 lastSeen: new Date().toISOString(),
                 passwordHash,
                 passwordSalt: "",
-                userID: uuidStringify(regKey),
-                username: regPayload.username,
+                userID,
+                username,
             };
 
             await this.db
                 .insertInto("users")
                 .values({
                     ...user,
-                    hashAlgo: "argon2id",
+                    hashAlgo,
                     lastSeen: user.lastSeen,
                 })
                 .execute();
@@ -1035,6 +1046,9 @@ export async function verifyPassword(
     password: string,
     stored: { hashAlgo: string; passwordHash: string; passwordSalt: string },
 ): Promise<{ needsRehash: boolean; valid: boolean }> {
+    if (stored.hashAlgo === "keycluster") {
+        return { needsRehash: false, valid: false };
+    }
     if (stored.hashAlgo === "argon2id") {
         const valid = await argon2.verify(stored.passwordHash, password);
         return { needsRehash: false, valid };
@@ -1058,6 +1072,18 @@ export async function verifyPassword(
     const { timingSafeEqual } = await import("node:crypto");
     const valid = timingSafeEqual(computed, storedBuf);
     return { needsRehash: valid, valid };
+}
+
+function normalizeRegistrationUsername(
+    providedUsername: string | undefined,
+    userID: string,
+): string {
+    const trimmed = providedUsername?.trim();
+    if (trimmed && trimmed.length > 0) {
+        return trimmed;
+    }
+    const seed = userID.replaceAll("-", "").slice(0, 12);
+    return `key_${seed}`;
 }
 
 function toDevice(row: {
