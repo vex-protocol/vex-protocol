@@ -2,7 +2,7 @@
     "openapi": "3.1.0",
     "info": {
         "title": "Vex Protocol API",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "description": "REST API for the Vex encrypted chat platform. Messages are serialized using msgpack.",
         "license": {
             "name": "AGPL-3.0-or-later"
@@ -378,8 +378,7 @@
                     "preKeyIndex",
                     "preKeySignature",
                     "signed",
-                    "signKey",
-                    "username"
+                    "signKey"
                 ],
                 "description": "Device registration payload"
             },
@@ -425,9 +424,7 @@
                     "preKeyIndex",
                     "preKeySignature",
                     "signed",
-                    "signKey",
-                    "username",
-                    "password"
+                    "signKey"
                 ],
                 "description": "User registration payload"
             }
@@ -696,9 +693,7 @@
                                     "preKeyIndex",
                                     "preKeySignature",
                                     "signed",
-                                    "signKey",
-                                    "username",
-                                    "password"
+                                    "signKey"
                                 ],
                                 "description": "User registration payload"
                             }

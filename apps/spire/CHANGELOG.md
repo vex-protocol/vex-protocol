@@ -1,5 +1,17 @@
 # @vex-chat/spire
 
+## 1.3.0
+
+### Minor Changes
+
+- [#14](https://github.com/vex-protocol/vex-protocol/pull/14) [`bd8ce8e`](https://github.com/vex-protocol/vex-protocol/commit/bd8ce8e4f0fecd25b81e9dba2211400644814887) Thanks [@yuki111888](https://github.com/yuki111888)! - `username` and `password` are now optional for registration. Clients can call `client.register()` with no arguments to register via keypair alone — a username is auto-generated from the signing key if omitted. `DevicePayload.username` and `RegistrationPayload.password` are now `string | undefined` in `@vex-chat/types`; update any code that assumed these fields are always present.
+
+### Patch Changes
+
+- Updated dependencies [[`bd8ce8e`](https://github.com/vex-protocol/vex-protocol/commit/bd8ce8e4f0fecd25b81e9dba2211400644814887)]:
+    - @vex-chat/types@3.1.0
+    - @vex-chat/crypto@4.0.0
+
 ## 1.2.0
 
 ### Minor Changes
