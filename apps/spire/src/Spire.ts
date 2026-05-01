@@ -865,12 +865,12 @@ export class Spire extends EventEmitter {
                                 ? err.code
                                 : undefined;
                         const errText = String(err);
-                        const usernameConflict = errText.includes(
-                            "users_username_unique",
-                        );
-                        const signKeyConflict = errText.includes(
-                            "devices_signKey_unique",
-                        );
+                        const usernameConflict =
+                            errText.includes("users_username_unique") ||
+                            errText.includes("users.username");
+                        const signKeyConflict =
+                            errText.includes("devices_signKey_unique") ||
+                            errText.includes("devices.signKey");
                         const isUniqueConstraint =
                             errCode === "ER_DUP_ENTRY" ||
                             errCode === "SQLITE_CONSTRAINT_UNIQUE" ||

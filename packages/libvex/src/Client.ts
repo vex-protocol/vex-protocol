@@ -1883,9 +1883,10 @@ export class Client {
                 "Device approval request is not pending: " + req.status,
             );
         }
+        const approvalChallenge = `${requestID}:${req.signKey.toLowerCase()}`;
         const signed = XUtils.encodeHex(
             await xSignAsync(
-                XUtils.decodeUTF8(requestID),
+                XUtils.decodeUTF8(approvalChallenge),
                 this.signKeys.secretKey,
             ),
         );
