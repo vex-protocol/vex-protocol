@@ -378,8 +378,7 @@
                     "preKeyIndex",
                     "preKeySignature",
                     "signed",
-                    "signKey",
-                    "username"
+                    "signKey"
                 ],
                 "description": "Device registration payload"
             },
@@ -413,10 +412,6 @@
                     "username": {
                         "type": "string",
                         "description": "Account username"
-                    },
-                    "password": {
-                        "type": "string",
-                        "description": "Account password"
                     }
                 },
                 "required": [
@@ -425,9 +420,7 @@
                     "preKeyIndex",
                     "preKeySignature",
                     "signed",
-                    "signKey",
-                    "username",
-                    "password"
+                    "signKey"
                 ],
                 "description": "User registration payload"
             }
@@ -438,77 +431,15 @@
         "/auth": {
             "post": {
                 "operationId": "login",
-                "summary": "Login with username and password",
-                "description": "Authenticate with username and password credentials. Returns a JWT token and the authenticated user profile.",
+                "summary": "Deprecated password login endpoint",
+                "description": "Password authentication is removed. Use /auth/device and /auth/device/verify for signature-based authentication.",
                 "tags": [
                     "auth"
                 ],
-                "requestBody": {
-                    "content": {
-                        "application/msgpack": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "username": {
-                                        "type": "string"
-                                    },
-                                    "password": {
-                                        "type": "string"
-                                    }
-                                },
-                                "required": [
-                                    "username",
-                                    "password"
-                                ]
-                            }
-                        }
-                    }
-                },
+                "deprecated": true,
                 "responses": {
-                    "200": {
-                        "description": "Login successful",
-                        "content": {
-                            "application/msgpack": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "token": {
-                                            "type": "string"
-                                        },
-                                        "user": {
-                                            "type": "object",
-                                            "properties": {
-                                                "lastSeen": {
-                                                    "type": "string",
-                                                    "description": "Last activity timestamp"
-                                                },
-                                                "userID": {
-                                                    "type": "string",
-                                                    "description": "Unique user identifier"
-                                                },
-                                                "username": {
-                                                    "type": "string",
-                                                    "description": "Display username"
-                                                }
-                                            },
-                                            "required": [
-                                                "lastSeen",
-                                                "userID",
-                                                "username"
-                                            ],
-                                            "description": "Public user profile"
-                                        }
-                                    },
-                                    "required": [
-                                        "token",
-                                        "user"
-                                    ]
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Invalid credentials"
+                    "410": {
+                        "description": "Password login is no longer supported; use device challenge auth."
                     }
                 }
             }
@@ -684,10 +615,6 @@
                                     "username": {
                                         "type": "string",
                                         "description": "Account username"
-                                    },
-                                    "password": {
-                                        "type": "string",
-                                        "description": "Account password"
                                     }
                                 },
                                 "required": [
@@ -696,9 +623,7 @@
                                     "preKeyIndex",
                                     "preKeySignature",
                                     "signed",
-                                    "signKey",
-                                    "username",
-                                    "password"
+                                    "signKey"
                                 ],
                                 "description": "User registration payload"
                             }
@@ -713,25 +638,76 @@
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "lastSeen": {
-                                            "type": "string",
-                                            "description": "Last activity timestamp"
+                                        "device": {
+                                            "type": "object",
+                                            "properties": {
+                                                "deleted": {
+                                                    "type": "boolean",
+                                                    "description": "Soft-delete flag"
+                                                },
+                                                "deviceID": {
+                                                    "type": "string",
+                                                    "description": "Unique device identifier"
+                                                },
+                                                "lastLogin": {
+                                                    "type": "string",
+                                                    "description": "Last login timestamp"
+                                                },
+                                                "name": {
+                                                    "type": "string",
+                                                    "description": "Device display name"
+                                                },
+                                                "owner": {
+                                                    "type": "string",
+                                                    "description": "Owner user ID"
+                                                },
+                                                "signKey": {
+                                                    "type": "string",
+                                                    "description": "Ed25519 signing public key (hex)"
+                                                }
+                                            },
+                                            "required": [
+                                                "deleted",
+                                                "deviceID",
+                                                "lastLogin",
+                                                "name",
+                                                "owner",
+                                                "signKey"
+                                            ],
+                                            "description": "Device registration record"
                                         },
-                                        "userID": {
-                                            "type": "string",
-                                            "description": "Unique user identifier"
+                                        "token": {
+                                            "type": "string"
                                         },
-                                        "username": {
-                                            "type": "string",
-                                            "description": "Display username"
+                                        "user": {
+                                            "type": "object",
+                                            "properties": {
+                                                "lastSeen": {
+                                                    "type": "string",
+                                                    "description": "Last activity timestamp"
+                                                },
+                                                "userID": {
+                                                    "type": "string",
+                                                    "description": "Unique user identifier"
+                                                },
+                                                "username": {
+                                                    "type": "string",
+                                                    "description": "Display username"
+                                                }
+                                            },
+                                            "required": [
+                                                "lastSeen",
+                                                "userID",
+                                                "username"
+                                            ],
+                                            "description": "Public user profile"
                                         }
                                     },
                                     "required": [
-                                        "lastSeen",
-                                        "userID",
-                                        "username"
-                                    ],
-                                    "description": "Public user profile"
+                                        "device",
+                                        "token",
+                                        "user"
+                                    ]
                                 }
                             }
                         }

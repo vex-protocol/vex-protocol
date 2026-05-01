@@ -114,8 +114,6 @@ if (!process.env.DEV_API_KEY?.trim()) {
 }
 
 const opts = { inMemoryDb: true, ...apiUrlOverrideFromEnv() };
-const password = "probe-pw-1";
-const senderPw = "probe-sender-pw";
 const username = Client.randomUsername();
 const senderName = Client.randomUsername();
 
@@ -129,8 +127,8 @@ const SK3 = Client.generateSecretKey();
 const sender = await Client.create(SK3, opts, await makeStorage(SK3));
 
 try {
-    await d1.register(username, password);
-    if (!(await d1.login(username, password)).ok) {
+    await d1.register(username);
+    if (!(await d1.login(username)).ok) {
         throw new Error("d1 login failed");
     }
     await connectAndWait(d1, "d1");
@@ -142,7 +140,7 @@ try {
         w1.user?.username,
     );
 
-    await d2.login(username, password);
+    await d2.login(username);
     await connectAndWait(d2, "d2");
     const w2 = await d2.whoami();
     console.log(
@@ -154,8 +152,8 @@ try {
 
     await new Promise((r) => setTimeout(r, 300));
 
-    await sender.register(senderName, senderPw);
-    if (!(await sender.login(senderName, senderPw)).ok) {
+    await sender.register(senderName);
+    if (!(await sender.login(senderName)).ok) {
         throw new Error("sender login failed");
     }
     await connectAndWait(sender, "sender");

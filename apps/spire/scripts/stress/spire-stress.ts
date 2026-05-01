@@ -260,11 +260,8 @@ async function bootstrapClient(
                 },
             });
         } else {
-            const password =
-                process.env["SPIRE_STRESS_REGISTER_PASSWORD"] ??
-                "StressPassw0rd!localonly";
             const username = Client.randomUsername();
-            const [, regErr] = await c.register(username, password);
+            const [, regErr] = await c.register(username);
             if (regErr) {
                 recordHttpFailure(stats, regErr);
                 telemetry?.touchFail(
@@ -272,7 +269,6 @@ async function bootstrapClient(
                     {
                         ...bootCtx,
                         requestInputs: {
-                            passwordLength: password.length,
                             username,
                         },
                     },
@@ -284,11 +280,10 @@ async function bootstrapClient(
             telemetry?.touchOk("Client.register", {
                 ...bootCtx,
                 requestInputs: {
-                    passwordLength: password.length,
                     username,
                 },
             });
-            const loginRes = await c.login(username, password);
+            const loginRes = await c.login(username);
             if (!loginRes.ok) {
                 const fail = new Error(
                     loginRes.error ?? "login after register failed",
@@ -300,7 +295,6 @@ async function bootstrapClient(
                         ...bootCtx,
                         requestInputs: {
                             mode: "after_register",
-                            passwordLength: password.length,
                             username,
                         },
                     },
@@ -313,7 +307,6 @@ async function bootstrapClient(
                 ...bootCtx,
                 requestInputs: {
                     mode: "after_register",
-                    passwordLength: password.length,
                     username,
                 },
             });

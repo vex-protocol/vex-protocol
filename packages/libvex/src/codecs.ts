@@ -66,6 +66,14 @@ export const AuthResponseCodec = createCodec(
     }),
 );
 
+export const RegisterResponseCodec = createCodec(
+    z.object({
+        device: DeviceSchema,
+        token: z.string(),
+        user: UserSchema,
+    }),
+);
+
 export const DeviceChallengeCodec = createCodec(
     z.object({
         challenge: z.string(),

@@ -38,7 +38,7 @@ import { WebSocketServer } from "ws";
 import { z } from "zod/v4";
 
 import { ClientManager } from "./ClientManager.ts";
-import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
+import { Database } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
 import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
@@ -66,11 +66,6 @@ const jwtPayload = z.object({
     bearerToken: z.string().optional(),
     exp: z.number().optional(),
     user: UserSchema,
-});
-
-const authPayload = z.object({
-    password: z.string().min(1),
-    username: z.string().min(1),
 });
 
 const deviceAuthPayload = z.object({
@@ -763,54 +758,10 @@ export class Spire extends EventEmitter {
             );
         });
 
-        this.api.post("/auth", authLimiter, async (req, res) => {
-            const parsed = authPayload.safeParse(req.body);
-            if (!parsed.success) {
-                res.status(400).json({
-                    error: "Invalid credentials format",
-                });
-                return;
-            }
-            const { password, username } = parsed.data;
-
-            try {
-                const userEntry = await this.db.retrieveUser(username);
-                if (!userEntry) {
-                    res.sendStatus(401);
-                    return;
-                }
-
-                const { needsRehash, valid } = await verifyPassword(
-                    password,
-                    userEntry,
-                );
-
-                if (!valid) {
-                    res.sendStatus(401);
-                    return;
-                }
-
-                if (needsRehash) {
-                    const newHash = await hashPasswordArgon2(password);
-                    await this.db.rehashPassword(userEntry.userID, newHash);
-                }
-
-                const token = jwt.sign(
-                    { user: censorUser(userEntry) },
-                    getJwtSecret(),
-                    { expiresIn: JWT_EXPIRY },
-                );
-
-                // just to make sure
-                jwt.verify(token, getJwtSecret());
-
-                res.send(
-                    msgpack.encode({ token, user: censorUser(userEntry) }),
-                );
-            } catch (_err: unknown) {
-                // debugger: auth error
-                res.sendStatus(500);
-            }
+        this.api.post("/auth", authLimiter, (_req, res) => {
+            res.status(410).send({
+                error: "Password auth is removed. Use /auth/device and /auth/device/verify.",
+            });
         });
 
         this.api.post("/register", authLimiter, async (req, res) => {
@@ -892,7 +843,29 @@ export class Spire extends EventEmitter {
                             res.sendStatus(500);
                             return;
                         }
-                        res.send(msgpack.encode(censorUser(user)));
+                        const token = jwt.sign(
+                            { user: censorUser(user) },
+                            getJwtSecret(),
+                            { expiresIn: JWT_EXPIRY },
+                        );
+                        jwt.verify(token, getJwtSecret());
+
+                        const registeredDevice = await this.db.retrieveDevice(
+                            normalizedPayload.signKey,
+                        );
+                        if (!registeredDevice) {
+                            res.status(500).send({
+                                error: "Registered user but failed to resolve created device.",
+                            });
+                            return;
+                        }
+                        res.send(
+                            msgpack.encode({
+                                device: registeredDevice,
+                                token,
+                                user: censorUser(user),
+                            }),
+                        );
                     }
                 } else if (regKey && regKey.length !== 16) {
                     res.status(400).send({

@@ -26,7 +26,6 @@ import type {
 import type { Migration, MigrationProvider } from "kysely";
 
 import { EventEmitter } from "events";
-import { pbkdf2Sync } from "node:crypto";
 import { statSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -38,8 +37,6 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import { MailType } from "@vex-chat/types";
-
-import argon2 from "argon2";
 
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
@@ -114,9 +111,6 @@ function isMigration(mod: unknown): mod is Migration {
 }
 
 const pubkeyRegex = /[0-9a-f]{64}/;
-
-/** Legacy iteration count kept only for verifying old PBKDF2 hashes. */
-const PBKDF2_ITERATIONS = 1000;
 
 // ── Row-to-interface converters ─────────────────────────────────────────
 // SQLite stores booleans as integers and dates as strings, but the
@@ -317,17 +311,9 @@ export class Database extends EventEmitter {
                 regPayload.username,
                 userID,
             );
-            const passwordHash =
-                typeof regPayload.password === "string" &&
-                regPayload.password.length > 0
-                    ? await hashPasswordArgon2(regPayload.password)
-                    : "";
-            const hashAlgo =
-                passwordHash.length > 0 ? "argon2id" : "keycluster";
-
             const user: UserRecord = {
                 lastSeen: new Date().toISOString(),
-                passwordHash,
+                passwordHash: "",
                 passwordSalt: "",
                 userID,
                 username,
@@ -337,7 +323,7 @@ export class Database extends EventEmitter {
                 .insertInto("users")
                 .values({
                     ...user,
-                    hashAlgo,
+                    hashAlgo: "keycluster",
                     lastSeen: user.lastSeen,
                 })
                 .execute();
@@ -625,21 +611,6 @@ export class Database extends EventEmitter {
             .updateTable("users")
             .set({ lastSeen: new Date().toISOString() })
             .where("userID", "=", user.userID)
-            .execute();
-    }
-
-    public async rehashPassword(
-        userID: string,
-        newHash: string,
-    ): Promise<void> {
-        await this.db
-            .updateTable("users")
-            .set({
-                hashAlgo: "argon2id",
-                passwordHash: newHash,
-                passwordSalt: "",
-            })
-            .where("userID", "=", userID)
             .execute();
     }
 
@@ -1022,56 +993,6 @@ export class Database extends EventEmitter {
         }
         this.emit("ready");
     }
-}
-
-/**
- * Hash a password with Argon2id (new default).
- * Returns the encoded hash string which embeds salt, params, and digest.
- */
-export async function hashPasswordArgon2(password: string): Promise<string> {
-    return argon2.hash(password, {
-        memoryCost: 65536,
-        parallelism: 4,
-        timeCost: 3,
-        type: argon2.argon2id,
-    });
-}
-
-/**
- * Verify a password against either Argon2id or legacy PBKDF2 storage.
- * Returns `{ valid, needsRehash }` — callers should rehash on success
- * when `needsRehash` is true.
- */
-export async function verifyPassword(
-    password: string,
-    stored: { hashAlgo: string; passwordHash: string; passwordSalt: string },
-): Promise<{ needsRehash: boolean; valid: boolean }> {
-    if (stored.hashAlgo === "keycluster") {
-        return { needsRehash: false, valid: false };
-    }
-    if (stored.hashAlgo === "argon2id") {
-        const valid = await argon2.verify(stored.passwordHash, password);
-        return { needsRehash: false, valid };
-    }
-
-    // Legacy PBKDF2 path
-    const salt = XUtils.decodeHex(stored.passwordSalt);
-    const computed = pbkdf2Sync(
-        password,
-        salt,
-        PBKDF2_ITERATIONS,
-        32,
-        "sha512",
-    );
-    const storedBuf = XUtils.decodeHex(stored.passwordHash);
-
-    if (computed.length !== storedBuf.length) {
-        return { needsRehash: false, valid: false };
-    }
-
-    const { timingSafeEqual } = await import("node:crypto");
-    const valid = timingSafeEqual(computed, storedBuf);
-    return { needsRehash: valid, valid };
 }
 
 function normalizeRegistrationUsername(

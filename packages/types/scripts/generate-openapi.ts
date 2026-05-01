@@ -72,35 +72,16 @@ registry.registerPath({
     method: "post",
     path: "/auth",
     operationId: "login",
-    summary: "Login with username and password",
+    summary: "Deprecated password login endpoint",
     description:
-        "Authenticate with username and password credentials. Returns a JWT token and the authenticated user profile.",
+        "Password authentication is removed. Use /auth/device and /auth/device/verify for signature-based authentication.",
     tags: ["auth"],
-    request: {
-        body: {
-            content: {
-                "application/msgpack": {
-                    schema: z.object({
-                        username: z.string(),
-                        password: z.string(),
-                    }),
-                },
-            },
-        },
-    },
+    deprecated: true,
     responses: {
-        200: {
-            description: "Login successful",
-            content: {
-                "application/msgpack": {
-                    schema: z.object({
-                        token: z.string(),
-                        user,
-                    }),
-                },
-            },
+        410: {
+            description:
+                "Password login is no longer supported; use device challenge auth.",
         },
-        401: { description: "Invalid credentials" },
     },
 });
 
@@ -193,7 +174,13 @@ registry.registerPath({
         200: {
             description: "Registration successful",
             content: {
-                "application/msgpack": { schema: user },
+                "application/msgpack": {
+                    schema: z.object({
+                        device,
+                        token: z.string(),
+                        user,
+                    }),
+                },
             },
         },
     },

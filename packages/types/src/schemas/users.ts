@@ -32,9 +32,7 @@ export interface DevicePayload {
 }
 
 /** User registration payload (HTTP). */
-export interface RegistrationPayload extends DevicePayload {
-    password?: string | undefined;
-}
+export type RegistrationPayload = DevicePayload;
 
 /** Public user profile. */
 export interface User {
@@ -98,8 +96,4 @@ export const DevicePayloadSchema: z.ZodType<DevicePayload> =
 
 /** User registration payload. */
 export const RegistrationPayloadSchema: z.ZodType<RegistrationPayload> =
-    _devicePayloadSchema
-        .extend({
-            password: z.string().optional().describe("Account password"),
-        })
-        .describe("User registration payload");
+    _devicePayloadSchema.describe("User registration payload");

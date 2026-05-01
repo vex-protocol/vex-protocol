@@ -45,7 +45,6 @@ export function platformSuite(
     describe.sequential(`platform: ${platformName}`, () => {
         let client: Client;
         const username = Client.randomUsername();
-        const password = "platform-test-pw";
 
         beforeAll(async () => {
             const profile = await resolveE2eCryptoProfile();
@@ -65,13 +64,13 @@ export function platformSuite(
         });
 
         test("register", async () => {
-            const [user, err] = await client.register(username, password);
+            const [user, err] = await client.register(username);
             expect(err).toBeNull();
             expect(user!.username).toBe(username);
         });
 
         test("login", async () => {
-            const result = await client.login(username, password);
+            const result = await client.login(username);
             expect(result.ok).toBe(true);
         });
 
@@ -100,13 +99,10 @@ export function platformSuite(
             const username2 = Client.randomUsername();
 
             try {
-                const [user2, regErr] = await client2.register(
-                    username2,
-                    "test-pw-2",
-                );
+                const [user2, regErr] = await client2.register(username2);
                 expect(regErr).toBeNull();
 
-                const loginErr = await client2.login(username2, "test-pw-2");
+                const loginErr = await client2.login(username2);
                 expect(loginErr.ok).toBe(true);
 
                 await connectAndWait(client2, "client2");
@@ -132,33 +128,25 @@ export function platformSuite(
             const storage1 = await makeStorage(SK1, opts1);
             const client1 = await Client.create(SK1, opts1, storage1);
             const username1 = Client.randomUsername();
-            const password1 = "test-pw-1";
 
             const SK2 = await e2eGenerateSecretKey();
             const opts2: ClientOptions = e2eClientOptionsBase();
             const storage2 = await makeStorage(SK2, opts2);
             const client2 = await Client.create(SK2, opts2, storage2);
             const username2 = Client.randomUsername();
-            const password2 = "test-pw-2";
 
             try {
-                const [_user1, regErr1] = await client1.register(
-                    username1,
-                    password1,
-                );
+                const [_user1, regErr1] = await client1.register(username1);
                 expect(regErr1).toBeNull();
 
-                const loginErr1 = await client1.login(username1, password1);
+                const loginErr1 = await client1.login(username1);
                 expect(loginErr1.ok).toBe(true);
                 await connectAndWait(client1, "client1-roundtrip");
 
-                const [user2, regErr] = await client2.register(
-                    username2,
-                    password2,
-                );
+                const [user2, regErr] = await client2.register(username2);
                 expect(regErr).toBeNull();
 
-                const loginErr = await client2.login(username2, password2);
+                const loginErr = await client2.login(username2);
                 expect(loginErr.ok).toBe(true);
                 await connectAndWait(client2, "client2-roundtrip");
 
@@ -210,8 +198,8 @@ export function platformSuite(
 
             try {
                 // Register + login + connect user2
-                await client2.register(username2, "test-pw-2");
-                await client2.login(username2, "test-pw-2");
+                await client2.register(username2);
+                await client2.login(username2);
                 await connectAndWait(client2, "client2");
 
                 // user1 creates server + channel
