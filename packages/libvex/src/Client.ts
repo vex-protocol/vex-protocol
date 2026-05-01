@@ -1696,7 +1696,7 @@ export class Client {
      * Registers a new account on the server.
      *
      * @param username - Optional username to register (must be unique when provided).
-     * @param password - Deprecated and ignored. Kept for API compatibility.
+     * @param password - Optional legacy password used when talking to pre-keycluster servers.
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
@@ -1713,11 +1713,14 @@ export class Client {
         }
         const regKey = await this.getToken("register");
         if (regKey) {
-            void password;
             const resolvedUsername =
                 username?.trim().length !== 0 && username !== undefined
                     ? username.trim()
                     : Client.randomUsername();
+            const resolvedPassword =
+                password?.trim().length !== 0 && password !== undefined
+                    ? password
+                    : uuid.v4();
             const signKey = XUtils.encodeHex(this.signKeys.publicKey);
             const signed = XUtils.encodeHex(
                 await xSignAsync(
@@ -1728,6 +1731,7 @@ export class Client {
             const preKeyIndex = this.xKeyRing.preKeys.index;
             const regMsg: RegistrationPayload = {
                 deviceName: this.options?.deviceName ?? "unknown",
+                password: resolvedPassword,
                 preKey: XUtils.encodeHex(
                     this.xKeyRing.preKeys.keyPair.publicKey,
                 ),
@@ -1745,14 +1749,43 @@ export class Client {
                     msgpack.encode(regMsg),
                     { headers: { "Content-Type": "application/msgpack" } },
                 );
-                const { device, token, user } = decodeAxios(
-                    RegisterResponseCodec,
-                    res.data,
-                );
-                this.device = device;
-                this.setUser(user);
-                this.token = token;
-                this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
+
+                // New key-cluster server response: { device, token, user }.
+                // Legacy response (still deployed in some environments): user only.
+                let didDecodeRegisterResponse = false;
+                try {
+                    const { device, token, user } = decodeAxios(
+                        RegisterResponseCodec,
+                        res.data,
+                    );
+                    this.device = device;
+                    this.setUser(user);
+                    this.token = token;
+                    this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
+                    didDecodeRegisterResponse = true;
+                } catch {
+                    // fall through to legacy decode path
+                }
+
+                if (!didDecodeRegisterResponse) {
+                    const legacyUser = decodeAxios(UserCodec, res.data);
+                    this.setUser(legacyUser);
+
+                    // Legacy servers require /auth after /register to get a JWT.
+                    const loginResult = await this.login(
+                        resolvedUsername,
+                        resolvedPassword,
+                    );
+                    if (!loginResult.ok) {
+                        return [
+                            null,
+                            new Error(
+                                loginResult.error ??
+                                    "Legacy register succeeded but login failed.",
+                            ),
+                        ];
+                    }
+                }
                 return [this.getUser(), null];
             } catch (err: unknown) {
                 if (isAxiosError(err) && err.response) {
