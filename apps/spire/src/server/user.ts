@@ -76,7 +76,7 @@ function requestSummary(req: DeviceEnrollmentRequest): {
     requestID: string;
     signKey: string;
     status: DeviceEnrollmentStatus;
-    username: string;
+    username?: string;
 } {
     return {
         createdAt: new Date(req.createdAt).toISOString(),
@@ -87,7 +87,9 @@ function requestSummary(req: DeviceEnrollmentRequest): {
         requestID: req.requestID,
         signKey: req.devicePayload.signKey,
         status: req.status,
-        username: req.devicePayload.username,
+        ...(req.devicePayload.username !== undefined
+            ? { username: req.devicePayload.username }
+            : {}),
         ...(req.approvedDeviceID !== undefined
             ? { approvedDeviceID: req.approvedDeviceID }
             : {}),

@@ -100,7 +100,7 @@ export const PendingDeviceRequestCodec = createCodec(
             z.literal("pending"),
             z.literal("rejected"),
         ]),
-        username: z.string(),
+        username: z.string().optional(),
     }),
 );
 
@@ -120,7 +120,7 @@ export const PendingDeviceRequestArrayCodec = createCodec(
                 z.literal("pending"),
                 z.literal("rejected"),
             ]),
-            username: z.string(),
+            username: z.string().optional(),
         }),
     ),
 );
