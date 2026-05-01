@@ -188,13 +188,6 @@ const providers: Record<CryptoProfile, CryptoProvider> = {
 let activeCryptoProfile: CryptoProfile = "tweetnacl";
 let activeCryptoProvider: CryptoProvider = providers[activeCryptoProfile];
 
-/** `globalThis` may omit `Buffer` in browsers; Node types can still attach `Buffer` to `globalThis` unconditionally. */
-type NodeBufferish = {
-    from(data: ArrayBuffer | Uint8Array): {
-        toString(encoding: "base64url"): string;
-    };
-};
-
 /** Returns the currently configured crypto profile. */
 export function getCryptoProfile(): CryptoProfile {
     return activeCryptoProfile;
@@ -213,10 +206,6 @@ export function setCryptoProfile(profile: CryptoProfile): void {
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
-    const BufferCtor = getNodeBufferCtor();
-    if (BufferCtor !== undefined) {
-        return BufferCtor.from(bytes).toString("base64url");
-    }
     return globalThis
         .btoa(String.fromCodePoint(...Array.from(bytes)))
         .replace(/\+/g, "-")
@@ -340,13 +329,6 @@ async function fipsEcdhKeyPairFromPkcs8(
         publicKey: new Uint8Array(await subtle.exportKey("raw", ecdhPub)),
         secretKey: new Uint8Array(await subtle.exportKey("pkcs8", ecdhPriv)),
     };
-}
-
-function getNodeBufferCtor(): NodeBufferish | undefined {
-    if (!("Buffer" in globalThis)) {
-        return undefined;
-    }
-    return (globalThis as { Buffer: NodeBufferish }).Buffer;
 }
 
 function getSubtleCrypto(): SubtleCrypto {
