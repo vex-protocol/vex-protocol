@@ -126,6 +126,58 @@ export function platformSuite(
             }
         });
 
+        test("two-user DM round-trip decrypts on both clients", async () => {
+            const SK2 = await e2eGenerateSecretKey();
+            const opts2: ClientOptions = e2eClientOptionsBase();
+            const storage2 = await makeStorage(SK2, opts2);
+            const client2 = await Client.create(SK2, opts2, storage2);
+            const username2 = Client.randomUsername();
+
+            try {
+                const [user2, regErr] = await client2.register(
+                    username2,
+                    "test-pw-2",
+                );
+                expect(regErr).toBeNull();
+
+                const loginErr = await client2.login(username2, "test-pw-2");
+                expect(loginErr.ok).toBe(true);
+                await connectAndWait(client2, "client2-roundtrip");
+
+                const outbound1 = "roundtrip u1->u2";
+                const receiveOnClient2 = waitForMessage(
+                    client2,
+                    (m) =>
+                        m.direction === "incoming" &&
+                        m.authorID === client.me.user().userID &&
+                        m.message === outbound1,
+                    `[${platformName}] roundtrip receive on client2`,
+                    15_000,
+                );
+                void client.messages.send(user2!.userID, outbound1);
+                const inbound2 = await receiveOnClient2;
+                expect(inbound2.decrypted).toBe(true);
+                expect(inbound2.message).toBe(outbound1);
+
+                const outbound2 = "roundtrip u2->u1";
+                const receiveOnClient1 = waitForMessage(
+                    client,
+                    (m) =>
+                        m.direction === "incoming" &&
+                        m.authorID === user2!.userID &&
+                        m.message === outbound2,
+                    `[${platformName}] roundtrip receive on client1`,
+                    15_000,
+                );
+                void client2.messages.send(client.me.user().userID, outbound2);
+                const inbound1 = await receiveOnClient1;
+                expect(inbound1.decrypted).toBe(true);
+                expect(inbound1.message).toBe(outbound2);
+            } finally {
+                await client2.close().catch(() => {});
+            }
+        });
+
         test("group messaging in channel", async () => {
             const SK2 = await e2eGenerateSecretKey();
             const opts2: ClientOptions = e2eClientOptionsBase();

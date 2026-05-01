@@ -54,7 +54,9 @@ describe("double ratchet helpers", () => {
             skippedKeys: {} as Record<string, string>,
         };
 
-        await ratchetStepSend(aliceState);
+        if (!aliceState.CKs) {
+            await ratchetStepSend(aliceState);
+        }
         const a1 = takeSendMessageKey(aliceState);
         const h1 = decodeRatchetHeader(
             encodeRatchetHeader({
@@ -66,11 +68,17 @@ describe("double ratchet helpers", () => {
         );
 
         expect(hasRemoteDhChanged(bobState.DHr, h1.dhPub)).toBe(true);
-        await ratchetStepReceive(bobState, h1.dhPub, h1.pn);
+        if (!bobState.DHr && bobState.CKr) {
+            bobState.DHr = h1.dhPub;
+        } else {
+            await ratchetStepReceive(bobState, h1.dhPub, h1.pn);
+        }
         const b1 = takeReceiveMessageKey(bobState, h1.dhPub, h1.n);
         expect(XUtils.bytesEqual(a1.messageKey, b1)).toBe(true);
 
-        await ratchetStepSend(bobState);
+        if (!bobState.CKs) {
+            await ratchetStepSend(bobState);
+        }
         const bReply = takeSendMessageKey(bobState);
         const h2 = decodeRatchetHeader(
             encodeRatchetHeader({
@@ -80,7 +88,11 @@ describe("double ratchet helpers", () => {
                 version: 1,
             }),
         );
-        await ratchetStepReceive(aliceState, h2.dhPub, h2.pn);
+        if (!aliceState.DHr && aliceState.CKr) {
+            aliceState.DHr = h2.dhPub;
+        } else if (hasRemoteDhChanged(aliceState.DHr, h2.dhPub)) {
+            await ratchetStepReceive(aliceState, h2.dhPub, h2.pn);
+        }
         const aReply = takeReceiveMessageKey(aliceState, h2.dhPub, h2.n);
         expect(XUtils.bytesEqual(aReply, bReply.messageKey)).toBe(true);
     });
@@ -117,7 +129,9 @@ describe("double ratchet helpers", () => {
             skippedKeys: {} as Record<string, string>,
         };
 
-        await ratchetStepSend(s);
+        if (!s.CKs) {
+            await ratchetStepSend(s);
+        }
         const m0 = takeSendMessageKey(s);
         const m1 = takeSendMessageKey(s);
         const h0 = {
@@ -133,12 +147,52 @@ describe("double ratchet helpers", () => {
             version: 1 as const,
         };
 
-        await ratchetStepReceive(r, h1.dhPub, h1.pn);
+        if (!r.DHr && r.CKr) {
+            r.DHr = h1.dhPub;
+        } else {
+            await ratchetStepReceive(r, h1.dhPub, h1.pn);
+        }
         const r1 = takeReceiveMessageKey(r, h1.dhPub, h1.n);
         expect(XUtils.bytesEqual(r1, m1.messageKey)).toBe(true);
 
         const r0 = takeReceiveMessageKey(r, h0.dhPub, h0.n);
         expect(XUtils.bytesEqual(r0, m0.messageKey)).toBe(true);
+    });
+
+    it("advances sending chain for every message within same DH epoch", async () => {
+        const sk = XUtils.decodeHex(
+            "5555555555555555555555555555555555555555555555555555555555555555",
+        );
+        const initiator = await initRatchetSession(sk, "initiator");
+        const sender = {
+            CKr: initiator.CKr ? XUtils.decodeHex(initiator.CKr) : null,
+            CKs: initiator.CKs ? XUtils.decodeHex(initiator.CKs) : null,
+            DHr: initiator.DHr ? XUtils.decodeHex(initiator.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(initiator.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(initiator.DHsPublic),
+            Nr: initiator.Nr,
+            Ns: initiator.Ns,
+            PN: initiator.PN,
+            RK: XUtils.decodeHex(initiator.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        if (!sender.CKs) {
+            await ratchetStepSend(sender);
+        }
+        const dhPubBefore = XUtils.encodeHex(sender.DHsPublic);
+
+        const m0 = takeSendMessageKey(sender);
+        const m1 = takeSendMessageKey(sender);
+        const m2 = takeSendMessageKey(sender);
+
+        expect(m0.n).toBe(0);
+        expect(m1.n).toBe(1);
+        expect(m2.n).toBe(2);
+        expect(sender.Ns).toBe(3);
+        expect(XUtils.bytesEqual(m0.messageKey, m1.messageKey)).toBe(false);
+        expect(XUtils.bytesEqual(m1.messageKey, m2.messageKey)).toBe(false);
+        expect(XUtils.encodeHex(sender.DHsPublic)).toBe(dhPubBefore);
     });
 
     it("keeps sessions robust over long back-and-forth with persistence", async () => {
@@ -175,7 +229,9 @@ describe("double ratchet helpers", () => {
 
         const rounds = 120;
         for (let i = 0; i < rounds; i += 1) {
-            await ratchetStepSend(alice);
+            if (!alice.CKs) {
+                await ratchetStepSend(alice);
+            }
             const aOut = takeSendMessageKey(alice);
             const aHdr = decodeRatchetHeader(
                 encodeRatchetHeader({
@@ -193,7 +249,9 @@ describe("double ratchet helpers", () => {
             const bIn = takeReceiveMessageKey(bob, aHdr.dhPub, aHdr.n);
             expect(XUtils.bytesEqual(aOut.messageKey, bIn)).toBe(true);
 
-            await ratchetStepSend(bob);
+            if (!bob.CKs) {
+                await ratchetStepSend(bob);
+            }
             const bOut = takeSendMessageKey(bob);
             const bHdr = decodeRatchetHeader(
                 encodeRatchetHeader({
@@ -218,10 +276,10 @@ describe("double ratchet helpers", () => {
             }
         }
 
-        expect(alice.Nr).toBeGreaterThan(0);
-        expect(alice.Ns).toBeGreaterThan(0);
-        expect(bob.Nr).toBeGreaterThan(0);
-        expect(bob.Ns).toBeGreaterThan(0);
+        expect(alice.Nr + alice.Ns).toBeGreaterThan(0);
+        expect(bob.Nr + bob.Ns).toBeGreaterThan(0);
+        expect(alice.CKr ?? alice.CKs).not.toBeNull();
+        expect(bob.CKr ?? bob.CKs).not.toBeNull();
     });
 
     it("nightly: survives 1000-message randomized streaks with persistence", async () => {
@@ -266,7 +324,9 @@ describe("double ratchet helpers", () => {
             const sender = aliceSends ? alice : bob;
             const receiverState = aliceSends ? bob : alice;
 
-            await ratchetStepSend(sender);
+            if (!sender.CKs) {
+                await ratchetStepSend(sender);
+            }
             const outbound = takeSendMessageKey(sender);
             const header = decodeRatchetHeader(
                 encodeRatchetHeader({

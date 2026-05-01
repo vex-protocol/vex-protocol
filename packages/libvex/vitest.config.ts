@@ -1,4 +1,11 @@
+/**
+ * Copyright (c) 2020-2026 Vex Heavy Industries LLC
+ * Licensed under AGPL-3.0. See LICENSE for details.
+ * Commercial licenses available at vex.wtf
+ */
+
 import { defineConfig } from "vitest/config";
+
 import { poisonNodeImports } from "./src/__tests__/harness/poison-node-imports.js";
 
 export default defineConfig({
@@ -6,31 +13,34 @@ export default defineConfig({
         projects: [
             {
                 test: {
-                    name: "unit",
                     globals: true,
-                    include: ["src/__tests__/codec.test.ts"],
+                    include: [
+                        "src/__tests__/codec.test.ts",
+                        "src/__tests__/ratchet.test.ts",
+                    ],
+                    name: "unit",
                     testTimeout: 10_000,
                 },
             },
             {
                 test: {
-                    name: "node",
-                    globals: true,
-                    include: ["src/__tests__/platform-node.test.ts"],
-                    testTimeout: 15_000,
-                    hookTimeout: 30_000,
                     fileParallelism: false,
+                    globals: true,
+                    hookTimeout: 30_000,
+                    include: ["src/__tests__/platform-node.test.ts"],
+                    name: "node",
+                    testTimeout: 15_000,
                 },
             },
             {
                 plugins: [poisonNodeImports()],
                 test: {
-                    name: "browser",
-                    globals: true,
-                    include: ["src/__tests__/platform-browser.test.ts"],
-                    testTimeout: 15_000,
-                    hookTimeout: 30_000,
                     fileParallelism: false,
+                    globals: true,
+                    hookTimeout: 30_000,
+                    include: ["src/__tests__/platform-browser.test.ts"],
+                    name: "browser",
+                    testTimeout: 15_000,
                 },
             },
         ],
