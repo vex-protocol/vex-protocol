@@ -84,13 +84,10 @@ export async function initRatchetSession(
 }> {
     const RK = deriveInitialRootKey(sk);
     const DHs = await xBoxKeyPairAsync();
-    const CKs =
-        mode === "initiator"
-            ? xHMAC({ label: "init-send-chain", version: VERSION }, RK)
-            : null;
+    const initialChain = xHMAC({ label: "init-chain", version: VERSION }, RK);
     return {
-        CKr: null,
-        CKs: CKs ? XUtils.encodeHex(CKs) : null,
+        CKr: mode === "receiver" ? XUtils.encodeHex(initialChain) : null,
+        CKs: mode === "initiator" ? XUtils.encodeHex(initialChain) : null,
         DHr: null,
         DHsPrivate: XUtils.encodeHex(DHs.secretKey),
         DHsPublic: XUtils.encodeHex(DHs.publicKey),

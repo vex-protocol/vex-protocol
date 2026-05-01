@@ -2121,6 +2121,7 @@ export class Client {
             const forwardedMsg = forward
                 ? messageSchema.parse(msgpack.decode(message))
                 : null;
+            const shouldEmitHandshakeMessage = forward || message.length > 0;
             const emitMsg: Message = forwardedMsg
                 ? { ...forwardedMsg, forward: true }
                 : {
@@ -2137,7 +2138,9 @@ export class Client {
                       sender: mail.sender,
                       timestamp: new Date().toISOString(),
                   };
-            this.emitter.emit("message", emitMsg);
+            if (shouldEmitHandshakeMessage) {
+                this.emitter.emit("message", emitMsg);
+            }
 
             // send mail and wait for response
             await new Promise((res, rej) => {
@@ -3227,7 +3230,11 @@ export class Client {
                                       timestamp: timestamp,
                                   };
 
-                            this.emitter.emit("message", message);
+                            const shouldEmitIncomingInitial =
+                                mail.forward || plaintext.length > 0;
+                            if (shouldEmitIncomingInitial) {
+                                this.emitter.emit("message", message);
+                            }
                             if (libvexDebugDmEnabled()) {
                                 try {
                                     debugLibvexDm(
@@ -3340,7 +3347,11 @@ export class Client {
                             return;
                         }
 
-                        if (
+                        const firstInboundChain =
+                            !session.DHr && session.CKr !== null;
+                        if (firstInboundChain) {
+                            session.DHr = ratchetHeader.dhPub;
+                        } else if (
                             hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
                         ) {
                             await ratchetStepReceive(
