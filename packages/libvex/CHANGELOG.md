@@ -1,5 +1,14 @@
 # @vex-chat/libvex
 
+## 6.0.2
+
+### Patch Changes
+
+- [#13](https://github.com/vex-protocol/vex-protocol/pull/13) [`ffebe34`](https://github.com/vex-protocol/vex-protocol/commit/ffebe34baaa9d2c31f583b8841bbd898593ac4ba) Thanks [@yuki111888](https://github.com/yuki111888)! - Harden the Double Ratchet skipped-key handling by enforcing bounded skip windows and capped skipped-key storage.
+  Also sanitize persisted skipped-key parsing so malformed or non-hex entries are discarded during session hydration.
+
+- [#11](https://github.com/vex-protocol/vex-protocol/pull/11) [`0256683`](https://github.com/vex-protocol/vex-protocol/commit/02566831dbc29b6bd18a11a2e12e81d5dbfeded3) Thanks [@yuki111888](https://github.com/yuki111888)! - The Double Ratchet implementation now enforces a maximum skip window of 1,024 messages and caps stored skipped keys at 4,096 entries; attempts to advance the ratchet beyond these bounds throw an error instead of accumulating unbounded state. Skipped-key parsing is also stricter, rejecting entries with malformed hex or key-ID format.
+
 ## 6.0.1
 
 ### Patch Changes
