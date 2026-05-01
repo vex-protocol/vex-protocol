@@ -1,5 +1,11 @@
 # @vex-chat/crypto
 
+## 4.0.1
+
+### Patch Changes
+
+- [#16](https://github.com/vex-protocol/vex-protocol/pull/16) [`16e59a7`](https://github.com/vex-protocol/vex-protocol/commit/16e59a7e9bc45b09e68b67745bb96c11877d6868) Thanks [@yuki111888](https://github.com/yuki111888)! - Remove runtime `Buffer` usage in browser/React Native code paths so crypto helpers no longer rely on Node globals.
+
 ## 4.0.0
 
 ### Patch Changes
