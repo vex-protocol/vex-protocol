@@ -82,3 +82,34 @@ jobs:
                   # not declared at all. Auth is via the OIDC token from
                   # id-token: write.
                   NPM_CONFIG_PROVENANCE: "true"
+
+            - name: Trigger vex-ui dependency bump PR
+              if: steps.changesets.outputs.published == 'true'
+              env:
+                  REPO_TOKEN: ${{ secrets.VEX_UI_REPO_TOKEN }}
+                  PACKAGES_JSON: ${{ steps.changesets.outputs.publishedPackages }}
+              run: |
+                  set -euo pipefail
+
+                  if [ -z "${REPO_TOKEN}" ]; then
+                      echo "::error::Missing secret VEX_UI_REPO_TOKEN in vex-protocol repository settings."
+                      exit 1
+                  fi
+
+                  payload="$(jq -cn \
+                      --argjson packages "${PACKAGES_JSON}" \
+                      '{
+                        event_type: "vex-protocol-published",
+                        client_payload: {
+                          source_repo: "vex-protocol/vex-protocol",
+                          packages: $packages
+                        }
+                      }')"
+
+                  curl --fail-with-body --silent --show-error \
+                      --request POST \
+                      --url "https://api.github.com/repos/vex-protocol/vex-ui/dispatches" \
+                      --header "Authorization: Bearer ${REPO_TOKEN}" \
+                      --header "Accept: application/vnd.github+json" \
+                      --header "X-GitHub-Api-Version: 2022-11-28" \
+                      --data "${payload}"
