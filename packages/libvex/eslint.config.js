@@ -7,7 +7,9 @@ export default tseslint.config(
     {
         languageOptions: {
             parserOptions: {
-                projectService: true,
+                projectService: {
+                    allowDefaultProject: ["vitest.config.ts"],
+                },
                 tsconfigRootDir: import.meta.dirname,
             },
         },
@@ -57,6 +59,14 @@ export default tseslint.config(
             "@typescript-eslint/no-redundant-type-constituents": "off",
             "@typescript-eslint/no-unsafe-return": "off",
             "@typescript-eslint/restrict-plus-operands": "off",
+        },
+    },
+    {
+        files: ["vitest.config.ts"],
+        rules: {
+            // Vitest config imports local plugin via runtime ESM path; parser
+            // may surface it as `any` in config-only context.
+            "@typescript-eslint/no-unsafe-assignment": "off",
         },
     },
 );

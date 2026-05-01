@@ -10,14 +10,17 @@ import { describe, expect, it } from "vitest";
 
 import {
     decodeRatchetHeader,
+    deriveBootstrapSendChain,
     encodeRatchetHeader,
     hasRemoteDhChanged,
     initRatchetSession,
     ratchetStepReceive,
     ratchetStepSend,
+    sessionToSqlPatch,
     takeReceiveMessageKey,
     takeSendMessageKey,
 } from "../utils/ratchet.js";
+import { sqlSessionToCrypto } from "../utils/sqlSessionToCrypto.js";
 
 describe("double ratchet helpers", () => {
     it("derives matching message keys for first exchange and reply", async () => {
@@ -52,7 +55,9 @@ describe("double ratchet helpers", () => {
             skippedKeys: {} as Record<string, string>,
         };
 
-        await ratchetStepSend(aliceState);
+        if (!aliceState.CKs) {
+            await ratchetStepSend(aliceState);
+        }
         const a1 = takeSendMessageKey(aliceState);
         const h1 = decodeRatchetHeader(
             encodeRatchetHeader({
@@ -64,11 +69,17 @@ describe("double ratchet helpers", () => {
         );
 
         expect(hasRemoteDhChanged(bobState.DHr, h1.dhPub)).toBe(true);
-        await ratchetStepReceive(bobState, h1.dhPub, h1.pn);
+        if (!bobState.DHr && bobState.CKr) {
+            bobState.DHr = h1.dhPub;
+        } else {
+            await ratchetStepReceive(bobState, h1.dhPub, h1.pn);
+        }
         const b1 = takeReceiveMessageKey(bobState, h1.dhPub, h1.n);
         expect(XUtils.bytesEqual(a1.messageKey, b1)).toBe(true);
 
-        await ratchetStepSend(bobState);
+        if (!bobState.CKs) {
+            await ratchetStepSend(bobState);
+        }
         const bReply = takeSendMessageKey(bobState);
         const h2 = decodeRatchetHeader(
             encodeRatchetHeader({
@@ -78,7 +89,11 @@ describe("double ratchet helpers", () => {
                 version: 1,
             }),
         );
-        await ratchetStepReceive(aliceState, h2.dhPub, h2.pn);
+        if (!aliceState.DHr && aliceState.CKr) {
+            aliceState.DHr = h2.dhPub;
+        } else if (hasRemoteDhChanged(aliceState.DHr, h2.dhPub)) {
+            await ratchetStepReceive(aliceState, h2.dhPub, h2.pn);
+        }
         const aReply = takeReceiveMessageKey(aliceState, h2.dhPub, h2.n);
         expect(XUtils.bytesEqual(aReply, bReply.messageKey)).toBe(true);
     });
@@ -115,7 +130,9 @@ describe("double ratchet helpers", () => {
             skippedKeys: {} as Record<string, string>,
         };
 
-        await ratchetStepSend(s);
+        if (!s.CKs) {
+            await ratchetStepSend(s);
+        }
         const m0 = takeSendMessageKey(s);
         const m1 = takeSendMessageKey(s);
         const h0 = {
@@ -131,11 +148,334 @@ describe("double ratchet helpers", () => {
             version: 1 as const,
         };
 
-        await ratchetStepReceive(r, h1.dhPub, h1.pn);
+        if (!r.DHr && r.CKr) {
+            r.DHr = h1.dhPub;
+        } else {
+            await ratchetStepReceive(r, h1.dhPub, h1.pn);
+        }
         const r1 = takeReceiveMessageKey(r, h1.dhPub, h1.n);
         expect(XUtils.bytesEqual(r1, m1.messageKey)).toBe(true);
 
         const r0 = takeReceiveMessageKey(r, h0.dhPub, h0.n);
         expect(XUtils.bytesEqual(r0, m0.messageKey)).toBe(true);
     });
+
+    it("advances sending chain for every message within same DH epoch", async () => {
+        const sk = XUtils.decodeHex(
+            "5555555555555555555555555555555555555555555555555555555555555555",
+        );
+        const initiator = await initRatchetSession(sk, "initiator");
+        const sender = {
+            CKr: initiator.CKr ? XUtils.decodeHex(initiator.CKr) : null,
+            CKs: initiator.CKs ? XUtils.decodeHex(initiator.CKs) : null,
+            DHr: initiator.DHr ? XUtils.decodeHex(initiator.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(initiator.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(initiator.DHsPublic),
+            Nr: initiator.Nr,
+            Ns: initiator.Ns,
+            PN: initiator.PN,
+            RK: XUtils.decodeHex(initiator.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        if (!sender.CKs) {
+            await ratchetStepSend(sender);
+        }
+        const dhPubBefore = XUtils.encodeHex(sender.DHsPublic);
+
+        const m0 = takeSendMessageKey(sender);
+        const m1 = takeSendMessageKey(sender);
+        const m2 = takeSendMessageKey(sender);
+
+        expect(m0.n).toBe(0);
+        expect(m1.n).toBe(1);
+        expect(m2.n).toBe(2);
+        expect(sender.Ns).toBe(3);
+        expect(XUtils.bytesEqual(m0.messageKey, m1.messageKey)).toBe(false);
+        expect(XUtils.bytesEqual(m1.messageKey, m2.messageKey)).toBe(false);
+        expect(XUtils.encodeHex(sender.DHsPublic)).toBe(dhPubBefore);
+    });
+
+    it("decrypts first subsequent reply after initial mail via bootstrap chain", async () => {
+        const sk = XUtils.decodeHex(
+            "6666666666666666666666666666666666666666666666666666666666666666",
+        );
+        const initiator = await initRatchetSession(sk, "initiator");
+        const receiver = await initRatchetSession(sk, "receiver");
+
+        const alice = {
+            CKr: initiator.CKr ? XUtils.decodeHex(initiator.CKr) : null,
+            CKs: initiator.CKs ? XUtils.decodeHex(initiator.CKs) : null,
+            DHr: initiator.DHr ? XUtils.decodeHex(initiator.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(initiator.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(initiator.DHsPublic),
+            Nr: initiator.Nr,
+            Ns: initiator.Ns,
+            PN: initiator.PN,
+            RK: XUtils.decodeHex(initiator.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+        const bob = {
+            CKr: receiver.CKr ? XUtils.decodeHex(receiver.CKr) : null,
+            CKs: receiver.CKs ? XUtils.decodeHex(receiver.CKs) : null,
+            DHr: receiver.DHr ? XUtils.decodeHex(receiver.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(receiver.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(receiver.DHsPublic),
+            Nr: receiver.Nr,
+            Ns: receiver.Ns,
+            PN: receiver.PN,
+            RK: XUtils.decodeHex(receiver.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        if (!bob.CKs) {
+            await ratchetStepSend(bob);
+        }
+        const outbound = takeSendMessageKey(bob);
+        const header = decodeRatchetHeader(
+            encodeRatchetHeader({
+                dhPub: bob.DHsPublic,
+                n: outbound.n,
+                pn: bob.PN,
+                version: 1,
+            }),
+        );
+
+        if (!alice.DHr) {
+            alice.DHr = header.dhPub;
+            if (!alice.CKr) {
+                alice.CKr = deriveBootstrapSendChain(alice.RK);
+            }
+        }
+        const inbound = takeReceiveMessageKey(alice, header.dhPub, header.n);
+        expect(XUtils.bytesEqual(inbound, outbound.messageKey)).toBe(true);
+    });
+
+    it("keeps sessions robust over long back-and-forth with persistence", async () => {
+        const sk = XUtils.decodeHex(
+            "3333333333333333333333333333333333333333333333333333333333333333",
+        );
+        const initiator = await initRatchetSession(sk, "initiator");
+        const receiver = await initRatchetSession(sk, "receiver");
+
+        let alice = {
+            CKr: initiator.CKr ? XUtils.decodeHex(initiator.CKr) : null,
+            CKs: initiator.CKs ? XUtils.decodeHex(initiator.CKs) : null,
+            DHr: initiator.DHr ? XUtils.decodeHex(initiator.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(initiator.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(initiator.DHsPublic),
+            Nr: initiator.Nr,
+            Ns: initiator.Ns,
+            PN: initiator.PN,
+            RK: XUtils.decodeHex(initiator.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+        let bob = {
+            CKr: receiver.CKr ? XUtils.decodeHex(receiver.CKr) : null,
+            CKs: receiver.CKs ? XUtils.decodeHex(receiver.CKs) : null,
+            DHr: receiver.DHr ? XUtils.decodeHex(receiver.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(receiver.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(receiver.DHsPublic),
+            Nr: receiver.Nr,
+            Ns: receiver.Ns,
+            PN: receiver.PN,
+            RK: XUtils.decodeHex(receiver.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        const rounds = 120;
+        for (let i = 0; i < rounds; i += 1) {
+            if (!alice.CKs) {
+                await ratchetStepSend(alice);
+            }
+            const aOut = takeSendMessageKey(alice);
+            const aHdr = decodeRatchetHeader(
+                encodeRatchetHeader({
+                    dhPub: alice.DHsPublic,
+                    n: aOut.n,
+                    pn: alice.PN,
+                    version: 1,
+                }),
+            );
+            if (!bob.DHr && bob.CKr) {
+                bob.DHr = aHdr.dhPub;
+            } else if (hasRemoteDhChanged(bob.DHr, aHdr.dhPub)) {
+                await ratchetStepReceive(bob, aHdr.dhPub, aHdr.pn);
+            }
+            const bIn = takeReceiveMessageKey(bob, aHdr.dhPub, aHdr.n);
+            expect(XUtils.bytesEqual(aOut.messageKey, bIn)).toBe(true);
+
+            if (!bob.CKs) {
+                await ratchetStepSend(bob);
+            }
+            const bOut = takeSendMessageKey(bob);
+            const bHdr = decodeRatchetHeader(
+                encodeRatchetHeader({
+                    dhPub: bob.DHsPublic,
+                    n: bOut.n,
+                    pn: bob.PN,
+                    version: 1,
+                }),
+            );
+            if (!alice.DHr && alice.CKr) {
+                alice.DHr = bHdr.dhPub;
+            } else if (hasRemoteDhChanged(alice.DHr, bHdr.dhPub)) {
+                await ratchetStepReceive(alice, bHdr.dhPub, bHdr.pn);
+            }
+            const aIn = takeReceiveMessageKey(alice, bHdr.dhPub, bHdr.n);
+            expect(XUtils.bytesEqual(aIn, bOut.messageKey)).toBe(true);
+
+            // Simulate periodic app restarts by serializing and reloading session state.
+            if (i > 0 && i % 10 === 0) {
+                alice = hydrateState(alice, "alice-session");
+                bob = hydrateState(bob, "bob-session");
+            }
+        }
+
+        expect(alice.Nr + alice.Ns).toBeGreaterThan(0);
+        expect(bob.Nr + bob.Ns).toBeGreaterThan(0);
+        expect(alice.CKr ?? alice.CKs).not.toBeNull();
+        expect(bob.CKr ?? bob.CKs).not.toBeNull();
+    });
+
+    it("nightly: survives 1000-message randomized streaks with persistence", async () => {
+        if (process.env["LIBVEX_NIGHTLY_STRESS"] !== "1") {
+            return;
+        }
+        const sk = XUtils.decodeHex(
+            "4444444444444444444444444444444444444444444444444444444444444444",
+        );
+        const initiator = await initRatchetSession(sk, "initiator");
+        const receiver = await initRatchetSession(sk, "receiver");
+
+        let alice = {
+            CKr: initiator.CKr ? XUtils.decodeHex(initiator.CKr) : null,
+            CKs: initiator.CKs ? XUtils.decodeHex(initiator.CKs) : null,
+            DHr: initiator.DHr ? XUtils.decodeHex(initiator.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(initiator.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(initiator.DHsPublic),
+            Nr: initiator.Nr,
+            Ns: initiator.Ns,
+            PN: initiator.PN,
+            RK: XUtils.decodeHex(initiator.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+        let bob = {
+            CKr: receiver.CKr ? XUtils.decodeHex(receiver.CKr) : null,
+            CKs: receiver.CKs ? XUtils.decodeHex(receiver.CKs) : null,
+            DHr: receiver.DHr ? XUtils.decodeHex(receiver.DHr) : null,
+            DHsPrivate: XUtils.decodeHex(receiver.DHsPrivate),
+            DHsPublic: XUtils.decodeHex(receiver.DHsPublic),
+            Nr: receiver.Nr,
+            Ns: receiver.Ns,
+            PN: receiver.PN,
+            RK: XUtils.decodeHex(receiver.RK),
+            skippedKeys: {} as Record<string, string>,
+        };
+
+        const rng = mulberry32(0xdecafbad);
+        const totalMessages = 1000;
+        for (let i = 0; i < totalMessages; i += 1) {
+            const aliceSends = rng() < 0.5;
+            const sender = aliceSends ? alice : bob;
+            const receiverState = aliceSends ? bob : alice;
+
+            if (!sender.CKs) {
+                await ratchetStepSend(sender);
+            }
+            const outbound = takeSendMessageKey(sender);
+            const header = decodeRatchetHeader(
+                encodeRatchetHeader({
+                    dhPub: sender.DHsPublic,
+                    n: outbound.n,
+                    pn: sender.PN,
+                    version: 1,
+                }),
+            );
+
+            if (!receiverState.DHr && receiverState.CKr) {
+                receiverState.DHr = header.dhPub;
+            } else if (hasRemoteDhChanged(receiverState.DHr, header.dhPub)) {
+                await ratchetStepReceive(
+                    receiverState,
+                    header.dhPub,
+                    header.pn,
+                );
+            }
+            const inbound = takeReceiveMessageKey(
+                receiverState,
+                header.dhPub,
+                header.n,
+            );
+            expect(XUtils.bytesEqual(outbound.messageKey, inbound)).toBe(true);
+
+            if (i > 0 && i % 25 === 0) {
+                alice = hydrateState(alice, "alice-nightly");
+                bob = hydrateState(bob, "bob-nightly");
+            }
+        }
+
+        expect(alice.Nr + alice.Ns + bob.Nr + bob.Ns).toBeGreaterThan(500);
+    });
 });
+
+function hydrateState(
+    state: {
+        CKr: null | Uint8Array;
+        CKs: null | Uint8Array;
+        DHr: null | Uint8Array;
+        DHsPrivate: Uint8Array;
+        DHsPublic: Uint8Array;
+        Nr: number;
+        Ns: number;
+        PN: number;
+        RK: Uint8Array;
+        skippedKeys: Record<string, string>;
+    },
+    sessionID: string,
+) {
+    const sql = sessionToSqlPatch(state);
+    const roundTripped = sqlSessionToCrypto({
+        CKr: sql.CKr,
+        CKs: sql.CKs,
+        deviceID: "device",
+        DHr: sql.DHr,
+        DHsPrivate: sql.DHsPrivate,
+        DHsPublic: sql.DHsPublic,
+        fingerprint: "00",
+        lastUsed: new Date().toISOString(),
+        mode: "initiator",
+        Nr: sql.Nr,
+        Ns: sql.Ns,
+        PN: sql.PN,
+        publicKey: "00",
+        RK: sql.RK,
+        sessionID,
+        SK: "00",
+        skippedKeys: sql.skippedKeys,
+        userID: "user",
+        verified: false,
+    });
+    return {
+        CKr: roundTripped.CKr,
+        CKs: roundTripped.CKs,
+        DHr: roundTripped.DHr,
+        DHsPrivate: roundTripped.DHsPrivate,
+        DHsPublic: roundTripped.DHsPublic,
+        Nr: roundTripped.Nr,
+        Ns: roundTripped.Ns,
+        PN: roundTripped.PN,
+        RK: roundTripped.RK,
+        skippedKeys: roundTripped.skippedKeys,
+    };
+}
+
+function mulberry32(seed: number): () => number {
+    let t = seed >>> 0;
+    return () => {
+        t = (t + 0x6d2b79f5) | 0;
+        let x = Math.imul(t ^ (t >>> 15), 1 | t);
+        x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+        return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+}

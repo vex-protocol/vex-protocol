@@ -87,6 +87,7 @@ import {
 } from "./utils/fipsMailExtra.js";
 import {
     decodeRatchetHeader,
+    deriveBootstrapSendChain,
     encodeRatchetHeader,
     hasRemoteDhChanged,
     initRatchetSession,
@@ -2121,6 +2122,7 @@ export class Client {
             const forwardedMsg = forward
                 ? messageSchema.parse(msgpack.decode(message))
                 : null;
+            const shouldEmitHandshakeMessage = forward || message.length > 0;
             const emitMsg: Message = forwardedMsg
                 ? { ...forwardedMsg, forward: true }
                 : {
@@ -2137,7 +2139,9 @@ export class Client {
                       sender: mail.sender,
                       timestamp: new Date().toISOString(),
                   };
-            this.emitter.emit("message", emitMsg);
+            if (shouldEmitHandshakeMessage) {
+                this.emitter.emit("message", emitMsg);
+            }
 
             // send mail and wait for response
             await new Promise((res, rej) => {
@@ -3227,7 +3231,11 @@ export class Client {
                                       timestamp: timestamp,
                                   };
 
-                            this.emitter.emit("message", message);
+                            const shouldEmitIncomingInitial =
+                                mail.forward || plaintext.length > 0;
+                            if (shouldEmitIncomingInitial) {
+                                this.emitter.emit("message", message);
+                            }
                             if (libvexDebugDmEnabled()) {
                                 try {
                                     debugLibvexDm(
@@ -3340,7 +3348,19 @@ export class Client {
                             return;
                         }
 
-                        if (
+                        const firstInboundFromSubsequent = !session.DHr;
+                        if (firstInboundFromSubsequent) {
+                            session.DHr = ratchetHeader.dhPub;
+                            // First inbound after X3DH initial mail has no prior DH ratchet.
+                            // If this side has no receiving chain yet (initiator path),
+                            // derive the bootstrap receive chain to match peer's first
+                            // bootstrap send chain.
+                            if (!session.CKr) {
+                                session.CKr = deriveBootstrapSendChain(
+                                    session.RK,
+                                );
+                            }
+                        } else if (
                             hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
                         ) {
                             await ratchetStepReceive(

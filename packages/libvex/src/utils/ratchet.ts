@@ -39,6 +39,10 @@ export function decodeRatchetHeader(extra: Uint8Array): RatchetHeader {
     return { dhPub, n, pn, version: 1 };
 }
 
+export function deriveBootstrapSendChain(rootKey: Uint8Array): Uint8Array {
+    return xHMAC({ label: "bootstrap-send-chain", version: VERSION }, rootKey);
+}
+
 export function deriveInitialRootKey(sk: Uint8Array): Uint8Array {
     return xKDF(xConcat(sk, encoder.encode("dr-root-v1")));
 }
@@ -84,13 +88,10 @@ export async function initRatchetSession(
 }> {
     const RK = deriveInitialRootKey(sk);
     const DHs = await xBoxKeyPairAsync();
-    const CKs =
-        mode === "initiator"
-            ? xHMAC({ label: "init-send-chain", version: VERSION }, RK)
-            : null;
+    const initialChain = xHMAC({ label: "init-chain", version: VERSION }, RK);
     return {
-        CKr: null,
-        CKs: CKs ? XUtils.encodeHex(CKs) : null,
+        CKr: mode === "receiver" ? XUtils.encodeHex(initialChain) : null,
+        CKs: mode === "initiator" ? XUtils.encodeHex(initialChain) : null,
         DHr: null,
         DHsPrivate: XUtils.encodeHex(DHs.secretKey),
         DHsPublic: XUtils.encodeHex(DHs.publicKey),
@@ -154,10 +155,7 @@ export async function ratchetStepSend(state: {
 }): Promise<void> {
     if (!state.DHr) {
         if (!state.CKs) {
-            state.CKs = xHMAC(
-                { label: "bootstrap-send-chain", version: VERSION },
-                state.RK,
-            );
+            state.CKs = deriveBootstrapSendChain(state.RK);
         }
         return;
     }
