@@ -1,5 +1,13 @@
 # @vex-chat/libvex
 
+## 6.1.2
+
+### Patch Changes
+
+- [`a43fbc9`](https://github.com/vex-protocol/vex-protocol/commit/a43fbc92248bb3c9ca94f1ca2cc526c5d9fd2513) Thanks [@yuki111888](https://github.com/yuki111888)! - Fix register/login compatibility across legacy and key-cluster Spire responses, including storing auth token/device from modern `/register` and falling back to legacy register+login when needed.
+
+- [`f9ac7ca`](https://github.com/vex-protocol/vex-protocol/commit/f9ac7ca29aea760c319ab278ab29f997399eaf5b) Thanks [@yuki111888](https://github.com/yuki111888)! - Treat duplicate-username `/register` attempts as pending device-approval requests so second devices can be confirmed from an existing session, and add SDK decoding support for the pending approval register response.
+
 ## 6.1.1
 
 ### Patch Changes
