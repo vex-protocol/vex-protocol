@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.3.2
+
+### Patch Changes
+
+- [`f9ac7ca`](https://github.com/vex-protocol/vex-protocol/commit/f9ac7ca29aea760c319ab278ab29f997399eaf5b) Thanks [@yuki111888](https://github.com/yuki111888)! - Treat duplicate-username `/register` attempts as pending device-approval requests so second devices can be confirmed from an existing session, and add SDK decoding support for the pending approval register response.
+
 ## 1.3.1
 
 ### Patch Changes
