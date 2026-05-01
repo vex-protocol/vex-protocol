@@ -41,6 +41,7 @@ import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
 import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
+import { createPendingDeviceEnrollmentRequest } from "./server/user.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { resolveSpireListenPort } from "./spireListenPort.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
@@ -875,9 +876,34 @@ export class Spire extends EventEmitter {
                             errCode === "SQLITE_CONSTRAINT_UNIQUE" ||
                             errText.includes("UNIQUE constraint failed");
                         if (isUniqueConstraint && usernameConflict) {
-                            res.status(400).send({
-                                error: "Username is already registered.",
-                            });
+                            const existingUser = await this.db.retrieveUser(
+                                normalizedPayload.username,
+                            );
+                            if (!existingUser) {
+                                res.status(400).send({
+                                    error: "Username is already registered.",
+                                });
+                                return;
+                            }
+                            const existingBySignKey =
+                                await this.db.retrieveDevice(
+                                    normalizedPayload.signKey,
+                                );
+                            if (existingBySignKey) {
+                                res.status(400).send({
+                                    error: "Public key is already registered.",
+                                });
+                                return;
+                            }
+                            const pendingResponse =
+                                createPendingDeviceEnrollmentRequest(
+                                    existingUser.userID,
+                                    normalizedPayload,
+                                    this.notify.bind(this),
+                                );
+                            res.status(202).send(
+                                msgpack.encode(pendingResponse),
+                            );
                             return;
                         }
                         if (isUniqueConstraint && signKeyConflict) {

@@ -46,6 +46,48 @@ const approvePayloadSchema = z.object({
 
 const deviceEnrollments = new Map<string, DeviceEnrollmentRequest>();
 
+export function createPendingDeviceEnrollmentRequest(
+    userID: string,
+    devicePayload: DevicePayload,
+    notify: (
+        userID: string,
+        event: string,
+        transmissionID: string,
+        data?: unknown,
+        deviceID?: string,
+    ) => void,
+): {
+    challenge: string;
+    expiresAt: string;
+    requestID: string;
+    status: "pending_approval";
+} {
+    pruneDeviceEnrollmentRequests();
+    const requestID = crypto.randomUUID();
+    const challengeHex = XUtils.encodeHex(xRandomBytes(32));
+    const pending: DeviceEnrollmentRequest = {
+        challengeHex,
+        createdAt: Date.now(),
+        devicePayload,
+        requestID,
+        status: "pending",
+        userID,
+    };
+    deviceEnrollments.set(requestID, pending);
+    notify(userID, "deviceRequest", crypto.randomUUID(), {
+        requestID,
+        status: "pending",
+    });
+    return {
+        challenge: challengeHex,
+        expiresAt: new Date(
+            pending.createdAt + DEVICE_REQUEST_TTL_MS,
+        ).toISOString(),
+        requestID,
+        status: "pending_approval",
+    };
+}
+
 function pruneDeviceEnrollmentRequests(nowMs = Date.now()): void {
     for (const [requestID, req] of deviceEnrollments.entries()) {
         if (
@@ -225,32 +267,12 @@ export const getUserRouter = (
                 }
             }
 
-            const requestID = crypto.randomUUID();
-            const challengeHex = XUtils.encodeHex(xRandomBytes(32));
-            const pending: DeviceEnrollmentRequest = {
-                challengeHex,
-                createdAt: Date.now(),
-                devicePayload: deviceData,
-                requestID,
-                status: "pending",
-                userID: userDetails.userID,
-            };
-            deviceEnrollments.set(requestID, pending);
-            notify(userDetails.userID, "deviceRequest", crypto.randomUUID(), {
-                requestID,
-                status: "pending",
-            });
-
-            res.status(202).send(
-                msgpack.encode({
-                    challenge: challengeHex,
-                    expiresAt: new Date(
-                        pending.createdAt + DEVICE_REQUEST_TTL_MS,
-                    ).toISOString(),
-                    requestID,
-                    status: "pending_approval",
-                }),
+            const pendingResponse = createPendingDeviceEnrollmentRequest(
+                userDetails.userID,
+                deviceData,
+                notify,
             );
+            res.status(202).send(msgpack.encode(pendingResponse));
         } else {
             res.sendStatus(401);
         }

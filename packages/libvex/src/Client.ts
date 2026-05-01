@@ -223,6 +223,7 @@ import {
     PendingDeviceRequestCodec,
     PermissionArrayCodec,
     PermissionCodec,
+    RegisterPendingApprovalCodec,
     RegisterResponseCodec,
     ServerArrayCodec,
     ServerCodec,
@@ -1753,6 +1754,7 @@ export class Client {
                 // New key-cluster server response: { device, token, user }.
                 // Legacy response (still deployed in some environments): user only.
                 let didDecodeRegisterResponse = false;
+                let pendingRequestID: null | string = null;
                 try {
                     const { device, token, user } = decodeAxios(
                         RegisterResponseCodec,
@@ -1768,6 +1770,27 @@ export class Client {
                 }
 
                 if (!didDecodeRegisterResponse) {
+                    try {
+                        const pending = decodeAxios(
+                            RegisterPendingApprovalCodec,
+                            res.data,
+                        );
+                        pendingRequestID = pending.requestID;
+                    } catch {
+                        // fall through to legacy decode path
+                    }
+                }
+
+                if (!didDecodeRegisterResponse) {
+                    if (pendingRequestID !== null) {
+                        return [
+                            null,
+                            new Error(
+                                "Device registration requires approval from an existing device. requestID=" +
+                                    pendingRequestID,
+                            ),
+                        ];
+                    }
                     const legacyUser = decodeAxios(UserCodec, res.data);
                     this.setUser(legacyUser);
 

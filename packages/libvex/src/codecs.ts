@@ -74,6 +74,15 @@ export const RegisterResponseCodec = createCodec(
     }),
 );
 
+export const RegisterPendingApprovalCodec = createCodec(
+    z.object({
+        challenge: z.string(),
+        expiresAt: z.string(),
+        requestID: z.string(),
+        status: z.literal("pending_approval"),
+    }),
+);
+
 export const DeviceChallengeCodec = createCodec(
     z.object({
         challenge: z.string(),
