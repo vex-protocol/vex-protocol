@@ -223,6 +223,7 @@ import {
     PendingDeviceRequestCodec,
     PermissionArrayCodec,
     PermissionCodec,
+    RegisterResponseCodec,
     ServerArrayCodec,
     ServerCodec,
     UserArrayCodec,
@@ -1695,12 +1696,12 @@ export class Client {
      * Registers a new account on the server.
      *
      * @param username - Optional username to register (must be unique when provided).
-     * @param password - Optional account password (device-key auth works without it).
+     * @param password - Deprecated and ignored. Kept for API compatibility.
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
      * ```ts
-     * const [user, err] = await client.register("MyUsername", "hunter2");
+     * const [user, err] = await client.register("MyUsername");
      * ```
      */
     public async register(
@@ -1712,14 +1713,11 @@ export class Client {
         }
         const regKey = await this.getToken("register");
         if (regKey) {
+            void password;
             const resolvedUsername =
                 username?.trim().length !== 0 && username !== undefined
                     ? username.trim()
                     : Client.randomUsername();
-            const resolvedPassword =
-                password?.trim().length !== 0 && password !== undefined
-                    ? password
-                    : crypto.randomUUID();
             const signKey = XUtils.encodeHex(this.signKeys.publicKey);
             const signed = XUtils.encodeHex(
                 await xSignAsync(
@@ -1730,7 +1728,6 @@ export class Client {
             const preKeyIndex = this.xKeyRing.preKeys.index;
             const regMsg: RegistrationPayload = {
                 deviceName: this.options?.deviceName ?? "unknown",
-                password: resolvedPassword,
                 preKey: XUtils.encodeHex(
                     this.xKeyRing.preKeys.keyPair.publicKey,
                 ),
@@ -1748,7 +1745,14 @@ export class Client {
                     msgpack.encode(regMsg),
                     { headers: { "Content-Type": "application/msgpack" } },
                 );
-                this.setUser(decodeAxios(UserCodec, res.data));
+                const { device, token, user } = decodeAxios(
+                    RegisterResponseCodec,
+                    res.data,
+                );
+                this.device = device;
+                this.setUser(user);
+                this.token = token;
+                this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
                 return [this.getUser(), null];
             } catch (err: unknown) {
                 if (isAxiosError(err) && err.response) {
