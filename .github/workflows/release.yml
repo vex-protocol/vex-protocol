@@ -13,6 +13,8 @@ jobs:
     release:
         name: Release
         runs-on: ubuntu-latest
+        env:
+            VEX_UI_REPO_TOKEN: ${{ secrets.VEX_UI_REPO_TOKEN }}
         permissions:
             contents: write
             pull-requests: write
@@ -86,9 +88,9 @@ jobs:
             - name: Trigger vex-ui dependency bump PR
               if: |
                   steps.changesets.outputs.published == 'true' &&
-                  secrets.VEX_UI_REPO_TOKEN != ''
+                  env.VEX_UI_REPO_TOKEN != ''
               env:
-                  REPO_TOKEN: ${{ secrets.VEX_UI_REPO_TOKEN }}
+                  REPO_TOKEN: ${{ env.VEX_UI_REPO_TOKEN }}
                   PACKAGES_JSON: ${{ steps.changesets.outputs.publishedPackages }}
               run: |
                   set -euo pipefail
@@ -114,6 +116,6 @@ jobs:
             - name: Skip vex-ui dependency bump trigger (no token)
               if: |
                   steps.changesets.outputs.published == 'true' &&
-                  secrets.VEX_UI_REPO_TOKEN == ''
+                  env.VEX_UI_REPO_TOKEN == ''
               run: |
                   echo "::warning::Skipping vex-ui dependency bump trigger: secret VEX_UI_REPO_TOKEN is not configured."
