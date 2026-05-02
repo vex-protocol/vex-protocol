@@ -44,6 +44,10 @@ const approvePayloadSchema = z.object({
     signed: z.string().min(1),
 });
 
+const pollPendingApprovalSchema = z.object({
+    signed: z.string().min(1),
+});
+
 const deviceEnrollments = new Map<string, DeviceEnrollmentRequest>();
 
 export function createPendingDeviceEnrollmentRequest(
@@ -158,6 +162,49 @@ export const getUserRouter = (
     ) => void,
 ) => {
     const router = express.Router();
+
+    // Unauthenticated status poll for the *requesting* device on a pending
+    // device-enrollment request. The new device cannot use the protected
+    // `/:id/devices/requests/:requestID` endpoint because it has no token
+    // until an existing device approves it. To prove possession of the
+    // private signing key for the request, the device signs the random
+    // challenge issued in the 202 register response with its secret key,
+    // and we open it with the pending request's stored public signKey.
+    //
+    // This is registered before any `/:id/...` route so Express matches the
+    // literal `/devices/requests/:requestID/poll` segment before the
+    // `:id` placeholder.
+    router.post("/devices/requests/:requestID/poll", async (req, res) => {
+        pruneDeviceEnrollmentRequests();
+        const parsed = pollPendingApprovalSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid poll payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const requestID = getParam(req, "requestID");
+        const pending = deviceEnrollments.get(requestID);
+        if (!pending) {
+            res.sendStatus(404);
+            return;
+        }
+        const opened = await spireXSignOpenAsync(
+            XUtils.decodeHex(parsed.data.signed),
+            XUtils.decodeHex(pending.devicePayload.signKey),
+        );
+        if (!opened) {
+            res.status(401).send({ error: "Poll signature invalid." });
+            return;
+        }
+        const expected = XUtils.decodeHex(pending.challengeHex);
+        if (!XUtils.bytesEqual(opened, expected)) {
+            res.status(401).send({ error: "Poll challenge mismatch." });
+            return;
+        }
+        res.send(msgpack.encode(requestSummary(pending)));
+    });
 
     router.get("/:id", protect, async (req, res) => {
         const user = await db.retrieveUser(getParam(req, "id"));

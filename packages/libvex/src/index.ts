@@ -4,7 +4,7 @@
  * Commercial licenses available at vex.wtf
  */
 
-export { Client } from "./Client.js";
+export { Client, DeviceApprovalRequiredError } from "./Client.js";
 export type {
     Channel,
     Channels,

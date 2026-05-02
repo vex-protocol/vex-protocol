@@ -98,6 +98,36 @@ import {
     takeSendMessageKey,
 } from "./utils/ratchet.js";
 
+/**
+ * Thrown by {@link Client.register} when the server determined the supplied
+ * username already exists on the server and the registering device must be
+ * approved by an existing signed-in device for that account.
+ *
+ * Carries the `requestID` and the random `challenge` issued by the server,
+ * which together let the new (unauthenticated) device poll
+ * {@link Devices.pollPendingRegistration} for approval status without ever
+ * needing a user token.
+ */
+export class DeviceApprovalRequiredError extends Error {
+    public readonly challenge: string;
+    public readonly expiresAt: string;
+    public readonly requestID: string;
+    constructor(args: {
+        challenge: string;
+        expiresAt: string;
+        requestID: string;
+    }) {
+        super(
+            "Device registration requires approval from an existing device. requestID=" +
+                args.requestID,
+        );
+        this.name = "DeviceApprovalRequiredError";
+        this.challenge = args.challenge;
+        this.expiresAt = args.expiresAt;
+        this.requestID = args.requestID;
+    }
+}
+
 function debugLibvexDm(
     msg: string,
     data?: Record<string, boolean | null | number | string | undefined>,
@@ -322,6 +352,23 @@ export interface Devices {
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
     /** Lists pending/processed registration requests for the current user. */
     listRequests: () => Promise<PendingDeviceRequest[]>;
+    /**
+     * Polls the public, unauthenticated status endpoint for a pending
+     * registration request *as the requesting device*. Proves possession of
+     * the request's private signing key by signing the challenge issued by
+     * the server in the original 202 response.
+     *
+     * @param args.requestID - The requestID returned by `/register` (or thrown
+     *   inside {@link DeviceApprovalRequiredError}).
+     * @param args.challenge - The hex challenge issued in the same 202
+     *   response (or {@link DeviceApprovalRequiredError.challenge}).
+     * @returns The current {@link PendingDeviceRequest} or `null` if the
+     *   server no longer has a record of it.
+     */
+    pollPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<null | PendingDeviceRequest>;
     /** Registers the current key material as a new device. */
     register: () => Promise<DeviceRegistrationResult | null>;
     /** Rejects a pending device registration request as the current device. */
@@ -835,6 +882,7 @@ export class Client {
         delete: this.deleteDevice.bind(this),
         getRequest: this.getDeviceRegistrationRequest.bind(this),
         listRequests: this.listDeviceRegistrationRequests.bind(this),
+        pollPendingRegistration: this.pollPendingDeviceRegistration.bind(this),
         register: this.registerDevice.bind(this),
         rejectRequest: this.rejectDeviceRequest.bind(this),
         retrieve: this.getDeviceByID.bind(this),
@@ -1754,7 +1802,7 @@ export class Client {
                 // New key-cluster server response: { device, token, user }.
                 // Legacy response (still deployed in some environments): user only.
                 let didDecodeRegisterResponse = false;
-                let pendingRequestID: null | string = null;
+                let pendingApproval: null | PendingDeviceRegistration = null;
                 try {
                     const { device, token, user } = decodeAxios(
                         RegisterResponseCodec,
@@ -1771,24 +1819,24 @@ export class Client {
 
                 if (!didDecodeRegisterResponse) {
                     try {
-                        const pending = decodeAxios(
+                        pendingApproval = decodeAxios(
                             RegisterPendingApprovalCodec,
                             res.data,
                         );
-                        pendingRequestID = pending.requestID;
                     } catch {
                         // fall through to legacy decode path
                     }
                 }
 
                 if (!didDecodeRegisterResponse) {
-                    if (pendingRequestID !== null) {
+                    if (pendingApproval !== null) {
                         return [
                             null,
-                            new Error(
-                                "Device registration requires approval from an existing device. requestID=" +
-                                    pendingRequestID,
-                            ),
+                            new DeviceApprovalRequiredError({
+                                challenge: pendingApproval.challenge,
+                                expiresAt: pendingApproval.expiresAt,
+                                requestID: pendingApproval.requestID,
+                            }),
                         ];
                     }
                     const legacyUser = decodeAxios(UserCodec, res.data);
@@ -2960,6 +3008,40 @@ export class Client {
         }
         this.setAlive(false);
         void this.send({ transmissionID: uuid.v4(), type: "ping" });
+    }
+
+    /**
+     * Polls the public unauthenticated request status endpoint as the
+     * requesting device. Signs the server-issued challenge with the local
+     * private signing key so the server can verify ownership of the pending
+     * request without us needing a user token.
+     */
+    private async pollPendingDeviceRegistration(args: {
+        challenge: string;
+        requestID: string;
+    }): Promise<null | PendingDeviceRequest> {
+        const signed = XUtils.encodeHex(
+            await xSignAsync(
+                XUtils.decodeHex(args.challenge),
+                this.signKeys.secretKey,
+            ),
+        );
+        try {
+            const response = await this.http.post(
+                this.getHost() +
+                    "/user/devices/requests/" +
+                    args.requestID +
+                    "/poll",
+                msgpack.encode({ signed }),
+                { headers: { "Content-Type": "application/msgpack" } },
+            );
+            return decodeAxios(PendingDeviceRequestCodec, response.data);
+        } catch (err: unknown) {
+            if (isAxiosError(err) && err.response?.status === 404) {
+                return null;
+            }
+            throw err;
+        }
     }
 
     private pong(transmissionID: string) {
