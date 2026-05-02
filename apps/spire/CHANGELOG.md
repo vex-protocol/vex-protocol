@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.3.3
+
+### Patch Changes
+
+- [#20](https://github.com/vex-protocol/vex-protocol/pull/20) [`c23fb75`](https://github.com/vex-protocol/vex-protocol/commit/c23fb750a85599970a72bc53efdd0662a5a0703b) Thanks [@yuki111888](https://github.com/yuki111888)! - Harden multi-device enrollment by binding approval signatures to both the pending request ID and requesting device signKey, and improve `/register` duplicate-constraint detection so existing-account enrollments return pending approval instead of an internal server error.
+
 ## 1.3.2
 
 ### Patch Changes
