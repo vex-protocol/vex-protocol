@@ -1,5 +1,17 @@
 # @vex-chat/libvex
 
+## 6.1.4
+
+### Patch Changes
+
+- [#22](https://github.com/vex-protocol/vex-protocol/pull/22) [`caee995`](https://github.com/vex-protocol/vex-protocol/commit/caee9955c024b80bd9a2ccf78b5db3b5d62f3339) Thanks [@yuki111888](https://github.com/yuki111888)! - Add an unauthenticated path for a pending device-enrollment requester to learn its own approval status.
+
+    A new device that registers against an existing username gets back a 202 with `{ requestID, challenge }` but cannot authenticate until an existing signed-in device approves it. Previously the only status endpoint required a user token, so the new device had no way to learn it had been approved.
+    - spire: new `POST /user/devices/requests/:requestID/poll` accepts `{ signed }` (the requesting device's signature over the original challenge), opens it with the pending request's stored `signKey`, and returns the request status (and `approvedDeviceID` once approved). No token required.
+    - libvex: `Client.register` now throws a typed `DeviceApprovalRequiredError` (carrying `requestID`, `challenge`, and `expiresAt`) when the server returns a pending-approval response, and `Client.devices.pollPendingRegistration({ requestID, challenge })` calls the new endpoint, signing the challenge with the local secret signing key.
+
+    The new device can then loop on `pollPendingRegistration` and, once status flips to `approved`, call the existing `loginWithDeviceKey(approvedDeviceID)` to complete login.
+
 ## 6.1.3
 
 ### Patch Changes
