@@ -67,7 +67,7 @@ export class Client {
     permissions: Permissions_2;
     static randomUsername(): string;
     reconnectWebsocket(): Promise<void>;
-    register(username: string, password: string): Promise<[null | User, Error | null]>;
+    register(username?: string, password?: string): Promise<[null | User, Error | null]>;
     // (undocumented)
     removeAllListeners(event?: keyof ClientEvents): this;
     // (undocumented)
@@ -97,6 +97,8 @@ export interface ClientEvents {
     message: (message: Message) => void;
     permission: (permission: Permission) => void;
     ready: () => void;
+    // Warning: (ae-forgotten-export) The symbol "RetryRequest" needs to be exported by the entry point index.d.ts
+    retryRequest: (retry: RetryRequest) => void;
     session: (session: Session, user: User) => void;
 }
 
@@ -122,6 +124,21 @@ export function createCodec<T extends z.ZodType>(schema: T): {
 
 export { Device }
 
+// @public
+export class DeviceApprovalRequiredError extends Error {
+    constructor(args: {
+        challenge: string;
+        expiresAt: string;
+        requestID: string;
+    });
+    // (undocumented)
+    readonly challenge: string;
+    // (undocumented)
+    readonly expiresAt: string;
+    // (undocumented)
+    readonly requestID: string;
+}
+
 // @public (undocumented)
 export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
 
@@ -131,6 +148,10 @@ export interface Devices {
     delete: (deviceID: string) => Promise<void>;
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
     listRequests: () => Promise<PendingDeviceRequest[]>;
+    pollPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<null | PendingDeviceRequest>;
     register: () => Promise<DeviceRegistrationResult | null>;
     rejectRequest: (requestID: string) => Promise<void>;
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
@@ -273,7 +294,7 @@ export interface PendingDeviceRequest {
     // (undocumented)
     status: PendingDeviceApprovalStatus;
     // (undocumented)
-    username: string;
+    username?: string | undefined;
 }
 
 export { Permission }
@@ -308,18 +329,40 @@ export type Session = SessionSQL;
 // @public
 export interface SessionCrypto {
     // (undocumented)
+    CKr: null | Uint8Array;
+    // (undocumented)
+    CKs: null | Uint8Array;
+    // (undocumented)
+    DHr: null | Uint8Array;
+    // (undocumented)
+    DHsPrivate: Uint8Array;
+    // (undocumented)
+    DHsPublic: Uint8Array;
+    // (undocumented)
     fingerprint: Uint8Array;
     // (undocumented)
     lastUsed: string;
     // (undocumented)
     mode: "initiator" | "receiver";
     // (undocumented)
+    Nr: number;
+    // (undocumented)
+    Ns: number;
+    // (undocumented)
+    PN: number;
+    // (undocumented)
     publicKey: Uint8Array;
+    // (undocumented)
+    RK: Uint8Array;
     // (undocumented)
     sessionID: string;
     SK: Uint8Array;
     // (undocumented)
+    skippedKeys: Record<string, string>;
+    // (undocumented)
     userID: string;
+    // (undocumented)
+    verified: boolean;
 }
 
 // @public (undocumented)
