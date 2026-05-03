@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.1.6
+
+### Patch Changes
+
+- [#27](https://github.com/vex-protocol/vex-protocol/pull/27) [`2e22e8e`](https://github.com/vex-protocol/vex-protocol/commit/2e22e8e03148a4d85e6f1aa1eaebff76dd33e0a0) Thanks [@yuki111888](https://github.com/yuki111888)! - Add an end-to-end harness test for `client.me.setAvatar(...)` that exercises the JSON/base64 upload path. Verifies the avatar upload keeps working in React Native/Hermes-style runtimes where `FormData` is unavailable, and guards against regressions on platforms that can't construct a `Blob` from an `ArrayBufferView`.
+
 ## 6.1.5
 
 ### Patch Changes
