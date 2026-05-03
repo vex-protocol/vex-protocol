@@ -4113,7 +4113,21 @@ export class Client {
     }
 
     private async uploadAvatar(avatar: Uint8Array): Promise<void> {
-        if (typeof FormData !== "undefined") {
+        const canUseMultipart =
+            typeof FormData !== "undefined" &&
+            (() => {
+                try {
+                    // React Native/Hermes can expose Blob/FormData but still
+                    // reject ArrayBufferView-backed blobs at runtime.
+                    // Probe support before choosing multipart upload.
+                    void new Blob([new Uint8Array([1, 2, 3])]);
+                    return true;
+                } catch {
+                    return false;
+                }
+            })();
+
+        if (canUseMultipart) {
             const fpayload = new FormData();
             fpayload.set("avatar", new Blob([new Uint8Array(avatar)]));
 
