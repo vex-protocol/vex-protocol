@@ -404,6 +404,30 @@ export function platformSuite(
             await client.me.setAvatar(testImage);
             expect(true).toBe(true);
         });
+
+        test("avatar upload via JSON fallback path", async () => {
+            const globalWithFormData = globalThis as typeof globalThis & {
+                FormData?: unknown;
+            };
+            const originalFormData = globalWithFormData.FormData;
+            Object.defineProperty(globalThis, "FormData", {
+                configurable: true,
+                enumerable: true,
+                value: undefined,
+                writable: true,
+            });
+            try {
+                await client.me.setAvatar(testImage);
+                expect(true).toBe(true);
+            } finally {
+                Object.defineProperty(globalThis, "FormData", {
+                    configurable: true,
+                    enumerable: true,
+                    value: originalFormData,
+                    writable: true,
+                });
+            }
+        });
     });
 }
 
