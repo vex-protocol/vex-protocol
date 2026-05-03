@@ -97,7 +97,18 @@ jobs:
                       echo "Skipping Socket scan: SOCKET_API_KEY is not configured."
                       exit 0
                   fi
-                  pnpm dlx @socketsecurity/cli@1.1.84 ci
+                  for attempt in 1 2 3; do
+                      echo "Running Socket scan (attempt ${attempt}/3)..."
+                      if pnpm dlx @socketsecurity/cli@latest ci; then
+                          exit 0
+                      fi
+                      if [ "${attempt}" -lt 3 ]; then
+                          echo "Socket scan failed; retrying in 10s..."
+                          sleep 10
+                      fi
+                  done
+                  echo "::error::Socket scan failed after 3 attempts."
+                  exit 1
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
 
