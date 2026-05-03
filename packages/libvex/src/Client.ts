@@ -2851,6 +2851,10 @@ export class Client {
                     type: "auth",
                 });
                 this.socket.send(new TextEncoder().encode(authMsg));
+                // Reset the keep-alive flag so a reconnect doesn't
+                // inherit a stale `false` from the previous session
+                // and tear itself down on the very first ping cycle.
+                this.setAlive(true);
                 this.pingInterval = setInterval(this.ping.bind(this), 15000);
             });
 
@@ -3005,6 +3009,24 @@ export class Client {
 
     private ping() {
         if (!this.isAlive) {
+            // Previous ping went unanswered — the WebSocket is half-open
+            // (e.g., the network stack silently dropped the flow without a
+            // TCP FIN reaching us, common on Android emulators and on
+            // mobile radios that go to sleep). The `close` event won't
+            // fire on its own, so we trigger it manually by closing the
+            // socket, which lets the existing `close` handler clear the
+            // interval and emit `disconnect` for the consumer's recovery
+            // path to re-establish the connection.
+            if (this.pingInterval) {
+                clearInterval(this.pingInterval);
+                this.pingInterval = null;
+            }
+            try {
+                this.socket.close();
+            } catch {
+                // socket may already be CLOSING/CLOSED; ignore.
+            }
+            return;
         }
         this.setAlive(false);
         void this.send({ transmissionID: uuid.v4(), type: "ping" });
