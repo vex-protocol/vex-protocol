@@ -1,5 +1,13 @@
 # @vex-chat/libvex
 
+## 6.1.5
+
+### Patch Changes
+
+- [#24](https://github.com/vex-protocol/vex-protocol/pull/24) [`a99d824`](https://github.com/vex-protocol/vex-protocol/commit/a99d824bdb2420273bc3543a085b423b851fa4e1) Thanks [@yuki111888](https://github.com/yuki111888)! - Fix avatar upload in React Native/Hermes and other runtimes where `new Blob([Uint8Array])` throws. The SDK now detects the failure and falls back to the JSON/base64 avatar endpoint automatically — no changes required on your end.
+
+- [#24](https://github.com/vex-protocol/vex-protocol/pull/24) [`6d0eee5`](https://github.com/vex-protocol/vex-protocol/commit/6d0eee5041a87ea32a90e259e60628b04d0fcde3) Thanks [@yuki111888](https://github.com/yuki111888)! - Fallback avatar uploads to JSON/base64 when Blob(ArrayBufferView) is unsupported at runtime (notably React Native/Hermes), while preserving multipart uploads where supported.
+
 ## 6.1.4
 
 ### Patch Changes
