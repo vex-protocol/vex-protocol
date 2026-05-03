@@ -10,7 +10,6 @@ import * as fsp from "node:fs/promises";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { FilePayloadSchema } from "@vex-chat/types";
 
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
 import multer from "multer";
@@ -22,6 +21,14 @@ import { getParam, getUser } from "./utils.ts";
 import { ALLOWED_IMAGE_TYPES, protect } from "./index.ts";
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
+
+// Avatars are public, unencrypted images. The body for the JSON path is just a
+// base64-encoded image; nothing else. Do NOT reuse FilePayloadSchema here —
+// that schema is for encrypted user-file uploads and requires nonce/owner/signed,
+// which the avatar client never sends (and shouldn't).
+const avatarJsonPayload = z.object({
+    file: z.string().min(1),
+});
 
 export const getAvatarRouter = () => {
     const router = express.Router();
@@ -50,10 +57,10 @@ export const getAvatarRouter = () => {
     });
 
     router.post("/:userID/json", protect, async (req, res) => {
-        const parsed = FilePayloadSchema.safeParse(req.body);
+        const parsed = avatarJsonPayload.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
-                error: "Invalid file payload",
+                error: "Invalid avatar payload",
                 issues: parsed.error.issues,
             });
             return;
@@ -64,11 +71,6 @@ export const getAvatarRouter = () => {
 
         if (!deviceDetails) {
             res.sendStatus(401);
-            return;
-        }
-
-        if (!payload.file) {
-            res.sendStatus(400);
             return;
         }
 
