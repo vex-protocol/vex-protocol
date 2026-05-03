@@ -88,12 +88,11 @@ jobs:
             - name: spec lint (spectral on openapi.json/asyncapi.json)
               run: pnpm lint:specs
 
-            # TODO: remove `false &&` once secrets.SOCKET_API_KEY is configured for this repo.
             - name: Socket security scan
               if: |
-                  false &&
                   github.event_name == 'pull_request' &&
-                  github.event.pull_request.head.repo.full_name == github.repository
+                  github.event.pull_request.head.repo.full_name == github.repository &&
+                  secrets.SOCKET_API_KEY != ''
               run: pnpm dlx @socketsecurity/cli@1.1.84 ci
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
