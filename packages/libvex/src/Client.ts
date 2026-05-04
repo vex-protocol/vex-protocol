@@ -3085,7 +3085,22 @@ export class Client {
                     token: this.token,
                     type: "auth",
                 });
-                this.socket.send(new TextEncoder().encode(authMsg));
+                // The socket can transition CONNECTING→OPEN→CLOSING in rapid
+                // succession on flaky mobile networks (or behind a 502-prone
+                // proxy). RN dispatches the queued OPEN event even after the
+                // close has landed natively, so by the time this listener
+                // runs the underlying socket may already be closed. Swallow
+                // the typed teardown error here — the close handler will
+                // emit "disconnect" and drive recovery. Anything else
+                // re-throws as before so genuine bugs still surface.
+                try {
+                    this.socket.send(new TextEncoder().encode(authMsg));
+                } catch (err: unknown) {
+                    if (err instanceof WebSocketNotOpenError) {
+                        return;
+                    }
+                    throw err;
+                }
                 // Reset the keep-alive flag so a reconnect doesn't
                 // inherit a stale `false` from the previous session
                 // and tear itself down on the very first ping cycle.
@@ -3120,12 +3135,12 @@ export class Client {
 
                 switch (msg.type) {
                     case "challenge":
-                        void this.respond(msg);
+                        this.respond(msg).catch(ignoreSocketTeardown);
                         break;
                     case "error":
                         break;
                     case "notify":
-                        void this.handleNotify(msg);
+                        this.handleNotify(msg).catch(ignoreSocketTeardown);
                         break;
                     case "ping":
                         this.pong(msg.transmissionID);
@@ -3141,7 +3156,7 @@ export class Client {
                         );
                     case "authorized":
                         this.emitter.emit("connected");
-                        void this.postAuth();
+                        this.postAuth().catch(ignoreSocketTeardown);
                         break;
                     default:
                         break;
