@@ -42,6 +42,8 @@ import { MailType } from "@vex-chat/types";
 
 import argon2 from "argon2";
 
+import { serverMailRetentionCutoffIso } from "./mailRetention.ts";
+
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
  * `MailType` union (0 = initial, 1 = subsequent). Throws if the
@@ -700,6 +702,17 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    /**
+     * Deletes server-side mail older than {@link SERVER_MAIL_RETENTION_DAYS}.
+     */
+    public async pruneExpiredMail(): Promise<void> {
+        const cutoff = serverMailRetentionCutoffIso();
+        await this.db
+            .deleteFrom("mail")
+            .where("time", "<", cutoff)
+            .executeTakeFirst();
+    }
+
     public async rehashPassword(
         userID: string,
         newHash: string,
@@ -858,10 +871,12 @@ export class Database extends EventEmitter {
     public async retrieveMail(
         deviceID: string,
     ): Promise<[Uint8Array, MailWS, string][]> {
+        const cutoff = serverMailRetentionCutoffIso();
         const rawRows = await this.db
             .selectFrom("mail")
             .selectAll()
             .where("recipient", "=", deviceID)
+            .where("time", ">=", cutoff)
             .execute();
         const rows: MailSQL[] = rawRows.map(toMailSQL);
 

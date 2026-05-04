@@ -184,6 +184,7 @@ export class Spire extends EventEmitter {
         string,
         { deviceID: string; nonce: string; time: number }
     >();
+    private mailPruneInterval: null | ReturnType<typeof setInterval> = null;
     private queuedRequestIncrements = 0;
 
     private requestsTotal = 0;
@@ -225,6 +226,20 @@ export class Spire extends EventEmitter {
         this.db = new Database(options);
         this.db.on("ready", () => {
             this.dbReady = true;
+            void this.db.pruneExpiredMail().catch(() => {
+                /* best-effort — startup prune must not block bring-up */
+            });
+            if (this.mailPruneInterval) {
+                clearInterval(this.mailPruneInterval);
+            }
+            this.mailPruneInterval = setInterval(
+                () => {
+                    void this.db.pruneExpiredMail().catch(() => {
+                        /* periodic prune is best-effort */
+                    });
+                },
+                24 * 60 * 60 * 1000,
+            );
             this.bootstrapRequestCounter().catch((_err: unknown) => {
                 // debugger: bootstrap request counter failed
             });
@@ -261,6 +276,10 @@ export class Spire extends EventEmitter {
     }
 
     public async close(): Promise<void> {
+        if (this.mailPruneInterval) {
+            clearInterval(this.mailPruneInterval);
+            this.mailPruneInterval = null;
+        }
         this.wss.clients.forEach((ws) => {
             ws.terminate();
         });

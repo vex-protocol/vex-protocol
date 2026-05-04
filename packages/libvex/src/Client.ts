@@ -79,6 +79,11 @@ import * as uuid from "uuid";
 import { z } from "zod/v4";
 
 import {
+    clampLocalMessageRetentionDays,
+    formatVexRetentionEnvelope,
+    stripVexRetentionEnvelope,
+} from "./retention.js";
+import {
     WebSocketAdapter,
     WebSocketNotOpenError,
 } from "./transport/websocket.js";
@@ -363,6 +368,13 @@ export interface ClientOptions {
     host?: string;
     /** Use sqlite in-memory mode (`:memory:`) instead of a file. */
     inMemoryDb?: boolean;
+    /**
+     * Maximum age (in days) for messages kept in local storage. Values above
+     * 30 are clamped to 30 to match server retention. Peers may request a
+     * shorter window via an optional plaintext hint; this setting is still
+     * capped at 30 and is not enforceable against a modified client.
+     */
+    localMessageRetentionDays?: number;
     /** Whether local message history should be persisted by default storage. */
     saveHistory?: boolean;
     /** Use `http/ws` instead of `https/wss`. Intended for local/dev environments. */
@@ -552,6 +564,12 @@ export interface Message {
     readerID: string;
     /** Recipient device ID. */
     recipient: string;
+    /**
+     * Optional peer hint (1–30): cooperative senders prefix plaintext; used
+     * with {@link ClientOptions.localMessageRetentionDays} to pick the
+     * shorter local retention window. Ignored when absent.
+     */
+    retentionHintDays?: number;
     /** Sender device ID. */
     sender: string;
     /** Time the message was created/received. */
@@ -740,7 +758,11 @@ export interface Messages {
     /** Deletes local history for a user/channel. */
     delete: (userOrChannelID: string) => Promise<void>;
     /** Sends an encrypted message to all members of a channel. */
-    group: (channelID: string, message: string) => Promise<void>;
+    group: (
+        channelID: string,
+        message: string,
+        opts?: { retentionHintDays?: number },
+    ) => Promise<void>;
     /** Deletes all locally stored message history. */
     purge: () => Promise<void>;
     /** Returns local direct-message history with one user. */
@@ -748,7 +770,11 @@ export interface Messages {
     /** Returns local group-message history for one channel. */
     retrieveGroup: (channelID: string) => Promise<Message[]>;
     /** Sends an encrypted direct message to one user. */
-    send: (userID: string, message: string) => Promise<void>;
+    send: (
+        userID: string,
+        message: string,
+        opts?: { retentionHintDays?: number },
+    ) => Promise<void>;
 }
 
 /**
@@ -1072,7 +1098,11 @@ export class Client {
          * @param channelID - The channel to send a message to.
          * @param message - The message to send.
          */
-        group: this.sendGroupMessage.bind(this),
+        group: (
+            channelID: string,
+            message: string,
+            opts?: { retentionHintDays?: number },
+        ) => this.sendGroupMessage(channelID, message, opts),
         purge: this.purgeHistory.bind(this),
         /**
          * Gets the message history with a specific userID.
@@ -1093,7 +1123,11 @@ export class Client {
          * @param userID - The user to send a message to.
          * @param message - The message to send.
          */
-        send: this.sendMessage.bind(this),
+        send: (
+            userID: string,
+            message: string,
+            opts?: { retentionHintDays?: number },
+        ) => this.sendMessage(userID, message, opts),
     };
     /**
      * Server moderation helper methods.
@@ -1250,9 +1284,13 @@ export class Client {
     private readonly httpAbortController = new AbortController();
     private readonly idKeys: KeyPair | null;
     private isAlive: boolean = true;
-    private readonly mailInterval?: NodeJS.Timeout;
+    private localMessageRetentionDays: number;
 
+    private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
+        null;
+    private readonly mailInterval?: NodeJS.Timeout;
     private manuallyClosing: boolean = false;
+
     /**
      * Node-only: per-client HTTP(S) agents (see `init()` + `storage/node/http-agents`).
      * Dropped on `close()` so idle keep-alive sockets do not keep the process alive.
@@ -1266,20 +1304,21 @@ export class Client {
     and finally falls back to username. */
     /** Negative cache for user lookups that returned 404. TTL = 30 minutes. */
     private readonly notFoundUsers = new Map<string, number>();
-
     private readonly options?: ClientOptions | undefined;
 
     private pingInterval: null | ReturnType<typeof setTimeout> = null;
+
     /**
      * Bumped when the WebSocket is torn down and re-opened so the previous
      * `postAuth` loop exits instead of overlapping a new one.
      */
     private postAuthVersion = 0;
-
     private readonly prefixes:
         | { HTTP: "http://"; WS: "ws://" }
         | { HTTP: "https://"; WS: "wss://" };
+
     private reading: boolean = false;
+    private retentionPurgeDebounce: null | ReturnType<typeof setTimeout> = null;
     private readonly seenMailIDs: Set<string> = new Set();
     private sessionRecords: Record<string, SessionCrypto> = {};
 
@@ -1303,6 +1342,9 @@ export class Client {
         storage?: Storage,
     ) {
         this.options = options;
+        this.localMessageRetentionDays = clampLocalMessageRetentionDays(
+            options?.localMessageRetentionDays,
+        );
         this.cryptoProfile = material.cryptoProfile;
         this.signKeys = material.signKeys;
         this.idKeys = material.idKeys;
@@ -1600,6 +1642,14 @@ export class Client {
         if (this.mailInterval) {
             clearInterval(this.mailInterval);
         }
+        if (this.localRetentionPurgeTimer) {
+            clearInterval(this.localRetentionPurgeTimer);
+            this.localRetentionPurgeTimer = null;
+        }
+        if (this.retentionPurgeDebounce) {
+            clearTimeout(this.retentionPurgeDebounce);
+            this.retentionPurgeDebounce = null;
+        }
         delete this.xKeyRing;
 
         if (!muteEvent) {
@@ -1677,6 +1727,11 @@ export class Client {
             private: XUtils.encodeHex(this.signKeys.secretKey),
             public: XUtils.encodeHex(this.signKeys.publicKey),
         };
+    }
+
+    /** Current local retention cap in days (always 1–30). */
+    public getLocalMessageRetentionDays(): number {
+        return this.localMessageRetentionDays;
     }
 
     /**
@@ -2017,6 +2072,15 @@ export class Client {
     removeAllListeners(event?: keyof ClientEvents): this {
         this.emitter.removeAllListeners(event);
         return this;
+    }
+
+    /**
+     * Updates the local retention cap (1–30 days) and prunes immediately.
+     * Does not affect server-side storage.
+     */
+    public setLocalMessageRetentionDays(days: number): void {
+        this.localMessageRetentionDays = clampLocalMessageRetentionDays(days);
+        void this.runLocalRetentionPurge();
     }
 
     /**
@@ -2496,7 +2560,6 @@ export class Client {
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
-
     private deviceListFailureDetail(err: unknown): string {
         if (!isAxiosError(err)) {
             return "";
@@ -2526,6 +2589,7 @@ export class Client {
         );
         return decodeAxios(PermissionArrayCodec, res.data);
     }
+
     private async fetchUser(
         userIdentifier: string,
     ): Promise<[null | User, AxiosError | null]> {
@@ -3049,6 +3113,8 @@ export class Client {
         }
     }
 
+    // ── Passkeys ────────────────────────────────────────────────────────
+
     /**
      * Initializes the keyring. This must be called before anything else.
      */
@@ -3068,6 +3134,11 @@ export class Client {
 
         await this.populateKeyRing();
         this.emitter.on("message", this.onInternalMessage);
+        void this.runLocalRetentionPurge();
+        this.localRetentionPurgeTimer = setInterval(
+            () => void this.runLocalRetentionPurge(),
+            6 * 60 * 60 * 1000,
+        );
         this.emitter.emit("ready");
     }
 
@@ -3168,8 +3239,6 @@ export class Client {
             );
         }
     }
-
-    // ── Passkeys ────────────────────────────────────────────────────────
 
     /**
      * Fresh read of the `manuallyClosing` flag for async loops — direct property checks
@@ -3279,6 +3348,7 @@ export class Client {
             return;
         }
         void this.database.saveMessage(message);
+        this.scheduleRetentionPurge();
     };
 
     private async passkeyApproveDeviceRequest(
@@ -3709,13 +3779,39 @@ export class Client {
                             if (!mail.forward) {
                                 plaintext = XUtils.encodeUTF8(unsealed);
                             }
+                            let incomingPlain = plaintext;
+                            let hintFromEnvelope: number | undefined;
+                            if (!mail.forward && plaintext.length > 0) {
+                                const stripped =
+                                    stripVexRetentionEnvelope(plaintext);
+                                incomingPlain = stripped.body;
+                                hintFromEnvelope = stripped.retentionHintDays;
+                            }
 
                             // emit the message
                             const fwdMsg1 = mail.forward
                                 ? messageSchema.parse(msgpack.decode(unsealed))
                                 : null;
                             const message: Message = fwdMsg1
-                                ? { ...fwdMsg1, forward: true }
+                                ? (() => {
+                                      const stripped =
+                                          stripVexRetentionEnvelope(
+                                              fwdMsg1.message,
+                                          );
+                                      const base: Message = {
+                                          ...fwdMsg1,
+                                          forward: true,
+                                          message: stripped.body,
+                                      };
+                                      return stripped.retentionHintDays !==
+                                          undefined
+                                          ? {
+                                                ...base,
+                                                retentionHintDays:
+                                                    stripped.retentionHintDays,
+                                            }
+                                          : base;
+                                  })()
                                 : {
                                       authorID: mail.authorID,
                                       decrypted: true,
@@ -3725,12 +3821,18 @@ export class Client {
                                           ? uuid.stringify(mail.group)
                                           : null,
                                       mailID: mail.mailID,
-                                      message: plaintext,
+                                      message: incomingPlain,
                                       nonce: XUtils.encodeHex(
                                           new Uint8Array(mail.nonce),
                                       ),
                                       readerID: mail.readerID,
                                       recipient: mail.recipient,
+                                      ...(hintFromEnvelope !== undefined
+                                          ? {
+                                                retentionHintDays:
+                                                    hintFromEnvelope,
+                                            }
+                                          : {}),
                                       sender: mail.sender,
                                       timestamp: timestamp,
                                   };
@@ -3896,11 +3998,35 @@ export class Client {
                             const fwdMsg2 = mail.forward
                                 ? messageSchema.parse(msgpack.decode(decrypted))
                                 : null;
+                            const rawIncoming = XUtils.encodeUTF8(decrypted);
+                            let bodyIncoming = rawIncoming;
+                            let hintIncoming: number | undefined;
+                            if (!mail.forward) {
+                                const stripped =
+                                    stripVexRetentionEnvelope(rawIncoming);
+                                bodyIncoming = stripped.body;
+                                hintIncoming = stripped.retentionHintDays;
+                            }
                             const message: Message = fwdMsg2
-                                ? {
-                                      ...fwdMsg2,
-                                      forward: true,
-                                  }
+                                ? (() => {
+                                      const stripped =
+                                          stripVexRetentionEnvelope(
+                                              fwdMsg2.message,
+                                          );
+                                      const base: Message = {
+                                          ...fwdMsg2,
+                                          forward: true,
+                                          message: stripped.body,
+                                      };
+                                      return stripped.retentionHintDays !==
+                                          undefined
+                                          ? {
+                                                ...base,
+                                                retentionHintDays:
+                                                    stripped.retentionHintDays,
+                                            }
+                                          : base;
+                                  })()
                                 : {
                                       authorID: mail.authorID,
                                       decrypted: true,
@@ -3910,12 +4036,15 @@ export class Client {
                                           ? uuid.stringify(mail.group)
                                           : null,
                                       mailID: mail.mailID,
-                                      message: XUtils.encodeUTF8(decrypted),
+                                      message: bodyIncoming,
                                       nonce: XUtils.encodeHex(
                                           new Uint8Array(mail.nonce),
                                       ),
                                       readerID: mail.readerID,
                                       recipient: mail.recipient,
+                                      ...(hintIncoming !== undefined
+                                          ? { retentionHintDays: hintIncoming }
+                                          : {}),
                                       sender: mail.sender,
                                       timestamp: timestamp,
                                   };
@@ -4163,6 +4292,19 @@ export class Client {
         return device;
     }
 
+    private async runLocalRetentionPurge(): Promise<void> {
+        if (this.isManualCloseInFlight()) {
+            return;
+        }
+        try {
+            await this.database.pruneExpiredLocalMessages(
+                this.localMessageRetentionDays,
+            );
+        } catch {
+            /* best-effort */
+        }
+    }
+
     /**
      * `xDHAsync` and other helpers in `@vex-chat/crypto` use the process-wide
      * active profile. When several {@link Client} instances use different
@@ -4182,6 +4324,16 @@ export class Client {
         } finally {
             setCryptoProfile(prev);
         }
+    }
+
+    private scheduleRetentionPurge(): void {
+        if (this.retentionPurgeDebounce) {
+            clearTimeout(this.retentionPurgeDebounce);
+        }
+        this.retentionPurgeDebounce = setTimeout(() => {
+            this.retentionPurgeDebounce = null;
+            void this.runLocalRetentionPurge();
+        }, 3000);
     }
 
     /* header is 32 bytes and is either empty
@@ -4219,6 +4371,7 @@ export class Client {
     private async sendGroupMessage(
         channelID: string,
         message: string,
+        opts?: { retentionHintDays?: number },
     ): Promise<void> {
         const userList = await this.getUserList(channelID);
         for (const user of userList) {
@@ -4226,6 +4379,10 @@ export class Client {
         }
 
         const mailID = uuid.v4();
+        const payload = formatVexRetentionEnvelope(
+            message,
+            opts?.retentionHintDays,
+        );
 
         const userIDs = [...new Set(userList.map((user) => user.userID))];
         const devices = await this.getMultiUserDeviceList(userIDs);
@@ -4239,7 +4396,7 @@ export class Client {
                 await this.sendMail(
                     device,
                     ownerRecord,
-                    XUtils.decodeUTF8(message),
+                    XUtils.decodeUTF8(payload),
                     uuidToUint8(channelID),
                     mailID,
                     false,
@@ -4341,8 +4498,25 @@ export class Client {
             const fwdOut = forward
                 ? messageSchema.parse(msgpack.decode(msg))
                 : null;
+            const rawUtf8 = XUtils.encodeUTF8(msg);
+            const strippedOut = stripVexRetentionEnvelope(rawUtf8);
             const outMsg: Message = fwdOut
-                ? { ...fwdOut, forward: true }
+                ? (() => {
+                      const stripped = stripVexRetentionEnvelope(
+                          fwdOut.message,
+                      );
+                      const base: Message = {
+                          ...fwdOut,
+                          forward: true,
+                          message: stripped.body,
+                      };
+                      return stripped.retentionHintDays !== undefined
+                          ? {
+                                ...base,
+                                retentionHintDays: stripped.retentionHintDays,
+                            }
+                          : base;
+                  })()
                 : {
                       authorID: mail.authorID,
                       decrypted: true,
@@ -4350,10 +4524,16 @@ export class Client {
                       forward: mail.forward,
                       group: mail.group ? uuid.stringify(mail.group) : null,
                       mailID: mail.mailID,
-                      message: XUtils.encodeUTF8(msg),
+                      message: strippedOut.body,
                       nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
                       readerID: mail.readerID,
                       recipient: mail.recipient,
+                      ...(strippedOut.retentionHintDays !== undefined
+                          ? {
+                                retentionHintDays:
+                                    strippedOut.retentionHintDays,
+                            }
+                          : {}),
                       sender: mail.sender,
                       timestamp: new Date().toISOString(),
                   };
@@ -4418,7 +4598,15 @@ export class Client {
         }
     }
 
-    private async sendMessage(userID: string, message: string): Promise<void> {
+    private async sendMessage(
+        userID: string,
+        message: string,
+        opts?: { retentionHintDays?: number },
+    ): Promise<void> {
+        const payload = formatVexRetentionEnvelope(
+            message,
+            opts?.retentionHintDays,
+        );
         try {
             const [userEntry, err] = await this.fetchUser(userID);
             if (err) {
@@ -4491,7 +4679,7 @@ export class Client {
                     await this.sendMail(
                         device,
                         userEntry,
-                        XUtils.decodeUTF8(message),
+                        XUtils.decodeUTF8(payload),
                         null,
                         messageMailID,
                         false,
