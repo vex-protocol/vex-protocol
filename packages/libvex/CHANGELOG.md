@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.2.3
+
+### Patch Changes
+
+- [#50](https://github.com/vex-protocol/vex-protocol/pull/50) [`f6119c5`](https://github.com/vex-protocol/vex-protocol/commit/f6119c5c8bbaa3e9bacae8a4936a92e15380852e) Thanks [@yuki111888](https://github.com/yuki111888)! - Fix group DM delivery and inbound mail acknowledgements. Group messages now exclude the sender's own devices from the fan-out (preventing X3DH races that caused flaky early delivery), and throw when all peer devices fail rather than silently dropping the send. Read receipts are now sent only after a message is successfully decrypted, not on first receipt.
+
 ## 6.2.2
 
 ### Patch Changes
