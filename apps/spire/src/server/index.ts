@@ -35,6 +35,8 @@ import { errorHandler } from "./errors.ts";
 import { getFileRouter } from "./file.ts";
 import { getInviteRouter } from "./invite.ts";
 import { setupDocs } from "./openapi.ts";
+import { getPasskeyRouter } from "./passkey.ts";
+import { getPasskeyDeviceRouter } from "./passkeyDevices.ts";
 import {
     hasAnyPermission,
     hasPermission,
@@ -95,6 +97,14 @@ const jwtDevicePayload = z.object({
     }),
 });
 
+const jwtPasskeyPayload = z.object({
+    passkey: z.object({
+        passkeyID: z.string(),
+    }),
+    scope: z.literal("passkey"),
+    user: UserSchema,
+});
+
 /** Extract Bearer token from Authorization header. */
 function extractBearer(req: express.Request): null | string {
     const header = req.headers.authorization;
@@ -107,13 +117,27 @@ const checkAuth: express.RequestHandler = (req, _res, next) => {
     if (token) {
         try {
             const result = jwt.verify(token, getJwtSecret());
-            const parsed = jwtUserPayload.safeParse(result);
-            if (parsed.success) {
-                req.user = parsed.data.user;
-                if (parsed.data.exp !== undefined) {
-                    req.exp = parsed.data.exp;
-                }
+            // Passkey-scoped JWTs share the bearer slot with regular
+            // user JWTs but carry a `scope: "passkey"` discriminator
+            // and a `passkey` claim. Populate `req.passkey` and the
+            // user (so route guards using `req.user` still pass) but
+            // never `req.device`. The actual privilege gate lives at
+            // the route level: passkey-only routes require
+            // `req.passkey`, device-only routes require `req.device`.
+            const passkeyParsed = jwtPasskeyPayload.safeParse(result);
+            if (passkeyParsed.success) {
+                req.user = passkeyParsed.data.user;
+                req.passkey = passkeyParsed.data.passkey;
                 req.bearerToken = token;
+            } else {
+                const parsed = jwtUserPayload.safeParse(result);
+                if (parsed.success) {
+                    req.user = parsed.data.user;
+                    if (parsed.data.exp !== undefined) {
+                        req.exp = parsed.data.exp;
+                    }
+                    req.bearerToken = token;
+                }
             }
         } catch {
             // Token verification failed — continue without auth
@@ -140,6 +164,21 @@ const checkDevice: express.RequestHandler = (req, _res, next) => {
 
 export const protect: express.RequestHandler = (req, res, next) => {
     if (!req.user) {
+        res.sendStatus(401);
+        return;
+    }
+
+    next();
+};
+
+/**
+ * Restrict a route to passkey-scoped JWTs (used by the parallel
+ * `/user/:id/passkey/devices/...` admin/recovery routes). A
+ * passkey-authenticated caller can list devices, delete devices, and
+ * approve/reject pending enrollments — and nothing else.
+ */
+export const protectPasskey: express.RequestHandler = (req, res, next) => {
+    if (!req.user || !req.passkey) {
         res.sendStatus(401);
         return;
     }
@@ -185,6 +224,8 @@ export const initApp = (
     const fileRouter = getFileRouter(db);
     const avatarRouter = getAvatarRouter();
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
+    const passkeyRouter = getPasskeyRouter(db);
+    const passkeyDeviceRouter = getPasskeyDeviceRouter(db, notify);
 
     // MIDDLEWARE
     // Global per-IP rate limit is the FIRST middleware so a flooded
@@ -854,6 +895,14 @@ export const initApp = (
     );
 
     // COMPLEX RESOURCES
+    // Passkey routes are mounted at the root since they live under
+    // both `/user/:id/passkeys/...` (registration / list / delete by
+    // an authenticated device) and `/auth/passkey/...` (public
+    // sign-in). The router itself defines the full path on each
+    // route handler.
+    api.use(passkeyRouter);
+    api.use(passkeyDeviceRouter);
+
     api.use("/user", userRouter);
 
     api.use("/file", fileRouter);

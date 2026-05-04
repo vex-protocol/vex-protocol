@@ -4,7 +4,7 @@
  * Commercial licenses available at vex.wtf
  */
 
-import type { ServerDatabase } from "./db/schema.ts";
+import type { PasskeyRow, ServerDatabase } from "./db/schema.ts";
 import type { SpireOptions } from "./Spire.ts";
 import type {
     Channel,
@@ -16,6 +16,7 @@ import type {
     KeyBundle,
     MailSQL,
     MailWS,
+    Passkey,
     Permission,
     PreKeysSQL,
     PreKeysWS,
@@ -253,6 +254,50 @@ export class Database extends EventEmitter {
         return invite;
     }
 
+    /**
+     * Insert a new passkey for `userID`. Caller is responsible for
+     * having verified the WebAuthn attestation and serialised the
+     * credential public key as hex (typically the COSE_Key bytes
+     * returned by the authenticator). Returns the public passkey
+     * shape — never the credentialID/publicKey/algorithm internals,
+     * which stay server-private.
+     */
+    public async createPasskey(
+        userID: string,
+        name: string,
+        credentialID: string,
+        publicKeyHex: string,
+        algorithm: number,
+        transports: string[],
+    ): Promise<Passkey> {
+        const passkeyID = crypto.randomUUID();
+        const createdAt = new Date().toISOString();
+        await this.db
+            .insertInto("passkeys")
+            .values({
+                algorithm,
+                createdAt,
+                credentialID,
+                lastUsedAt: null,
+                name,
+                passkeyID,
+                publicKey: publicKeyHex,
+                signCount: 0,
+                transports: transports.join(","),
+                userID,
+            })
+            .execute();
+
+        return {
+            createdAt,
+            lastUsedAt: null,
+            name,
+            passkeyID,
+            transports,
+            userID,
+        };
+    }
+
     public async createPermission(
         userID: string,
         resourceType: string,
@@ -402,6 +447,13 @@ export class Database extends EventEmitter {
             .deleteFrom("mail")
             .where("nonce", "=", XUtils.encodeHex(nonce))
             .where("recipient", "=", userID)
+            .execute();
+    }
+
+    public async deletePasskey(passkeyID: string): Promise<void> {
+        await this.db
+            .deleteFrom("passkeys")
+            .where("passkeyID", "=", passkeyID)
             .execute();
     }
 
@@ -620,6 +672,26 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    /**
+     * Bump the WebAuthn signature counter and lastUsedAt timestamp
+     * after a successful assertion. The counter is monotonic per the
+     * WebAuthn spec (FIDO authenticators that report 0 signal they
+     * don't track a counter — callers should treat 0→0 as legitimate).
+     */
+    public async markPasskeyUsed(
+        passkeyID: string,
+        signCount: number,
+    ): Promise<void> {
+        await this.db
+            .updateTable("passkeys")
+            .set({
+                lastUsedAt: new Date().toISOString(),
+                signCount,
+            })
+            .where("passkeyID", "=", passkeyID)
+            .execute();
+    }
+
     public async markUserSeen(user: UserRecord): Promise<void> {
         await this.db
             .updateTable("users")
@@ -817,6 +889,53 @@ export class Database extends EventEmitter {
         const allMail = rows.map(fixMail);
 
         return allMail;
+    }
+
+    /**
+     * Look up a passkey row by its WebAuthn credentialID. Used during
+     * the assertion verification step of `/auth/passkey/finish`.
+     */
+    public async retrievePasskeyByCredentialID(
+        credentialID: string,
+    ): Promise<null | PasskeyRow> {
+        const rows = await this.db
+            .selectFrom("passkeys")
+            .selectAll()
+            .where("credentialID", "=", credentialID)
+            .limit(1)
+            .execute();
+        return rows[0] ?? null;
+    }
+
+    /**
+     * Look up a passkey row including server-only fields (publicKey,
+     * algorithm, signCount). For listing back to clients prefer
+     * {@link retrievePasskeysByUser}, which only returns the public
+     * shape.
+     */
+    public async retrievePasskeyInternal(
+        passkeyID: string,
+    ): Promise<null | PasskeyRow> {
+        const rows = await this.db
+            .selectFrom("passkeys")
+            .selectAll()
+            .where("passkeyID", "=", passkeyID)
+            .limit(1)
+            .execute();
+        return rows[0] ?? null;
+    }
+
+    /**
+     * List all passkeys belonging to `userID` in their public form
+     * (no key material).
+     */
+    public async retrievePasskeysByUser(userID: string): Promise<Passkey[]> {
+        const rows = await this.db
+            .selectFrom("passkeys")
+            .selectAll()
+            .where("userID", "=", userID)
+            .execute();
+        return rows.map(toPasskey);
     }
 
     public async retrievePermission(
@@ -1130,6 +1249,20 @@ function toMailSQL(row: {
         forward: Boolean(row.forward),
         mailType: parseMailType(row.mailType),
         time: row.time,
+    };
+}
+
+function toPasskey(row: PasskeyRow): Passkey {
+    return {
+        createdAt: row.createdAt,
+        lastUsedAt: row.lastUsedAt,
+        name: row.name,
+        passkeyID: row.passkeyID,
+        transports:
+            row.transports.length > 0
+                ? row.transports.split(",").filter((s) => s.length > 0)
+                : [],
+        userID: row.userID,
     };
 }
 

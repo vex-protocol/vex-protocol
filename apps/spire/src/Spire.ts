@@ -52,6 +52,13 @@ import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
 export const JWT_EXPIRY = "7d";
 export const DEVICE_AUTH_JWT_EXPIRY = "7d";
+/**
+ * Passkey-scoped JWTs grant destructive admin powers (delete a
+ * device, approve a device enrollment) without further user
+ * verification, so they expire fast — the user re-does the
+ * WebAuthn ceremony on each session.
+ */
+export const JWT_EXPIRY_PASSKEY = "5m";
 const DEVICE_CHALLENGE_EXPIRY = 1000 * 60; // 60 seconds
 
 // 3-19 chars long

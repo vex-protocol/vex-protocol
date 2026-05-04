@@ -92,10 +92,11 @@ export type NewInvite = Insertable<InvitesTable>;
 export type NewMail = Insertable<MailTable>;
 export type NewOneTimeKey = Insertable<OneTimeKeysTable>;
 
+export type NewPasskey = Insertable<PasskeysTable>;
 export type NewPermission = Insertable<PermissionsTable>;
 export type NewPreKey = Insertable<PreKeysTable>;
-export type NewServer = Insertable<ServersTable>;
 
+export type NewServer = Insertable<ServersTable>;
 export type NewServiceMetric = Insertable<ServiceMetricsTable>;
 export type NewUser = Insertable<UsersTable>;
 export type OneTimeKeyRow = Selectable<OneTimeKeysTable>;
@@ -109,6 +110,21 @@ export interface OneTimeKeysTable {
     userID: string;
 }
 export type OneTimeKeyUpdate = Updateable<OneTimeKeysTable>;
+export type PasskeyRow = Selectable<PasskeysTable>;
+
+export interface PasskeysTable {
+    algorithm: number;
+    createdAt: string;
+    credentialID: string;
+    lastUsedAt: null | string;
+    name: string;
+    passkeyID: string;
+    publicKey: string;
+    signCount: number;
+    transports: string;
+    userID: string;
+}
+export type PasskeyUpdate = Updateable<PasskeysTable>;
 export type PermissionRow = Selectable<PermissionsTable>;
 
 export interface PermissionsTable {
@@ -138,6 +154,7 @@ export interface ServerDatabase {
     invites: InvitesTable;
     mail: MailTable;
     oneTimeKeys: OneTimeKeysTable;
+    passkeys: PasskeysTable;
     permissions: PermissionsTable;
     preKeys: PreKeysTable;
     servers: ServersTable;
