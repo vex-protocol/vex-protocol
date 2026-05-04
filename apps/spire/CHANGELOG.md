@@ -1,5 +1,19 @@
 # @vex-chat/spire
 
+## 1.5.0
+
+### Minor Changes
+
+- [#40](https://github.com/vex-protocol/vex-protocol/pull/40) [`d6b839d`](https://github.com/vex-protocol/vex-protocol/commit/d6b839d655a6d79aa6a0889763aacfa2df98595d) Thanks [@yuki111888](https://github.com/yuki111888)! - Optionally serve the WebAuthn well-known association files
+  (`/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json`)
+  directly from spire so operators whose RP host already routes to the
+  container can publish app↔domain associations without standing up a
+  separate static site. Gated on three env vars
+  (`SPIRE_PASSKEY_IOS_APP_IDS`, `SPIRE_PASSKEY_ANDROID_PACKAGE`,
+  `SPIRE_PASSKEY_ANDROID_FINGERPRINTS`); 404 when unset and mounted
+  ahead of the per-IP rate limiter so periodic platform fetches are
+  never 429'd.
+
 ## 1.4.0
 
 ### Minor Changes
