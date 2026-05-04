@@ -1,7 +1,8 @@
 name: Spire stress CLI
 
 # Bounded `pnpm --filter @vex-chat/spire stress:cli` against Spire + nginx
-# started with `docker compose` in apps/spire (same path as local development).
+# started with `docker compose` in apps/spire. Matrix: tweetnacl (gen-spk) and
+# fips (gen-spk-fips + SPIRE_FIPS=true), matching local Docker crypto modes.
 
 on:
     workflow_dispatch:
@@ -17,18 +18,21 @@ on:
         # Weekly smoke (Mondays 06:00 UTC)
         - cron: "0 6 * * 1"
 
-concurrency:
-    group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-    cancel-in-progress: true
-
 permissions:
     contents: read
 
 jobs:
     stress-cli:
-        name: stress:cli (Docker Compose + nginx :16777)
+        name: stress:cli (${{ matrix.crypto }}, Docker + nginx :16777)
         runs-on: ubuntu-latest
         timeout-minutes: 40
+        concurrency:
+            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
+            cancel-in-progress: true
+        strategy:
+            fail-fast: false
+            matrix:
+                crypto: [tweetnacl, fips]
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -66,13 +70,19 @@ jobs:
               working-directory: apps/spire
               run: |
                   set -euo pipefail
-                  mapfile -t lines < <(node scripts/gen-spk.js --raw)
+                  if [[ "${{ matrix.crypto }}" == "fips" ]]; then
+                      mapfile -t lines < <(node scripts/gen-spk-fips.js --raw)
+                      fips_flag=true
+                  else
+                      mapfile -t lines < <(node scripts/gen-spk.js --raw)
+                      fips_flag=false
+                  fi
                   dev_key="$(openssl rand -hex 16)"
                   {
                       echo "SPK=${lines[0]}"
                       echo "JWT_SECRET=${lines[1]}"
                       echo "DEV_API_KEY=${dev_key}"
-                      echo "SPIRE_FIPS=false"
+                      echo "SPIRE_FIPS=${fips_flag}"
                       echo "DB_TYPE=sqlite3mem"
                   } > .env
                   chmod 600 .env
