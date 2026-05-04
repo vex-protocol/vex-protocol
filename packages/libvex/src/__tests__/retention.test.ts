@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     clampLocalMessageRetentionDays,
+    effectiveMessageRetentionHintDays,
     formatVexRetentionEnvelope,
     MAX_LOCAL_MESSAGE_RETENTION_DAYS,
     stripVexRetentionEnvelope,
@@ -35,5 +36,15 @@ describe("retention", () => {
 
     it("MAX matches server contract constant name in docs", () => {
         expect(MAX_LOCAL_MESSAGE_RETENTION_DAYS).toBe(30);
+    });
+
+    it("effectiveMessageRetentionHintDays treats 0 and invalid as 30-day default", () => {
+        expect(effectiveMessageRetentionHintDays(undefined)).toBe(30);
+        expect(effectiveMessageRetentionHintDays(null)).toBe(30);
+        expect(effectiveMessageRetentionHintDays(0)).toBe(30);
+        expect(effectiveMessageRetentionHintDays(-3)).toBe(30);
+        expect(effectiveMessageRetentionHintDays(Number.NaN)).toBe(30);
+        expect(effectiveMessageRetentionHintDays(7)).toBe(7);
+        expect(effectiveMessageRetentionHintDays(45)).toBe(30);
     });
 });

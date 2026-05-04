@@ -387,6 +387,14 @@ export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
  * @ignore
  */
 export interface Devices {
+    /**
+     * Deletes an unpublished enrollment before any owner notification
+     * (e.g. user picked "not my account").
+     */
+    abortPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<void>;
     /** Approves a pending device registration request as the current device. */
     approveRequest: (requestID: string) => Promise<Device>;
     /** Deletes one of the account's devices (except the currently active one). */
@@ -414,6 +422,14 @@ export interface Devices {
         challenge: string;
         requestID: string;
     }) => Promise<null | PendingDeviceRequest>;
+    /**
+     * After the user confirms the pending enrollment is theirs, notifies
+     * their existing devices (same proof as poll).
+     */
+    publishPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<void>;
     /** Registers the current key material as a new device. */
     register: () => Promise<DeviceRegistrationResult | null>;
     /** Rejects a pending device registration request as the current device. */
@@ -1003,12 +1019,16 @@ export class Client {
      * Device management methods.
      */
     public devices: Devices = {
+        abortPendingRegistration:
+            this.abortPendingDeviceRegistration.bind(this),
         approveRequest: this.approveDeviceRequest.bind(this),
         delete: this.deleteDevice.bind(this),
         getRequest: this.getDeviceRegistrationRequest.bind(this),
         list: this.listDevices.bind(this),
         listRequests: this.listDeviceRegistrationRequests.bind(this),
         pollPendingRegistration: this.pollPendingDeviceRegistration.bind(this),
+        publishPendingRegistration:
+            this.publishPendingDeviceRegistration.bind(this),
         register: this.registerDevice.bind(this),
         rejectRequest: this.rejectDeviceRequest.bind(this),
         retrieve: this.getDeviceByID.bind(this),
@@ -2124,6 +2144,23 @@ export class Client {
         return whoami;
     }
 
+    private async abortPendingDeviceRegistration(args: {
+        challenge: string;
+        requestID: string;
+    }): Promise<void> {
+        const signed = await this.signPendingRegistrationChallenge(
+            args.challenge,
+        );
+        await this.http.post(
+            this.getHost() +
+                "/user/devices/requests/" +
+                args.requestID +
+                "/abort",
+            msgpack.encode({ signed }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+    }
+
     private acknowledgeInboundMail(mail: MailWS): void {
         this.seenMailIDs.add(mail.mailID);
         this.sendReceipt(new Uint8Array(mail.nonce));
@@ -2561,7 +2598,6 @@ export class Client {
     private async deletePermission(permissionID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/permission/" + permissionID);
     }
-
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
@@ -2578,6 +2614,7 @@ export class Client {
         }
         return "";
     }
+
     /**
      * Gets a list of permissions for a server.
      *
@@ -3078,6 +3115,8 @@ export class Client {
         return decodeAxios(UserArrayCodec, res.data);
     }
 
+    // ── Passkeys ────────────────────────────────────────────────────────
+
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
             case "deviceRequest": {
@@ -3145,8 +3184,6 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
-
-    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -3431,21 +3468,12 @@ export class Client {
         );
     }
 
-    /**
-     * Polls the public unauthenticated request status endpoint as the
-     * requesting device. Signs the server-issued challenge with the local
-     * private signing key so the server can verify ownership of the pending
-     * request without us needing a user token.
-     */
     private async pollPendingDeviceRegistration(args: {
         challenge: string;
         requestID: string;
     }): Promise<null | PendingDeviceRequest> {
-        const signed = XUtils.encodeHex(
-            await xSignAsync(
-                XUtils.decodeHex(args.challenge),
-                this.signKeys.secretKey,
-            ),
+        const signed = await this.signPendingRegistrationChallenge(
+            args.challenge,
         );
         try {
             const response = await this.http.post(
@@ -3553,6 +3581,23 @@ export class Client {
                 await sleep(1000);
             }
         }
+    }
+
+    private async publishPendingDeviceRegistration(args: {
+        challenge: string;
+        requestID: string;
+    }): Promise<void> {
+        const signed = await this.signPendingRegistrationChallenge(
+            args.challenge,
+        );
+        await this.http.post(
+            this.getHost() +
+                "/user/devices/requests/" +
+                args.requestID +
+                "/publish",
+            msgpack.encode({ signed }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
     }
 
     private async purgeHistory(): Promise<void> {
@@ -4805,6 +4850,26 @@ export class Client {
 
     private setUser(user: User): void {
         this.user = user;
+        // Fresh identity / token: drop stale 404 negative-cache entries so a
+        // prior transient miss (or wrong host) cannot block DM sends for 30m.
+        this.notFoundUsers.clear();
+    }
+
+    /**
+     * Polls the public unauthenticated request status endpoint as the
+     * requesting device. Signs the server-issued challenge with the local
+     * private signing key so the server can verify ownership of the pending
+     * request without us needing a user token.
+     */
+    private async signPendingRegistrationChallenge(
+        challengeHex: string,
+    ): Promise<string> {
+        return XUtils.encodeHex(
+            await xSignAsync(
+                XUtils.decodeHex(challengeHex),
+                this.signKeys.secretKey,
+            ),
+        );
     }
 
     private async submitOTK(amount: number) {

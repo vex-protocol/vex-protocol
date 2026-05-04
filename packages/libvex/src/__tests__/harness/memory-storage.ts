@@ -24,13 +24,16 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 
+import { EventEmitter } from "eventemitter3";
+
+import { effectiveMessageRetentionHintDays } from "../../retention.js";
+
 /**
  * Minimal in-memory Storage for browser/RN platform tests.
  *
  * Uses eventemitter3 (browser-safe) instead of Node's events module.
  * No persistence — just enough for the register/login/connect/DM test flow.
  */
-import { EventEmitter } from "eventemitter3";
 
 export class MemoryStorage extends EventEmitter implements Storage {
     public ready = false;
@@ -178,7 +181,9 @@ export class MemoryStorage extends EventEmitter implements Storage {
         const now = Date.now();
         const msPerDay = 86_400_000;
         this.messages = this.messages.filter((m) => {
-            const hintDays = m.retentionHintDays ?? 30;
+            const hintDays = effectiveMessageRetentionHintDays(
+                m.retentionHintDays,
+            );
             const maxDays = Math.min(30, cap, hintDays);
             const ts = new Date(m.timestamp).getTime();
             if (!Number.isFinite(ts)) {

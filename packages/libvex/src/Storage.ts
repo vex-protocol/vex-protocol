@@ -93,7 +93,8 @@ export interface Storage extends EventEmitter {
     on(event: "error", callback: (error: Error) => void): this;
     /**
      * Deletes local messages older than the effective per-row retention:
-     * `min(30 days, clientMaxRetentionDays, retentionHintDays ?? 30)`.
+     * `min(30 days, clientMaxRetentionDays, effectiveMessageRetentionHintDays(row))`
+     * (invalid or non-positive stored hints are treated like 30).
      */
     pruneExpiredLocalMessages: (
         clientMaxRetentionDays: number,

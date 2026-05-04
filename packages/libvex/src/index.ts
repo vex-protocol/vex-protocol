@@ -40,6 +40,7 @@ export type {
 export { createCodec, msgpack } from "./codec.js";
 export {
     clampLocalMessageRetentionDays,
+    effectiveMessageRetentionHintDays,
     MAX_LOCAL_MESSAGE_RETENTION_DAYS,
 } from "./retention.js";
 export type { Storage } from "./Storage.js";

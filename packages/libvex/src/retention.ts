@@ -24,6 +24,23 @@ export function clampLocalMessageRetentionDays(
     return Math.min(MAX_LOCAL_MESSAGE_RETENTION_DAYS, Math.max(1, n));
 }
 
+/**
+ * Normalizes a per-message `retentionHintDays` value read from storage.
+ * Non-finite, missing, or non-positive values behave like "no hint" (30 days)
+ * so a corrupt `0` row cannot wipe the entire local history on prune.
+ */
+export function effectiveMessageRetentionHintDays(
+    stored: null | number | undefined,
+): number {
+    if (stored == null || !Number.isFinite(stored) || stored < 1) {
+        return MAX_LOCAL_MESSAGE_RETENTION_DAYS;
+    }
+    return Math.min(
+        MAX_LOCAL_MESSAGE_RETENTION_DAYS,
+        Math.max(1, Math.round(stored)),
+    );
+}
+
 const RETENTION_PREFIX = /^vex-retention:([1-9]|[12]\d|30)\n/;
 
 /**

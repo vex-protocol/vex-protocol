@@ -1,0 +1,123 @@
+name: Spire stress CLI
+
+# Bounded `pnpm --filter @vex-chat/spire stress:cli` against Spire + nginx
+# started with `docker compose` in apps/spire. Matrix: tweetnacl (gen-spk) and
+# fips (gen-spk-fips + SPIRE_FIPS=true), matching local Docker crypto modes.
+#
+# Optional only: does not run on PRs or pushes (unblocks merges while stress is
+# flaky). Re-enable push / pull_request / schedule when the Docker matrix is green.
+
+on:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    stress-cli:
+        name: stress:cli (${{ matrix.crypto }}, Docker + nginx :16777)
+        runs-on: ubuntu-latest
+        timeout-minutes: 40
+        concurrency:
+            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
+            cancel-in-progress: true
+        strategy:
+            fail-fast: false
+            matrix:
+                crypto: [tweetnacl, fips]
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+
+            - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+              with:
+                  run_install: false
+
+            - name: Get pnpm store directory
+              shell: bash
+              run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+            - uses: actions/cache@v4
+              with:
+                  path: ${{ env.STORE_PATH }}
+                  key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+                  restore-keys: ${{ runner.os }}-pnpm-store-
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Write apps/spire/.env for Compose
+              shell: bash
+              working-directory: apps/spire
+              run: |
+                  set -euo pipefail
+                  if [[ "${{ matrix.crypto }}" == "fips" ]]; then
+                      mapfile -t lines < <(node scripts/gen-spk-fips.js --raw)
+                      fips_flag=true
+                  else
+                      mapfile -t lines < <(node scripts/gen-spk.js --raw)
+                      fips_flag=false
+                  fi
+                  dev_key="$(openssl rand -hex 16)"
+                  {
+                      echo "SPK=${lines[0]}"
+                      echo "JWT_SECRET=${lines[1]}"
+                      echo "DEV_API_KEY=${dev_key}"
+                      echo "SPIRE_FIPS=${fips_flag}"
+                      echo "DB_TYPE=sqlite3mem"
+                  } > .env
+                  chmod 600 .env
+                  echo "DEV_API_KEY=${dev_key}" >> "$GITHUB_ENV"
+
+            - name: Build and start Spire stack (Docker Compose)
+              shell: bash
+              working-directory: apps/spire
+              run: docker compose up -d --build
+
+            - name: Wait for nginx /status (via published :16777)
+              shell: bash
+              working-directory: apps/spire
+              run: |
+                  set -euo pipefail
+                  for _ in $(seq 1 120); do
+                      if curl -fsS "http://127.0.0.1:16777/status" >/dev/null; then
+                          exit 0
+                      fi
+                      sleep 1
+                  done
+                  echo "::error::Spire (via nginx) did not become ready on :16777/status within 120s"
+                  docker compose ps || true
+                  exit 1
+
+            - name: Run stress CLI matrix
+              shell: bash
+              working-directory: apps/spire
+              env:
+                  DEV_API_KEY: ${{ env.DEV_API_KEY }}
+              run: |
+                  set -euo pipefail
+                  pnpm stress:cli -- \
+                    --host "127.0.0.1:16777" \
+                    --walls 2 \
+                    --clients 2 \
+                    --conc 5 \
+                    --scenario chat \
+                    --seconds 180 \
+                    --stop-on-fail
+
+            - name: Stop stack and remove volumes
+              if: always()
+              shell: bash
+              working-directory: apps/spire
+              run: docker compose down -v --remove-orphans
