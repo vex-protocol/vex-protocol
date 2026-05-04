@@ -87,10 +87,39 @@ export function platformSuite(
                 (m) => m.direction === "incoming" && m.decrypted,
                 `[${platformName}] self-DM`,
             );
-            void client.messages.send(me.userID, "platform-test");
+            await client.messages.send(me.userID, "platform-test");
             const msg = await msgPromise;
             expect(msg.message).toBe("platform-test");
         });
+
+        test("message history retrieve + delete", async () => {
+            const me = client.me.user();
+            const body = "history-test";
+
+            // Runs early (right after first self-DM) so ratchet/session state is
+            // fresh — the same assertion was flaky late in the suite when many
+            // prior tests had exercised the client against Spire.
+            const msgPromise = waitForMessage(
+                client,
+                (m) =>
+                    m.direction === "incoming" &&
+                    m.decrypted &&
+                    m.message === body,
+                "history DM",
+                25_000,
+            );
+            await client.messages.send(me.userID, body);
+            await client.syncInboxNow();
+            const inbound = await msgPromise;
+            expect(inbound.authorID).toBe(me.userID);
+
+            const history = await client.messages.retrieve(me.userID);
+            expect(history.length).toBeGreaterThan(0);
+
+            await client.messages.delete(me.userID);
+            const afterDelete = await client.messages.retrieve(me.userID);
+            expect(afterDelete.length).toBe(0);
+        }, 35_000);
 
         test("two-user DM", async () => {
             const SK2 = await e2eGenerateSecretKey();
@@ -354,26 +383,6 @@ export function platformSuite(
                         .catch(() => {});
                 }
             }
-        });
-
-        test("message history retrieve + delete", async () => {
-            const me = client.me.user();
-
-            // Send a message and wait for it
-            const msgPromise = waitForMessage(
-                client,
-                (m) => m.direction === "incoming" && m.decrypted,
-                "history DM",
-            );
-            void client.messages.send(me.userID, "history-test");
-            await msgPromise;
-
-            const history = await client.messages.retrieve(me.userID);
-            expect(history.length).toBeGreaterThan(0);
-
-            await client.messages.delete(me.userID);
-            const afterDelete = await client.messages.retrieve(me.userID);
-            expect(afterDelete.length).toBe(0);
         });
 
         test("file upload + download", async () => {
