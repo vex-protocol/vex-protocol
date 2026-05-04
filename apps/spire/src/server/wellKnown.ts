@@ -9,6 +9,50 @@ import express from "express";
 const HEX_FINGERPRINT = /^[0-9a-fA-F]{2}(?::?[0-9a-fA-F]{2}){31}$/;
 
 /**
+ * Build the WebAuthn `expectedOrigin` entries for native Android
+ * clients from the same fingerprints used to publish the Digital
+ * Asset Links file.
+ *
+ * Android's Credential Manager sets `clientDataJSON.origin` to
+ * `android:apk-key-hash:<base64url(sha256-cert)>` for native
+ * ceremonies, not to the RP host's HTTPS origin. simplewebauthn
+ * therefore needs that exact string in its `expectedOrigin` list
+ * or it rejects the assertion before any of our application logic
+ * runs ("Unexpected registration response origin", presented to the
+ * client as a generic "RP failed" error).
+ *
+ * Operators already advertise the same SHA-256 fingerprints via
+ * `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` for the assetlinks file, so
+ * we derive the apk-key-hash form here and merge it into the origin
+ * allowlist automatically. That keeps the well-known file and the
+ * server-side origin check in lock-step from a single source of
+ * truth and saves operators from having to compute base64url of a
+ * raw SHA-256 by hand.
+ *
+ * Returns an empty array when no fingerprints are configured or
+ * none of them parse as valid SHA-256 hex.
+ */
+export function buildAndroidApkKeyHashOrigins(): string[] {
+    const fingerprintsRaw = parseList(
+        process.env["SPIRE_PASSKEY_ANDROID_FINGERPRINTS"],
+    );
+    const out: string[] = [];
+    for (const raw of fingerprintsRaw) {
+        const norm = normalizeFingerprint(raw);
+        if (norm == null) continue;
+        const hex = norm.replace(/:/g, "");
+        const bytes = Buffer.from(hex, "hex");
+        const b64u = bytes
+            .toString("base64")
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+        out.push(`android:apk-key-hash:${b64u}`);
+    }
+    return out;
+}
+
+/**
  * Build the Apple App Site Association body, or `null` when the
  * server isn't configured to advertise any iOS apps.
  */

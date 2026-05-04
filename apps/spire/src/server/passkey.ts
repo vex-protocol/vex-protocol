@@ -37,6 +37,7 @@ import { msgpack } from "../utils/msgpack.ts";
 import { AppError } from "./errors.ts";
 import { authLimiter } from "./rateLimit.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
+import { buildAndroidApkKeyHashOrigins } from "./wellKnown.ts";
 
 import { protect } from "./index.ts";
 
@@ -73,6 +74,14 @@ const pendingAuthentications = new Map<string, PendingAuthentication>();
  *   client origins (e.g. `https://app.vex.wtf,tauri://localhost,
  *   http://localhost:5173`). Required: WebAuthn binds an assertion
  *   to its origin and we must check it explicitly.
+ *
+ * The returned `expectedOrigin` list also includes any
+ * `android:apk-key-hash:<base64url>` entries derived from
+ * `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` (see
+ * `buildAndroidApkKeyHashOrigins`). Native Android Credential
+ * Manager sets `clientDataJSON.origin` to that string instead of the
+ * RP host, so we accept it implicitly whenever the operator has
+ * already advertised the cert via the assetlinks file.
  */
 function getRpConfig(): {
     expectedOrigin: string[];
@@ -93,13 +102,16 @@ function getRpConfig(): {
             "Passkeys are not configured on this server (SPIRE_PASSKEY_ORIGINS is unset).",
         );
     }
-    const expectedOrigin = originsRaw
+    const explicitOrigins = originsRaw
         .split(",")
         .map((o) => o.trim())
         .filter((o) => o.length > 0);
-    if (expectedOrigin.length === 0) {
+    if (explicitOrigins.length === 0) {
         throw new AppError(500, "SPIRE_PASSKEY_ORIGINS is empty.");
     }
+    const expectedOrigin = Array.from(
+        new Set([...explicitOrigins, ...buildAndroidApkKeyHashOrigins()]),
+    );
     return {
         expectedOrigin,
         rpID,
