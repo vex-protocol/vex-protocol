@@ -78,7 +78,10 @@ import { EventEmitter } from "eventemitter3";
 import * as uuid from "uuid";
 import { z } from "zod/v4";
 
-import { WebSocketAdapter } from "./transport/websocket.js";
+import {
+    WebSocketAdapter,
+    WebSocketNotOpenError,
+} from "./transport/websocket.js";
 import {
     decodeFipsInitialExtraV1,
     encodeFipsInitialExtraV1,
@@ -148,6 +151,13 @@ function debugLibvexDm(
     const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
     // eslint-disable-next-line no-console -- gated by LIBVEX_DEBUG_DM; remove when debugging is done
     console.error(`[libvex:debug-dm] ${payload}`);
+}
+
+function ignoreSocketTeardown(err: unknown): void {
+    if (err instanceof WebSocketNotOpenError) return;
+    // Re-throw anything else as a real unhandled rejection so it
+    // shows up in dev tools and Sentry-style reporters.
+    throw err;
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -2437,7 +2447,15 @@ export class Client {
                     }
                 };
                 this.socket.on("message", callback);
-                void this.send(msg, hmac);
+                // Forward send failures to the outer promise instead
+                // of leaking them as an unhandled rejection: the
+                // listener above can never resolve if the send didn't
+                // make it onto the wire, so without this the caller
+                // would hang for the full 30s send-loop timeout.
+                this.send(msg, hmac).catch((err: unknown) => {
+                    this.socket.off("message", callback);
+                    rej(err instanceof Error ? err : new Error(String(err)));
+                });
             });
         });
     }
@@ -3312,7 +3330,14 @@ export class Client {
             return;
         }
         this.setAlive(false);
-        void this.send({ transmissionID: uuid.v4(), type: "ping" });
+        // Swallow a teardown-race rejection: if the socket transitions
+        // to CLOSING between our readyState check and the platform
+        // `send`, the next ping interval will see `isAlive=false` and
+        // close cleanly above. Real failures still bubble up because
+        // we re-throw anything that isn't `WebSocketNotOpenError`.
+        this.send({ transmissionID: uuid.v4(), type: "ping" }).catch(
+            ignoreSocketTeardown,
+        );
     }
 
     /**
@@ -3350,7 +3375,15 @@ export class Client {
     }
 
     private pong(transmissionID: string) {
-        void this.send({ transmissionID, type: "pong" });
+        // Drop the pong if the socket is already tearing down — the
+        // server will simply mark us absent and our own ping watchdog
+        // will trigger a reconnect on the next interval. The
+        // alternative (an unhandled rejection from `void this.send`)
+        // shows up as a red INVALID_STATE_ERR every time native
+        // delivers a `message` and a `close` in the same JS turn,
+        // which is the exact race that fires during the Android
+        // biometric prompt and any background → foreground swap.
+        this.send({ transmissionID, type: "pong" }).catch(ignoreSocketTeardown);
     }
 
     private async populateKeyRing() {
@@ -3996,7 +4029,13 @@ export class Client {
             transmissionID: msg.transmissionID,
             type: "response",
         };
-        void this.send(response);
+        // If the socket tore down between receiving the challenge
+        // and signing the response, dropping the response is safe:
+        // the server will time out the auth handshake and close,
+        // our reconnect loop will redo the challenge on the next
+        // socket. Logging it as an unhandled rejection only adds
+        // noise during foreground/background swaps.
+        this.send(response).catch(ignoreSocketTeardown);
     }
 
     private async retrieveEmojiByID(emojiID: string): Promise<Emoji | null> {
@@ -4148,6 +4187,17 @@ export class Client {
             backoff = Math.min(backoff * 2, 4_000);
         }
 
+        // The adapter re-checks `readyState` and converts the
+        // platform's opaque `DOMException("INVALID_STATE_ERR")` into a
+        // typed `WebSocketNotOpenError`. That handles the TOCTOU
+        // window between the loop above exiting on readyState=1 and
+        // the synchronous `send` below: React Native's bridge can
+        // dispatch a `websocketClosed` between the two, in which case
+        // the socket has transitioned native-side even though our JS
+        // close handler hasn't run yet. With the typed error,
+        // discarded callers (`pong`, `ping`) can `.catch(ignore)` the
+        // teardown without an unhandled rejection, and real callers
+        // can choose to retry on the next reconnect.
         this.socket.send(XUtils.packMessage(msg, header));
     }
 
@@ -4339,7 +4389,14 @@ export class Client {
                     }
                 };
                 this.socket.on("message", callback);
-                void this.send(msgb, hmac);
+                // See the matching block above (sendMail handshake):
+                // forward send failures to the outer promise so the
+                // caller doesn't hang waiting for a response we never
+                // sent.
+                this.send(msgb, hmac).catch((err: unknown) => {
+                    this.socket.off("message", callback);
+                    rej(err instanceof Error ? err : new Error(String(err)));
+                });
             });
         } finally {
             this.sending.delete(device.deviceID);
@@ -4470,7 +4527,10 @@ export class Client {
             transmissionID: uuid.v4(),
             type: "receipt",
         };
-        void this.send(receipt);
+        // Receipts are best-effort acknowledgements; a missed one
+        // just means the server resends the mail on the next sync.
+        // Don't surface a teardown race as an unhandled rejection.
+        this.send(receipt).catch(ignoreSocketTeardown);
     }
 
     private setAlive(status: boolean) {
