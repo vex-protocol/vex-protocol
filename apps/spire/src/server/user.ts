@@ -5,7 +5,7 @@
  */
 
 import type { Database } from "../Database.ts";
-import type { DevicePayload } from "@vex-chat/types";
+import type { Device, DevicePayload } from "@vex-chat/types";
 
 import express from "express";
 
@@ -99,6 +99,110 @@ export function createPendingDeviceEnrollmentRequest(
         status: "pending_approval",
         userID,
     };
+}
+
+/**
+ * Reusable approve/reject side of a pending device-enrollment
+ * request. Lives here so both the device-authenticated router
+ * (signs an approval challenge with the approving device's
+ * Ed25519 key) and the passkey-authenticated router (relies on
+ * the freshness of the passkey JWT instead) can share the same
+ * state-machine + enrollment lifecycle.
+ *
+ * The device-auth caller is expected to have already verified the
+ * approving device's signature before invoking this helper.
+ */
+export async function resolveDeviceEnrollmentRequest(args: {
+    action: "approve" | "reject";
+    db: Database;
+    notify: (
+        userID: string,
+        event: string,
+        transmissionID: string,
+        data?: unknown,
+        deviceID?: string,
+    ) => void;
+    requestID: string;
+    userID: string;
+}): Promise<
+    | { device: Device; kind: "ok" }
+    | { error: string; kind: "err"; status: number }
+> {
+    pruneDeviceEnrollmentRequests();
+    const pending = deviceEnrollments.get(args.requestID);
+    if (!pending || pending.userID !== args.userID) {
+        return { error: "Request not found.", kind: "err", status: 404 };
+    }
+    if (pending.status !== "pending") {
+        return {
+            error: "Request is not pending.",
+            kind: "err",
+            status: 409,
+        };
+    }
+    if (Date.now() - pending.createdAt > DEVICE_REQUEST_TTL_MS) {
+        pending.status = "expired";
+        pending.resolvedAt = Date.now();
+        pending.error = "Request expired.";
+        deviceEnrollments.set(args.requestID, pending);
+        return { error: "Request expired.", kind: "err", status: 410 };
+    }
+
+    if (args.action === "reject") {
+        pending.status = "rejected";
+        pending.resolvedAt = Date.now();
+        pending.error = "Rejected.";
+        deviceEnrollments.set(args.requestID, pending);
+        args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: args.requestID,
+            status: "rejected",
+        });
+        // Caller maps `kind: "ok"` without device to a 200; reuse the
+        // ok shape with a placeholder device since the type insists
+        // on one. The reject flow doesn't return a body, the caller
+        // discards `device`.
+        return {
+            device: {
+                deleted: false,
+                deviceID: "",
+                lastLogin: "",
+                name: "",
+                owner: args.userID,
+                signKey: "",
+            },
+            kind: "ok",
+        };
+    }
+
+    try {
+        const device = await args.db.createDevice(
+            args.userID,
+            pending.devicePayload,
+        );
+        pending.status = "approved";
+        pending.approvedDeviceID = device.deviceID;
+        pending.resolvedAt = Date.now();
+        deviceEnrollments.set(args.requestID, pending);
+        args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: args.requestID,
+            status: "approved",
+        });
+        return { device, kind: "ok" };
+    } catch {
+        pending.status = "rejected";
+        pending.error = "Could not create approved device.";
+        pending.resolvedAt = Date.now();
+        deviceEnrollments.set(args.requestID, pending);
+        args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: args.requestID,
+            status: "rejected",
+        });
+        return {
+            error: "Could not create approved device.",
+            kind: "err",
+            status: 470,
+        };
+    }
 }
 
 function buildApprovalChallenge(

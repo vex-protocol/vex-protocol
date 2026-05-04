@@ -23,6 +23,7 @@ export type {
     Message,
     Messages,
     Moderation,
+    Passkeys,
     PendingDeviceApprovalStatus,
     PendingDeviceRegistration,
     PendingDeviceRequest,
@@ -47,4 +48,4 @@ export type {
     UnsavedPreKey,
 } from "./types/index.js";
 // Re-export app-facing types
-export type { Invite } from "@vex-chat/types";
+export type { Invite, Passkey } from "@vex-chat/types";

@@ -26,6 +26,7 @@ import type {
     KeyBundle,
     MailWS,
     NotifyMsg,
+    Passkey,
     Permission,
     PreKeysSQL,
     PreKeysWS,
@@ -258,6 +259,10 @@ import {
     InviteCodec,
     KeyBundleCodec,
     OtkCountCodec,
+    PasskeyArrayCodec,
+    PasskeyAuthFinishResponseCodec,
+    PasskeyCodec,
+    PasskeyOptionsCodec,
     PendingDeviceRequestArrayCodec,
     PendingDeviceRequestCodec,
     PermissionArrayCodec,
@@ -317,6 +322,14 @@ export interface Channels {
 export type { Device } from "@vex-chat/types";
 
 /**
+ * Public passkey record returned by `client.passkeys.list()` and
+ * `client.passkeys.finishRegistration()`. Server-private fields
+ * (credential ID, public key, COSE algorithm, signature counter) are
+ * never exposed.
+ */
+export type { Passkey } from "@vex-chat/types";
+
+/**
  * ClientOptions are the options you can pass into the client.
  */
 export interface ClientOptions {
@@ -358,6 +371,8 @@ export interface Devices {
     delete: (deviceID: string) => Promise<void>;
     /** Fetches one pending registration request by ID for the current user. */
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
+    /** Lists every device belonging to the current account. */
+    list: () => Promise<Device[]>;
     /** Lists pending/processed registration requests for the current user. */
     listRequests: () => Promise<PendingDeviceRequest[]>;
     /**
@@ -439,6 +454,16 @@ export interface FileProgress {
 export type FileRes = FileResponse;
 
 /**
+ * @ignore
+ */
+export interface Files {
+    /** Uploads and encrypts a file. */
+    create: (file: Uint8Array) => Promise<[FileSQL, string]>;
+    /** Downloads and decrypts a file using a file ID and key. */
+    retrieve: (fileID: string, key: string) => Promise<FileResponse | null>;
+}
+
+/**
  * Channel is a chat channel on a server.
  *
  * Common fields:
@@ -457,16 +482,6 @@ export type { Channel } from "@vex-chat/types";
  * - `icon` (optional URL/data)
  */
 export type { Server } from "@vex-chat/types";
-
-/**
- * @ignore
- */
-export interface Files {
-    /** Uploads and encrypts a file. */
-    create: (file: Uint8Array) => Promise<[FileSQL, string]>;
-    /** Downloads and decrypts a file using a file ID and key. */
-    retrieve: (fileID: string, key: string) => Promise<FileResponse | null>;
-}
 
 /**
  * @ignore
@@ -531,6 +546,65 @@ export interface Message {
     sender: string;
     /** Time the message was created/received. */
     timestamp: string;
+}
+
+/**
+ * Begin/finish handshakes for a passkey (WebAuthn) ceremony plus the
+ * passkey-only admin/recovery surface. The host application (a
+ * browser, Tauri webview, etc.) is responsible for invoking
+ * `navigator.credentials.create()` / `.get()` itself (e.g. via
+ * `@simplewebauthn/browser`) using the `options` returned from
+ * `begin*`, and then handing the resulting `RegistrationResponseJSON`
+ * / `AuthenticationResponseJSON` to `finish*`.
+ *
+ * @public
+ */
+export interface Passkeys {
+    /** Approves a pending device-enrollment request using the passkey session. */
+    approveDeviceRequest: (requestID: string) => Promise<Device>;
+    /** Begin a public passkey authentication ceremony for `username`. */
+    beginAuthentication: (username: string) => Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }>;
+    /** Begin adding a new passkey to the currently authenticated account. */
+    beginRegistration: (name: string) => Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }>;
+    /** Remove a passkey from the account. */
+    delete: (passkeyID: string) => Promise<void>;
+    /** Delete one of the account's devices using the passkey session. */
+    deleteDevice: (deviceID: string) => Promise<void>;
+    /**
+     * Finish the public passkey authentication ceremony with the
+     * assertion produced by the host. On success the client is
+     * placed in passkey-only mode: the bearer is the passkey JWT,
+     * device-only flows (mail, etc.) will not work, and the
+     * `client.passkeys.*` admin methods become available.
+     */
+    finishAuthentication: (args: {
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<{
+        passkeyID: string;
+        token: string;
+        user: User;
+    }>;
+    /** Finish adding a passkey to the currently authenticated account. */
+    finishRegistration: (args: {
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<Passkey>;
+    /** List the account's passkeys (public shape only — no key material). */
+    list: () => Promise<Passkey[]>;
+    /** List all of the account's devices using the passkey session. */
+    listDevices: () => Promise<Device[]>;
+    /** Reject a pending device-enrollment request using the passkey session. */
+    rejectDeviceRequest: (requestID: string) => Promise<void>;
 }
 
 export type PendingDeviceApprovalStatus =
@@ -896,6 +970,7 @@ export class Client {
         approveRequest: this.approveDeviceRequest.bind(this),
         delete: this.deleteDevice.bind(this),
         getRequest: this.getDeviceRegistrationRequest.bind(this),
+        list: this.listDevices.bind(this),
         listRequests: this.listDeviceRegistrationRequests.bind(this),
         pollPendingRegistration: this.pollPendingDeviceRegistration.bind(this),
         register: this.registerDevice.bind(this),
@@ -969,6 +1044,7 @@ export class Client {
          */
         user: this.getUser.bind(this),
     };
+
     /**
      * Message operations (direct and group).
      *
@@ -1009,13 +1085,37 @@ export class Client {
          */
         send: this.sendMessage.bind(this),
     };
-
     /**
      * Server moderation helper methods.
      */
     public moderation: Moderation = {
         fetchPermissionList: this.fetchPermissionList.bind(this),
         kick: this.kickUser.bind(this),
+    };
+
+    /**
+     * Passkey ("recovery credential") methods.
+     *
+     * Passkeys are an account-bound second-class credential that can
+     * authenticate the owning user, list devices, delete devices, and
+     * approve/reject pending device-enrollment requests — i.e.
+     * provisioning + recovery. They cannot send/decrypt mail.
+     *
+     * The host app drives the WebAuthn ceremony (e.g. via
+     * `@simplewebauthn/browser`) and hands the JSON response to
+     * `finish*`.
+     */
+    public passkeys: Passkeys = {
+        approveDeviceRequest: this.passkeyApproveDeviceRequest.bind(this),
+        beginAuthentication: this.beginPasskeyAuthentication.bind(this),
+        beginRegistration: this.beginPasskeyRegistration.bind(this),
+        delete: this.deletePasskey.bind(this),
+        deleteDevice: this.passkeyDeleteDevice.bind(this),
+        finishAuthentication: this.finishPasskeyAuthentication.bind(this),
+        finishRegistration: this.finishPasskeyRegistration.bind(this),
+        list: this.listPasskeys.bind(this),
+        listDevices: this.passkeyListDevices.bind(this),
+        rejectDeviceRequest: this.passkeyRejectDeviceRequest.bind(this),
     };
 
     /**
@@ -1981,6 +2081,33 @@ export class Client {
         return decodeAxios(DeviceCodec, response.data);
     }
 
+    private async beginPasskeyAuthentication(username: string): Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }> {
+        const response = await this.http.post(
+            this.getHost() + "/auth/passkey/begin",
+            msgpack.encode({ username }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeAxios(PasskeyOptionsCodec, response.data);
+    }
+
+    private async beginPasskeyRegistration(name: string): Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }> {
+        const userID = this.getUser().userID;
+        const response = await this.http.post(
+            this.getHost() + "/user/" + userID + "/passkeys/register/begin",
+            msgpack.encode({ name }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeAxios(PasskeyOptionsCodec, response.data);
+    }
+
     private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
         if (!preKey.index) {
             throw new Error("Key index is required.");
@@ -2337,6 +2464,13 @@ export class Client {
         await this.database.deleteHistory(channelOrUserID);
     }
 
+    private async deletePasskey(passkeyID: string): Promise<void> {
+        const userID = this.getUser().userID;
+        await this.http.delete(
+            this.getHost() + "/user/" + userID + "/passkeys/" + passkeyID,
+        );
+    }
+
     private async deletePermission(permissionID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/permission/" + permissionID);
     }
@@ -2374,7 +2508,6 @@ export class Client {
         );
         return decodeAxios(PermissionArrayCodec, res.data);
     }
-
     private async fetchUser(
         userIdentifier: string,
     ): Promise<[null | User, AxiosError | null]> {
@@ -2469,6 +2602,50 @@ export class Client {
         }
         throw new Error(`${base}${this.deviceListFailureDetail(lastErr)}`);
     }
+
+    /**
+     * Finish a passkey login and adopt the resulting JWT as the
+     * client's bearer token. After this call, `client.passkeys.*`
+     * admin methods are usable; messaging routes will continue to
+     * require a real device token.
+     */
+    private async finishPasskeyAuthentication(args: {
+        requestID: string;
+        response: Record<string, unknown>;
+    }): Promise<{
+        passkeyID: string;
+        token: string;
+        user: User;
+    }> {
+        const response = await this.http.post(
+            this.getHost() + "/auth/passkey/finish",
+            msgpack.encode(args),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        const decoded = decodeAxios(
+            PasskeyAuthFinishResponseCodec,
+            response.data,
+        );
+        this.setUser(decoded.user);
+        this.token = decoded.token;
+        this.http.defaults.headers.common.Authorization = `Bearer ${decoded.token}`;
+        return decoded;
+    }
+
+    private async finishPasskeyRegistration(args: {
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }): Promise<Passkey> {
+        const userID = this.getUser().userID;
+        const response = await this.http.post(
+            this.getHost() + "/user/" + userID + "/passkeys/register/finish",
+            msgpack.encode(args),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeAxios(PasskeyCodec, response.data);
+    }
+
     private async forward(message: Message) {
         if (this.isManualCloseInFlight()) {
             return;
@@ -2959,6 +3136,8 @@ export class Client {
         }
     }
 
+    // ── Passkeys ────────────────────────────────────────────────────────
+
     /**
      * Fresh read of the `manuallyClosing` flag for async loops — direct property checks
      * after `await` are flagged as always-false by control-flow analysis even though
@@ -2999,6 +3178,28 @@ export class Client {
                 "/devices/requests",
         );
         return decodeAxios(PendingDeviceRequestArrayCodec, response.data);
+    }
+
+    /**
+     * Lists every device the current account owns.
+     *
+     * Uses the device-authenticated `/user/:id/devices` route. For
+     * the passkey-recovery equivalent see `client.passkeys.listDevices`.
+     */
+    private async listDevices(): Promise<Device[]> {
+        const userID = this.getUser().userID;
+        const res = await this.http.get(
+            this.getHost() + "/user/" + userID + "/devices",
+        );
+        return decodeAxios(DeviceArrayCodec, res.data);
+    }
+
+    private async listPasskeys(): Promise<Passkey[]> {
+        const userID = this.getUser().userID;
+        const response = await this.http.get(
+            this.getHost() + "/user/" + userID + "/passkeys",
+        );
+        return decodeAxios(PasskeyArrayCodec, response.data);
     }
 
     private async markSessionVerified(sessionID: string) {
@@ -3046,6 +3247,48 @@ export class Client {
         }
         void this.database.saveMessage(message);
     };
+
+    private async passkeyApproveDeviceRequest(
+        requestID: string,
+    ): Promise<Device> {
+        const userID = this.getUser().userID;
+        const response = await this.http.post(
+            this.getHost() +
+                "/user/" +
+                userID +
+                "/passkey/devices/requests/" +
+                requestID +
+                "/approve",
+        );
+        return decodeAxios(DeviceCodec, response.data);
+    }
+
+    private async passkeyDeleteDevice(deviceID: string): Promise<void> {
+        const userID = this.getUser().userID;
+        await this.http.delete(
+            this.getHost() + "/user/" + userID + "/passkey/devices/" + deviceID,
+        );
+    }
+
+    private async passkeyListDevices(): Promise<Device[]> {
+        const userID = this.getUser().userID;
+        const response = await this.http.get(
+            this.getHost() + "/user/" + userID + "/passkey/devices",
+        );
+        return decodeAxios(DeviceArrayCodec, response.data);
+    }
+
+    private async passkeyRejectDeviceRequest(requestID: string): Promise<void> {
+        const userID = this.getUser().userID;
+        await this.http.post(
+            this.getHost() +
+                "/user/" +
+                userID +
+                "/passkey/devices/requests/" +
+                requestID +
+                "/reject",
+        );
+    }
 
     private ping() {
         if (!this.isAlive) {

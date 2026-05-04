@@ -79,6 +79,20 @@ export {
 } from "./messages.js";
 
 export {
+    type Passkey,
+    type PasskeyAuthenticationOptions,
+    PasskeyAuthFinishPayloadSchema,
+    PasskeyAuthStartPayloadSchema,
+    PasskeyRegistrationFinishPayloadSchema,
+    type PasskeyRegistrationOptions,
+    PasskeyRegistrationStartPayloadSchema,
+    PasskeySchema,
+    type PublicKeyCredentialCreationOptionsJSON,
+    type PublicKeyCredentialDescriptorJSON,
+    type PublicKeyCredentialRequestOptionsJSON,
+} from "./passkeys.js";
+
+export {
     type Channel,
     ChannelSchema,
     type Invite,

@@ -21,6 +21,7 @@ import {
     FileSQLSchema,
     InviteSchema,
     KeyBundleSchema,
+    PasskeySchema,
     PermissionSchema,
     ServerSchema,
     UserSchema,
@@ -155,6 +156,35 @@ export const WhoamiCodec = createCodec(
 );
 
 export const OtkCountCodec = createCodec(z.object({ count: z.number() }));
+
+// ── Passkey response codecs ────────────────────────────────────────────────
+
+export const PasskeyCodec = createCodec(PasskeySchema);
+export const PasskeyArrayCodec = createCodec(z.array(PasskeySchema));
+
+/**
+ * The shape of `/user/:id/passkeys/register/begin` and
+ * `/auth/passkey/begin` responses. `options` is the WebAuthn JSON
+ * the host hands straight to `navigator.credentials.create()` /
+ * `.get()` (via `@simplewebauthn/browser`); we don't validate its
+ * inner shape because both ends of the wire (`@simplewebauthn/server`
+ * on spire, `@simplewebauthn/browser` on the host) already do.
+ */
+export const PasskeyOptionsCodec = createCodec(
+    z.object({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies by simplewebauthn version
+        options: z.unknown() as z.ZodType<any>,
+        requestID: z.string(),
+    }),
+);
+
+export const PasskeyAuthFinishResponseCodec = createCodec(
+    z.object({
+        passkeyID: z.string(),
+        token: z.string(),
+        user: UserSchema,
+    }),
+);
 
 // ── Helper: decode axios response buffer ────────────────────────────────────
 

@@ -87,6 +87,7 @@
     "dependencies": {
         "@asyncapi/web-component": "2.6.5",
         "@scalar/express-api-reference": "0.9.7",
+        "@simplewebauthn/server": "catalog:",
         "@vex-chat/crypto": "workspace:^",
         "@vex-chat/types": "workspace:^",
         "argon2": "0.44.0",
