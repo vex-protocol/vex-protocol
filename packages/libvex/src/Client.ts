@@ -112,10 +112,18 @@ export class DeviceApprovalRequiredError extends Error {
     public readonly challenge: string;
     public readonly expiresAt: string;
     public readonly requestID: string;
+    /**
+     * Existing user's ID, when the server provides it. Lets the new
+     * (unauthenticated) device fetch the public avatar and show an
+     * "is this you?" confirmation before continuing the approval
+     * dance. Optional because older servers don't return it.
+     */
+    public readonly userID: null | string;
     constructor(args: {
         challenge: string;
         expiresAt: string;
         requestID: string;
+        userID?: null | string;
     }) {
         super(
             "Device registration requires approval from an existing device. requestID=" +
@@ -125,6 +133,7 @@ export class DeviceApprovalRequiredError extends Error {
         this.challenge = args.challenge;
         this.expiresAt = args.expiresAt;
         this.requestID = args.requestID;
+        this.userID = args.userID ?? null;
     }
 }
 
@@ -535,6 +544,13 @@ export interface PendingDeviceRegistration {
     expiresAt: string;
     requestID: string;
     status: "pending_approval";
+    /**
+     * Existing user's ID. Optional for backward compat with older
+     * servers that don't include it; when present, the new device can
+     * fetch the public avatar from `/avatar/:userID` (no auth required)
+     * to power an "is this you?" confirmation.
+     */
+    userID?: string | undefined;
 }
 
 export interface PendingDeviceRequest {
@@ -1848,6 +1864,7 @@ export class Client {
                                 challenge: pendingApproval.challenge,
                                 expiresAt: pendingApproval.expiresAt,
                                 requestID: pendingApproval.requestID,
+                                userID: pendingApproval.userID ?? null,
                             }),
                         ];
                     }

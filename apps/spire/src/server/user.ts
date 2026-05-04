@@ -65,6 +65,7 @@ export function createPendingDeviceEnrollmentRequest(
     expiresAt: string;
     requestID: string;
     status: "pending_approval";
+    userID: string;
 } {
     pruneDeviceEnrollmentRequests();
     const requestID = crypto.randomUUID();
@@ -82,6 +83,13 @@ export function createPendingDeviceEnrollmentRequest(
         requestID,
         status: "pending",
     });
+    // We include the existing user's `userID` so the new (still-
+    // unauthenticated) device can fetch its public avatar from the
+    // unauthenticated `/avatar/:userID` endpoint and surface an "is
+    // this you?" confirmation before continuing with the approval
+    // request. The userID is already implicit (the requester typed the
+    // username and learned the account exists from this very response),
+    // so returning it here doesn't expand the attack surface.
     return {
         challenge: challengeHex,
         expiresAt: new Date(
@@ -89,6 +97,7 @@ export function createPendingDeviceEnrollmentRequest(
         ).toISOString(),
         requestID,
         status: "pending_approval",
+        userID,
     };
 }
 

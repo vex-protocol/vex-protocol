@@ -80,6 +80,11 @@ export const RegisterPendingApprovalCodec = createCodec(
         expiresAt: z.string(),
         requestID: z.string(),
         status: z.literal("pending_approval"),
+        // Optional for backward compat with older servers that don't
+        // surface the existing user's ID in this response. When present,
+        // clients can use it to fetch the unauthenticated avatar and
+        // show an "is this you?" confirmation before proceeding.
+        userID: z.string().optional(),
     }),
 );
 
