@@ -84,6 +84,8 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 
 The `/auth/passkey/*`, `/user/:id/passkeys/*`, and `/passkey/*` routes are gated on `SPIRE_PASSKEY_RP_ID` and `SPIRE_PASSKEY_ORIGINS`; without them those endpoints return `500 Passkeys are not configured`. See [`.env.example`](./.env.example) for the full set, including the optional `SPIRE_PASSKEY_IOS_APP_IDS`, `SPIRE_PASSKEY_ANDROID_PACKAGE`, and `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` triple that makes spire serve the WebAuthn well-known association files (`/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json`) directly. Those endpoints 404 when their env vars aren't set, so a non-passkey deployment is indistinguishable from one that hasn't enrolled an app.
 
+The same `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` value is reused by `getRpConfig()` to derive `android:apk-key-hash:<base64url>` entries, which it merges into the WebAuthn `expectedOrigin` allowlist. Native Android Credential Manager sets `clientDataJSON.origin` to that string instead of the RP host, so without those entries simplewebauthn rejects every native-Android assertion at the origin check (the mobile UI surfaces this as a generic "RP failed" error). Operators only have to publish the cert fingerprints; the base64url math is handled server-side.
+
 ### Sample `.env`
 
 ```sh

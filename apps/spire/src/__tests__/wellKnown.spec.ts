@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+    buildAndroidApkKeyHashOrigins,
     buildAppleAppSiteAssociation,
     buildAssetLinks,
     normalizeFingerprint,
@@ -109,5 +110,28 @@ describe("buildAssetLinks", () => {
         process.env["SPIRE_PASSKEY_ANDROID_PACKAGE"] = "chat.vex.mobile";
         process.env["SPIRE_PASSKEY_ANDROID_FINGERPRINTS"] = "not-a-hash, ZZ:CD";
         expect(buildAssetLinks()).toBeNull();
+    });
+});
+
+describe("buildAndroidApkKeyHashOrigins", () => {
+    it("returns an empty list when no fingerprints are configured", () => {
+        expect(buildAndroidApkKeyHashOrigins()).toEqual([]);
+    });
+
+    it("derives base64url apk-key-hash origins from configured fingerprints", () => {
+        process.env["SPIRE_PASSKEY_ANDROID_FINGERPRINTS"] =
+            "7D:94:DB:DF:C9:2D:A8:BB:A1:A7:9B:64:E1:17:AD:70:0A:69:DA:A5:A0:EB:00:A9:12:A4:4E:FC:5F:6B:7C:42, 5c13f0e4ee1167a49c04ebc8033e058f4450bdae36aa15b64f837cac240fd282";
+        expect(buildAndroidApkKeyHashOrigins()).toEqual([
+            "android:apk-key-hash:fZTb38ktqLuhp5tk4RetcApp2qWg6wCpEqRO_F9rfEI",
+            "android:apk-key-hash:XBPw5O4RZ6ScBOvIAz4Fj0RQva42qhW2T4N8rCQP0oI",
+        ]);
+    });
+
+    it("silently drops malformed fingerprints", () => {
+        process.env["SPIRE_PASSKEY_ANDROID_FINGERPRINTS"] =
+            "7D:94:DB:DF:C9:2D:A8:BB:A1:A7:9B:64:E1:17:AD:70:0A:69:DA:A5:A0:EB:00:A9:12:A4:4E:FC:5F:6B:7C:42, not-a-hash";
+        expect(buildAndroidApkKeyHashOrigins()).toEqual([
+            "android:apk-key-hash:fZTb38ktqLuhp5tk4RetcApp2qWg6wCpEqRO_F9rfEI",
+        ]);
     });
 });
