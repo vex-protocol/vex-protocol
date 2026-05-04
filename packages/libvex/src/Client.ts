@@ -2060,6 +2060,11 @@ export class Client {
         return whoami;
     }
 
+    private acknowledgeInboundMail(mail: MailWS): void {
+        this.seenMailIDs.add(mail.mailID);
+        this.sendReceipt(new Uint8Array(mail.nonce));
+    }
+
     private async approveDeviceRequest(requestID: string): Promise<Device> {
         const req = await this.getDeviceRegistrationRequest(requestID);
         if (!req) {
@@ -2510,7 +2515,6 @@ export class Client {
         }
         return "";
     }
-
     /**
      * Gets a list of permissions for a server.
      *
@@ -2526,6 +2530,7 @@ export class Client {
         );
         return decodeAxios(PermissionArrayCodec, res.data);
     }
+
     private async fetchUser(
         userIdentifier: string,
     ): Promise<[null | User, AxiosError | null]> {
@@ -3071,6 +3076,8 @@ export class Client {
         this.emitter.emit("ready");
     }
 
+    // ── Passkeys ────────────────────────────────────────────────────────
+
     private initSocket() {
         try {
             if (!this.token) {
@@ -3168,8 +3175,6 @@ export class Client {
             );
         }
     }
-
-    // ── Passkeys ────────────────────────────────────────────────────────
 
     /**
      * Fresh read of the `manuallyClosing` flag for async loops — direct property checks
@@ -3503,7 +3508,6 @@ export class Client {
             }
             return;
         }
-        this.seenMailIDs.add(mail.mailID);
 
         if (this.manuallyClosing) {
             if (libvexDebugDmEnabled()) {
@@ -3514,7 +3518,6 @@ export class Client {
             return;
         }
 
-        this.sendReceipt(new Uint8Array(mail.nonce));
         let timeout = 1;
         while (this.reading) {
             await sleep(timeout);
@@ -3816,6 +3819,7 @@ export class Client {
                                 this.emitter.emit("session", newSession, user);
                             } else {
                             }
+                            this.acknowledgeInboundMail(mail);
                         } else {
                             if (libvexDebugDmEnabled()) {
                                 debugLibvexDm(
@@ -3949,6 +3953,7 @@ export class Client {
                             this.sessionRecords[
                                 XUtils.encodeHex(session.publicKey)
                             ] = session;
+                            this.acknowledgeInboundMail(mail);
                         } else {
                             void healSession();
                             this.emitter.emit("retryRequest", {
@@ -4226,27 +4231,84 @@ export class Client {
         }
 
         const mailID = uuid.v4();
+        const msgBytes = XUtils.decodeUTF8(message);
+        const myUserID = this.getUser().userID;
+        // Fan-out only to *other* server members. The current account's other
+        // devices receive the same group mail via `forward()` on the outgoing
+        // `message` event (see `onInternalMessage`). Including our own devices
+        // here races X3DH/ephemeral state and often fails silently — which
+        // matched reports of flaky early group messages and missing delivery
+        // while DMs (which never self-target) behaved better.
+        const peerUserIDs = [...new Set(userList.map((u) => u.userID))].filter(
+            (id) => id !== myUserID,
+        );
 
-        const userIDs = [...new Set(userList.map((user) => user.userID))];
-        const devices = await this.getMultiUserDeviceList(userIDs);
+        if (peerUserIDs.length === 0) {
+            const dev = this.getDevice();
+            const nonce = xMakeNonce();
+            this.emitter.emit("message", {
+                authorID: myUserID,
+                decrypted: true,
+                direction: "outgoing",
+                forward: false,
+                group: channelID,
+                mailID,
+                message,
+                nonce: XUtils.encodeHex(nonce),
+                readerID: myUserID,
+                recipient: dev.deviceID,
+                sender: dev.deviceID,
+                timestamp: new Date().toISOString(),
+            });
+            return;
+        }
 
-        for (const device of devices) {
+        const devices = await this.getMultiUserDeviceList(peerUserIDs);
+        if (devices.length === 0) {
+            throw new Error(
+                "No devices registered for other channel members — cannot send group message.",
+            );
+        }
+
+        const stableDevices = [...devices].sort((a, b) =>
+            a.deviceID.localeCompare(b.deviceID, "en"),
+        );
+
+        let failCount = 0;
+        let lastErr: unknown;
+        for (const device of stableDevices) {
             const ownerRecord = this.userRecords[device.owner];
             if (!ownerRecord) {
+                failCount += 1;
                 continue;
             }
             try {
                 await this.sendMail(
                     device,
                     ownerRecord,
-                    XUtils.decodeUTF8(message),
+                    msgBytes,
                     uuidToUint8(channelID),
                     mailID,
                     false,
                 );
-            } catch {
-                /* best-effort; each device needs its own X3DH handshake (sequential) */
+            } catch (e) {
+                lastErr = e;
+                failCount += 1;
             }
+        }
+
+        if (failCount === stableDevices.length) {
+            throw lastErr instanceof Error
+                ? lastErr
+                : new Error(String(lastErr));
+        }
+        if (failCount > 0) {
+            const partial = new Error(
+                `Group message failed to reach ${String(failCount)} of ` +
+                    `${String(stableDevices.length)} peer device(s).`,
+            );
+            partial.cause = lastErr;
+            throw partial;
         }
     }
 
