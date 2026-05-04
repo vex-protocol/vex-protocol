@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.1.8
+
+### Patch Changes
+
+- [#34](https://github.com/vex-protocol/vex-protocol/pull/34) [`3f8db96`](https://github.com/vex-protocol/vex-protocol/commit/3f8db96f7943e108ccc4e84bc64f5db2622b1857) Thanks [@yuki111888](https://github.com/yuki111888)! - Usernames are now case-insensitive: registration and login fold the provided username to lowercase, so `User` and `user` resolve to the same account. `client.randomUsername()` returns lowercase words to match the canonical form. No migration required — existing mixed-case rows remain accessible under any-case input.
+
 ## 6.1.7
 
 ### Patch Changes
