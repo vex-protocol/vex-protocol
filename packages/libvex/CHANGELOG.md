@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.1.9
+
+### Patch Changes
+
+- [#36](https://github.com/vex-protocol/vex-protocol/pull/36) [`4835c81`](https://github.com/vex-protocol/vex-protocol/commit/4835c81c181e9cf122077315575707f2a377a93e) Thanks [@yuki111888](https://github.com/yuki111888)! - Pending device-approval responses now include the existing user's `userID`. Spire returns it from `createPendingDeviceEnrollmentRequest`, the `RegisterPendingApprovalCodec` accepts it (optional for back-compat with older servers), and `DeviceApprovalRequiredError` / `PendingDeviceRegistration` expose it as `userID`. This lets a new, still-unauthenticated device fetch the public avatar via `/avatar/:userID` and surface an "is this you?" confirmation before continuing the approval dance. Purely additive; older servers/clients that omit the field continue to work.
+
 ## 6.1.8
 
 ### Patch Changes
