@@ -32,6 +32,11 @@ interface DeviceEnrollmentRequest {
     createdAt: number;
     devicePayload: DevicePayload;
     error?: string;
+    /**
+     * When false, the enrolling client has not yet confirmed on their
+     * screen — we must not call `notify` until `POST .../publish`.
+     */
+    ownerNotified?: boolean;
     requestID: string;
     resolvedAt?: number;
     status: DeviceEnrollmentStatus;
@@ -50,6 +55,10 @@ const pollPendingApprovalSchema = z.object({
 
 const deviceEnrollments = new Map<string, DeviceEnrollmentRequest>();
 
+type VerifiedPendingResult =
+    | { error: string; issues?: z.core.$ZodIssue[]; ok: false; status: number }
+    | { ok: true; pending: DeviceEnrollmentRequest };
+
 export function createPendingDeviceEnrollmentRequest(
     userID: string,
     devicePayload: DevicePayload,
@@ -60,6 +69,7 @@ export function createPendingDeviceEnrollmentRequest(
         data?: unknown,
         deviceID?: string,
     ) => void,
+    options?: { deferOwnerNotification?: boolean },
 ): {
     challenge: string;
     expiresAt: string;
@@ -70,6 +80,7 @@ export function createPendingDeviceEnrollmentRequest(
     pruneDeviceEnrollmentRequests();
     const requestID = crypto.randomUUID();
     const challengeHex = XUtils.encodeHex(xRandomBytes(32));
+    const deferOwner = options?.deferOwnerNotification === true;
     const pending: DeviceEnrollmentRequest = {
         challengeHex,
         createdAt: Date.now(),
@@ -77,12 +88,15 @@ export function createPendingDeviceEnrollmentRequest(
         requestID,
         status: "pending",
         userID,
+        ...(deferOwner ? { ownerNotified: false } : { ownerNotified: true }),
     };
     deviceEnrollments.set(requestID, pending);
-    notify(userID, "deviceRequest", crypto.randomUUID(), {
-        requestID,
-        status: "pending",
-    });
+    if (!deferOwner) {
+        notify(userID, "deviceRequest", crypto.randomUUID(), {
+            requestID,
+            status: "pending",
+        });
+    }
     // We include the existing user's `userID` so the new (still-
     // unauthenticated) device can fetch its public avatar from the
     // unauthenticated `/avatar/:userID` endpoint and surface an "is
@@ -263,6 +277,37 @@ function requestSummary(req: DeviceEnrollmentRequest): {
     };
 }
 
+async function tryGetVerifiedPendingEnrollment(
+    req: express.Request,
+): Promise<VerifiedPendingResult> {
+    const parsed = pollPendingApprovalSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return {
+            error: "Invalid poll payload",
+            issues: parsed.error.issues,
+            ok: false,
+            status: 400,
+        };
+    }
+    const requestID = getParam(req, "requestID");
+    const pending = deviceEnrollments.get(requestID);
+    if (!pending) {
+        return { error: "Not found.", ok: false, status: 404 };
+    }
+    const opened = await spireXSignOpenAsync(
+        XUtils.decodeHex(parsed.data.signed),
+        XUtils.decodeHex(pending.devicePayload.signKey),
+    );
+    if (!opened) {
+        return { error: "Poll signature invalid.", ok: false, status: 401 };
+    }
+    const expected = XUtils.decodeHex(pending.challengeHex);
+    if (!XUtils.bytesEqual(opened, expected)) {
+        return { error: "Poll challenge mismatch.", ok: false, status: 401 };
+    }
+    return { ok: true, pending };
+}
+
 export const getUserRouter = (
     db: Database,
     tokenValidator: (key: string, scope: TokenScopes) => boolean,
@@ -289,34 +334,91 @@ export const getUserRouter = (
     // `:id` placeholder.
     router.post("/devices/requests/:requestID/poll", async (req, res) => {
         pruneDeviceEnrollmentRequests();
-        const parsed = pollPendingApprovalSchema.safeParse(req.body);
-        if (!parsed.success) {
-            res.status(400).json({
-                error: "Invalid poll payload",
-                issues: parsed.error.issues,
+        const v = await tryGetVerifiedPendingEnrollment(req);
+        if (!v.ok) {
+            if (v.status === 400) {
+                res.status(400).json({
+                    error: v.error,
+                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
+                });
+                return;
+            }
+            if (v.status === 404) {
+                res.sendStatus(404);
+                return;
+            }
+            res.status(v.status).send({ error: v.error });
+            return;
+        }
+        res.send(msgpack.encode(requestSummary(v.pending)));
+    });
+
+    /**
+     * After the new device confirms "this account is mine" locally, call
+     * this so existing signed-in devices receive the pending request
+     * notification. Until then, the enrollment row exists for poll/abort
+     * only — no owner push is sent.
+     */
+    router.post("/devices/requests/:requestID/publish", async (req, res) => {
+        pruneDeviceEnrollmentRequests();
+        const v = await tryGetVerifiedPendingEnrollment(req);
+        if (!v.ok) {
+            if (v.status === 400) {
+                res.status(400).json({
+                    error: v.error,
+                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
+                });
+                return;
+            }
+            if (v.status === 404) {
+                res.sendStatus(404);
+                return;
+            }
+            res.status(v.status).send({ error: v.error });
+            return;
+        }
+        const { pending } = v;
+        if (pending.ownerNotified !== false) {
+            res.sendStatus(204);
+            return;
+        }
+        notify(pending.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: pending.requestID,
+            status: "pending",
+        });
+        pending.ownerNotified = true;
+        deviceEnrollments.set(pending.requestID, pending);
+        res.sendStatus(200);
+    });
+
+    /** Drop an unpublished enrollment before any owner notification fires. */
+    router.post("/devices/requests/:requestID/abort", async (req, res) => {
+        pruneDeviceEnrollmentRequests();
+        const v = await tryGetVerifiedPendingEnrollment(req);
+        if (!v.ok) {
+            if (v.status === 400) {
+                res.status(400).json({
+                    error: v.error,
+                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
+                });
+                return;
+            }
+            if (v.status === 404) {
+                res.sendStatus(404);
+                return;
+            }
+            res.status(v.status).send({ error: v.error });
+            return;
+        }
+        const { pending } = v;
+        if (pending.ownerNotified !== false) {
+            res.status(409).send({
+                error: "This request was already sent to your other devices.",
             });
             return;
         }
-        const requestID = getParam(req, "requestID");
-        const pending = deviceEnrollments.get(requestID);
-        if (!pending) {
-            res.sendStatus(404);
-            return;
-        }
-        const opened = await spireXSignOpenAsync(
-            XUtils.decodeHex(parsed.data.signed),
-            XUtils.decodeHex(pending.devicePayload.signKey),
-        );
-        if (!opened) {
-            res.status(401).send({ error: "Poll signature invalid." });
-            return;
-        }
-        const expected = XUtils.decodeHex(pending.challengeHex);
-        if (!XUtils.bytesEqual(opened, expected)) {
-            res.status(401).send({ error: "Poll challenge mismatch." });
-            return;
-        }
-        res.send(msgpack.encode(requestSummary(pending)));
+        deviceEnrollments.delete(pending.requestID);
+        res.sendStatus(200);
     });
 
     router.get("/:id", protect, async (req, res) => {

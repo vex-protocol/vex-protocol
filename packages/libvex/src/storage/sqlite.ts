@@ -44,6 +44,7 @@ import {
 import { EventEmitter } from "eventemitter3";
 import { type Kysely, sql } from "kysely";
 
+import { effectiveMessageRetentionHintDays } from "../retention.js";
 import { parseSkippedKeysStrict } from "../utils/ratchet.js";
 
 export class SqliteStorage extends EventEmitter implements Storage {
@@ -436,7 +437,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const msPerDay = 86_400_000;
         const toDelete: string[] = [];
         for (const r of rows) {
-            const hintDays = r.retentionHintDays ?? 30;
+            const hintDays = effectiveMessageRetentionHintDays(
+                r.retentionHintDays,
+            );
             const maxDays = Math.min(30, cap, hintDays);
             const ts = new Date(r.timestamp).getTime();
             if (!Number.isFinite(ts)) {

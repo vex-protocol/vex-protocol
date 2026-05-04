@@ -926,6 +926,7 @@ export class Spire extends EventEmitter {
                                     existingUser.userID,
                                     normalizedPayload,
                                     this.notify.bind(this),
+                                    { deferOwnerNotification: true },
                                 );
                             res.status(202).send(
                                 msgpack.encode(pendingResponse),

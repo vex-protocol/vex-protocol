@@ -1,0 +1,123 @@
+name: Spire stress CLI
+
+# Headless `pnpm --filter @vex-chat/spire stress:cli` against a fresh in-memory
+# Spire — same harness as local `npm run stress:cli` in apps/spire.
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [master]
+    pull_request:
+        branches: [master]
+        paths:
+            - "apps/spire/**"
+            - "packages/libvex/**"
+            - ".github/workflows/spire-stress-cli.yml"
+    schedule:
+        # Weekly smoke (Mondays 06:00 UTC)
+        - cron: "0 6 * * 1"
+
+concurrency:
+    group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    stress-cli:
+        name: stress:cli (bounded matrix)
+        runs-on: ubuntu-latest
+        timeout-minutes: 25
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+
+            - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+              with:
+                  run_install: false
+
+            - name: Get pnpm store directory
+              shell: bash
+              run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+            - uses: actions/cache@v4
+              with:
+                  path: ${{ env.STORE_PATH }}
+                  key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+                  restore-keys: ${{ runner.os }}-pnpm-store-
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Generate Spire CI secrets
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mapfile -t lines < <(node apps/spire/scripts/gen-spk.js --raw)
+                  {
+                      echo "SPK=${lines[0]}"
+                      echo "JWT_SECRET=${lines[1]}"
+                      echo "DEV_API_KEY=$(openssl rand -hex 16)"
+                      echo "API_PORT=16778"
+                  } >> "$GITHUB_ENV"
+
+            - name: Start Spire (background)
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  node --experimental-strip-types apps/spire/src/run.ts &
+                  echo $! > /tmp/spire-ci.pid
+                  sleep 2
+              env:
+                  DB_TYPE: sqlite3mem
+                  SPK: ${{ env.SPK }}
+                  JWT_SECRET: ${{ env.JWT_SECRET }}
+                  DEV_API_KEY: ${{ env.DEV_API_KEY }}
+                  API_PORT: ${{ env.API_PORT }}
+
+            - name: Wait for Spire /status
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  for _ in $(seq 1 90); do
+                      if curl -fsS "http://127.0.0.1:${API_PORT}/status" >/dev/null; then
+                          exit 0
+                      fi
+                      sleep 1
+                  done
+                  echo "::error::Spire did not become ready on /status within 90s"
+                  exit 1
+
+            - name: Run stress CLI matrix
+              shell: bash
+              working-directory: apps/spire
+              run: |
+                  set -euo pipefail
+                  pnpm stress:cli -- \
+                    --host "127.0.0.1:${API_PORT}" \
+                    --walls 2 \
+                    --clients 2 \
+                    --conc 5 \
+                    --scenario chat \
+                    --seconds 180 \
+                    --stop-on-fail
+
+            - name: Stop Spire
+              if: always()
+              shell: bash
+              run: |
+                  if [[ -f /tmp/spire-ci.pid ]]; then
+                      kill "$(cat /tmp/spire-ci.pid)" 2>/dev/null || true
+                  fi
