@@ -102,11 +102,69 @@ export class WebSocketAdapter implements WebSocketLike {
         }
     }
 
+    /**
+     * Forward `data` to the underlying socket if and only if it's
+     * OPEN. Throws `WebSocketNotOpenError` (a typed, named error)
+     * otherwise, so callers can distinguish a teardown race from a
+     * protocol error and either retry on the next socket or drop
+     * the frame.
+     *
+     * Without this guard a transient teardown surfaces as
+     * `DOMException("INVALID_STATE_ERR")` from the platform WebSocket
+     * — opaque, hard to catch by name, and surfaced by React Native
+     * as an unhandled promise rejection (red box / "frozen UI") any
+     * time a `void this.send(...)` callsite (ping / pong / queued
+     * notify reply) is in flight when the close event lands.
+     */
     send(data: Uint8Array) {
-        this.ws.send(new Uint8Array(data));
+        if (this.ws.readyState !== 1) {
+            throw new WebSocketNotOpenError(this.ws.readyState);
+        }
+        try {
+            this.ws.send(new Uint8Array(data));
+        } catch (err: unknown) {
+            // Handles the TOCTOU between the readyState check above
+            // and the actual `ws.send` call. React Native's bridge
+            // can dispatch a `websocketMessage` and a
+            // `websocketClosed` back-to-back in the same JS turn:
+            // our message listener observes readyState=1 because
+            // the close event hasn't been processed yet, but the
+            // underlying WebSocket has already transitioned native-
+            // side and `send` throws INVALID_STATE_ERR.
+            if (
+                err instanceof Error &&
+                /invalid_state|INVALID_STATE_ERR/i.test(err.message)
+            ) {
+                throw new WebSocketNotOpenError(this.ws.readyState);
+            }
+            throw err;
+        }
     }
 
     terminate() {
         this.ws.close();
+    }
+}
+
+/**
+ * Thrown when `send()` is called on a socket that's not in the OPEN
+ * state. Surfaced as a named, recognisable type so callers can
+ * distinguish "transient teardown race" from a real protocol error
+ * and either drop the frame (pings) or wait for reconnect (real
+ * payloads).
+ *
+ * Replaces the bare `DOMException("INVALID_STATE_ERR")` that the
+ * underlying WebSocket throws — that one is opaque, gets reported
+ * by RN's dev console as a red unhandled rejection, and freezes the
+ * passkey/foreground/network-swap recovery flow because every code
+ * path that voids the resulting promise leaks the rejection.
+ */
+export class WebSocketNotOpenError extends Error {
+    public readonly readyState: number;
+
+    constructor(readyState: number) {
+        super(`WebSocket is not open (readyState=${readyState.toString()})`);
+        this.name = "WebSocketNotOpenError";
+        this.readyState = readyState;
     }
 }
