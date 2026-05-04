@@ -1,5 +1,12 @@
 # @vex-chat/crypto
 
+## 5.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`f10bd91`](https://github.com/vex-protocol/vex-protocol/commit/f10bd91bd168eedbc69ca81c418a0988642d8392)]:
+    - @vex-chat/types@3.2.0
+
 ## 4.0.1
 
 ### Patch Changes

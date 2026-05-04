@@ -1,5 +1,20 @@
 # @vex-chat/types
 
+## 3.2.0
+
+### Minor Changes
+
+- [#38](https://github.com/vex-protocol/vex-protocol/pull/38) [`f10bd91`](https://github.com/vex-protocol/vex-protocol/commit/f10bd91bd168eedbc69ca81c418a0988642d8392) Thanks [@yuki111888](https://github.com/yuki111888)! - Add passkey (WebAuthn) support for account-recovery and device
+  management. A passkey can authenticate a user without any device
+  key on hand and grants the same admin permissions as a device:
+  list/delete devices and approve/reject pending device-enrollment
+  requests. Passkeys cannot send or receive messages — they're
+  strictly second-class admin credentials.
+
+    Operators must set `SPIRE_PASSKEY_RP_ID` and `SPIRE_PASSKEY_ORIGINS`
+    to enable the new endpoints. Clients drive the ceremony with
+    `@simplewebauthn/browser` (web) or `react-native-passkey` (mobile).
+
 ## 3.1.0
 
 ### Minor Changes
