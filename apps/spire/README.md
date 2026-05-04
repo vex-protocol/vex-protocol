@@ -80,6 +80,10 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 | `DEV_API_KEY`  | _(empty)_  | When set, requests that send header `x-dev-api-key` with the same value (constant-time compare) **skip in-process rate limiters**. The same gate enables **`GET /status/process`** (404 without a valid key): a small JSON snapshot of the Spire Node process (PID, uptime, `memoryUsage`, cumulative `resourceUsage`, WebSocket client count). Dev / load-testing only — never set in production.     |
 | `CANARY`       | _(unset)_  |                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+### Passkeys / WebAuthn
+
+The `/auth/passkey/*`, `/user/:id/passkeys/*`, and `/passkey/*` routes are gated on `SPIRE_PASSKEY_RP_ID` and `SPIRE_PASSKEY_ORIGINS`; without them those endpoints return `500 Passkeys are not configured`. See [`.env.example`](./.env.example) for the full set, including the optional `SPIRE_PASSKEY_IOS_APP_IDS`, `SPIRE_PASSKEY_ANDROID_PACKAGE`, and `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` triple that makes spire serve the WebAuthn well-known association files (`/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json`) directly. Those endpoints 404 when their env vars aren't set, so a non-passkey deployment is indistinguishable from one that hasn't enrolled an app.
+
 ### Sample `.env`
 
 ```sh
