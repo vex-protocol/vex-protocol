@@ -1008,11 +1008,17 @@ export class Spire extends EventEmitter {
     }
 }
 
+// Usernames are case-insensitive at the protocol level — `User` and
+// `user` must resolve to the same account. We canonicalize to
+// lowercase at the registration boundary so the persisted row, the
+// UNIQUE index, and every downstream lookup all agree on a single
+// representation. Lookups in `Database.retrieveUser` also fold case
+// at compare time so legacy mixed-case rows still resolve.
 function normalizeRegistrationUsername(
     username: string | undefined,
     signKeyHex: string,
 ): string {
-    const trimmed = username?.trim();
+    const trimmed = username?.trim().toLowerCase();
     if (trimmed && trimmed.length > 0) {
         return trimmed;
     }
