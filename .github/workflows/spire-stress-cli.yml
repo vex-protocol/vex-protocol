@@ -1,7 +1,7 @@
 name: Spire stress CLI
 
-# Headless `pnpm --filter @vex-chat/spire stress:cli` against a fresh in-memory
-# Spire — same harness as local `npm run stress:cli` in apps/spire.
+# Bounded `pnpm --filter @vex-chat/spire stress:cli` against Spire + nginx
+# started with `docker compose` in apps/spire (same path as local development).
 
 on:
     workflow_dispatch:
@@ -26,9 +26,9 @@ permissions:
 
 jobs:
     stress-cli:
-        name: stress:cli (bounded matrix)
+        name: stress:cli (Docker Compose + nginx :16777)
         runs-on: ubuntu-latest
-        timeout-minutes: 25
+        timeout-minutes: 40
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -61,52 +61,52 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Generate Spire CI secrets
+            - name: Write apps/spire/.env for Compose
               shell: bash
+              working-directory: apps/spire
               run: |
                   set -euo pipefail
-                  mapfile -t lines < <(node apps/spire/scripts/gen-spk.js --raw)
+                  mapfile -t lines < <(node scripts/gen-spk.js --raw)
+                  dev_key="$(openssl rand -hex 16)"
                   {
                       echo "SPK=${lines[0]}"
                       echo "JWT_SECRET=${lines[1]}"
-                      echo "DEV_API_KEY=$(openssl rand -hex 16)"
-                      echo "API_PORT=16778"
-                  } >> "$GITHUB_ENV"
+                      echo "DEV_API_KEY=${dev_key}"
+                      echo "SPIRE_FIPS=false"
+                      echo "DB_TYPE=sqlite3mem"
+                  } > .env
+                  chmod 600 .env
+                  echo "DEV_API_KEY=${dev_key}" >> "$GITHUB_ENV"
 
-            - name: Start Spire (background)
+            - name: Build and start Spire stack (Docker Compose)
               shell: bash
+              working-directory: apps/spire
+              run: docker compose up -d --build
+
+            - name: Wait for nginx /status (via published :16777)
+              shell: bash
+              working-directory: apps/spire
               run: |
                   set -euo pipefail
-                  node --experimental-strip-types apps/spire/src/run.ts &
-                  echo $! > /tmp/spire-ci.pid
-                  sleep 2
-              env:
-                  DB_TYPE: sqlite3mem
-                  SPK: ${{ env.SPK }}
-                  JWT_SECRET: ${{ env.JWT_SECRET }}
-                  DEV_API_KEY: ${{ env.DEV_API_KEY }}
-                  API_PORT: ${{ env.API_PORT }}
-
-            - name: Wait for Spire /status
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  for _ in $(seq 1 90); do
-                      if curl -fsS "http://127.0.0.1:${API_PORT}/status" >/dev/null; then
+                  for _ in $(seq 1 120); do
+                      if curl -fsS "http://127.0.0.1:16777/status" >/dev/null; then
                           exit 0
                       fi
                       sleep 1
                   done
-                  echo "::error::Spire did not become ready on /status within 90s"
+                  echo "::error::Spire (via nginx) did not become ready on :16777/status within 120s"
+                  docker compose ps || true
                   exit 1
 
             - name: Run stress CLI matrix
               shell: bash
               working-directory: apps/spire
+              env:
+                  DEV_API_KEY: ${{ env.DEV_API_KEY }}
               run: |
                   set -euo pipefail
                   pnpm stress:cli -- \
-                    --host "127.0.0.1:${API_PORT}" \
+                    --host "127.0.0.1:16777" \
                     --walls 2 \
                     --clients 2 \
                     --conc 5 \
@@ -114,10 +114,8 @@ jobs:
                     --seconds 180 \
                     --stop-on-fail
 
-            - name: Stop Spire
+            - name: Stop stack and remove volumes
               if: always()
               shell: bash
-              run: |
-                  if [[ -f /tmp/spire-ci.pid ]]; then
-                      kill "$(cat /tmp/spire-ci.pid)" 2>/dev/null || true
-                  fi
+              working-directory: apps/spire
+              run: docker compose down -v --remove-orphans
