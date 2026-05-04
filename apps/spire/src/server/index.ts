@@ -45,6 +45,7 @@ import {
 import { globalLimiter } from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
+import { getWellKnownRouter } from "./wellKnown.ts";
 
 // expiry of regkeys
 export const EXPIRY_TIME = 1000 * 60 * 5;
@@ -228,9 +229,18 @@ export const initApp = (
     const passkeyDeviceRouter = getPasskeyDeviceRouter(db, notify);
 
     // MIDDLEWARE
-    // Global per-IP rate limit is the FIRST middleware so a flooded
-    // source hits the limiter before Express spends any cycles on
-    // body parsing, helmet, or auth. See src/server/rateLimit.ts.
+
+    // WebAuthn well-known association files (AASA, assetlinks.json)
+    // are served BEFORE the global rate limiter so periodic platform
+    // fetches by Apple / Google CDNs are never 429'd. They 404 when
+    // the relevant env vars aren't set, so this is a no-op for
+    // deployments that haven't enrolled an app.
+    api.use(getWellKnownRouter());
+
+    // Global per-IP rate limit is the FIRST authenticated-path
+    // middleware so a flooded source hits the limiter before Express
+    // spends any cycles on body parsing, helmet, or auth. See
+    // src/server/rateLimit.ts.
     api.use(globalLimiter);
     api.use(express.json({ limit: "20mb" }));
     api.use(
