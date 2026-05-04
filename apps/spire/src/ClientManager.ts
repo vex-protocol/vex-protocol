@@ -45,6 +45,25 @@ function emptyHeader() {
 
 const MAX_MSG_SIZE = 2048;
 
+// How many ping cycles in a row are allowed to go without a pong
+// before we declare the connection dead. With a 5s ping interval
+// this gives ~15s of grace, which is enough to absorb a normal
+// mobile native modal (biometric prompt, file picker, share sheet,
+// expensive crypto on the JS thread) without killing an otherwise
+// healthy session and forcing the client through a Noise+login
+// reconnect. A genuinely dead TCP flow still gets cleaned up at
+// most a couple of pings later, which is well inside the
+// upstream nginx/proxy idle window we have to live within anyway.
+//
+// The previous behaviour ("a single missed pong fails the
+// connection") was the root cause of the stream of `ws:disconnect`
+// → `connection:recover:start` → `INVALID_STATE_ERR` cycles seen
+// during passkey registration on Android: the system biometric
+// prompt routinely paused the JS thread past 5s, the pong handler
+// couldn't run, and we'd kill the socket out from under the user.
+const MAX_MISSED_PONGS = 3;
+const PING_INTERVAL_MS = 5000;
+
 export class ClientManager extends EventEmitter {
     private alive: boolean = true;
     private authed: boolean = false;
@@ -53,6 +72,7 @@ export class ClientManager extends EventEmitter {
     private db: Database;
     private device: Device | null;
     private failed: boolean = false;
+    private missedPongs: number = 0;
     private notify: (
         userID: string,
         event: string,
@@ -189,6 +209,7 @@ export class ClientManager extends EventEmitter {
                     break;
                 case "pong":
                     this.setAlive(true);
+                    this.missedPongs = 0;
                     break;
                 case "receipt":
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
@@ -268,10 +289,17 @@ export class ClientManager extends EventEmitter {
 
     private ping() {
         if (!this.alive) {
-            this.fail();
-            return;
+            this.missedPongs++;
+            if (this.missedPongs >= MAX_MISSED_PONGS) {
+                this.fail();
+                return;
+            }
+            // Don't reset alive=false → we keep counting up until a
+            // pong actually arrives or we hit the cap.
+        } else {
+            this.missedPongs = 0;
+            this.setAlive(false);
         }
-        this.setAlive(false);
         const p = { transmissionID: crypto.randomUUID(), type: "ping" };
         this.send(p);
     }
@@ -279,7 +307,7 @@ export class ClientManager extends EventEmitter {
     private async pingLoop() {
         while (!this.failed) {
             this.ping();
-            await sleep(5000);
+            await sleep(PING_INTERVAL_MS);
         }
     }
 
