@@ -261,7 +261,6 @@ import {
     UserCodec,
     WhoamiCodec,
 } from "./codecs.js";
-import { capitalize } from "./utils/capitalize.js";
 import { sqlSessionToCrypto } from "./utils/sqlSessionToCrypto.js";
 import { uuidToUint8 } from "./utils/uint8uuid.js";
 
@@ -1338,6 +1337,13 @@ export class Client {
     /**
      * Generates a random username using bip39.
      *
+     * The output is intentionally lowercase: the protocol treats
+     * usernames as case-insensitive, and the server canonicalizes to
+     * lowercase at registration. Returning lowercase here keeps the
+     * SDK's locally-generated handle in sync with what the server
+     * will eventually persist, so callers don't see a brief casing
+     * flip when `me.user()` lands.
+     *
      * @returns The username.
      */
     public static randomUsername() {
@@ -1347,7 +1353,7 @@ export class Client {
 
         const word0 = mnemonic[0] ?? "";
         const word1 = mnemonic[1] ?? "";
-        return capitalize(word0) + capitalize(word1) + addendum.toString();
+        return (word0 + word1 + addendum.toString()).toLowerCase();
     }
 
     private static deserializeExtra(
@@ -1565,11 +1571,14 @@ export class Client {
         password: string,
     ): Promise<{ error?: string; ok: boolean }> {
         try {
+            // Mirror the server's case-insensitive username policy —
+            // see `Client.register` and `Spire.normalizeRegistrationUsername`.
+            const normalizedUsername = username.trim().toLowerCase();
             const res = await this.http.post(
                 this.getHost() + "/auth",
                 msgpack.encode({
                     password,
-                    username,
+                    username: normalizedUsername,
                 }),
                 {
                     headers: { "Content-Type": "application/msgpack" },
@@ -1762,9 +1771,12 @@ export class Client {
         }
         const regKey = await this.getToken("register");
         if (regKey) {
+            // Usernames are case-insensitive at the protocol level;
+            // lowercase before sending so the local SDK view matches
+            // what the server canonicalizes and persists.
             const resolvedUsername =
                 username?.trim().length !== 0 && username !== undefined
-                    ? username.trim()
+                    ? username.trim().toLowerCase()
                     : Client.randomUsername();
             const resolvedPassword =
                 password?.trim().length !== 0 && password !== undefined
@@ -2349,29 +2361,40 @@ export class Client {
     private async fetchUser(
         userIdentifier: string,
     ): Promise<[null | User, AxiosError | null]> {
+        // Usernames are case-insensitive at the protocol level, so
+        // canonicalize the *cache key* to lowercase for username
+        // lookups. Without this we'd accumulate duplicate
+        // userRecords / notFoundUsers entries for `Foo`, `foo`,
+        // `FOO`, etc., even though all three resolve to the same
+        // server row. UUIDs are passed through unchanged so the
+        // hex-canonical path still hits its own cache slot.
+        const cacheKey = uuid.validate(userIdentifier)
+            ? userIdentifier
+            : userIdentifier.toLowerCase();
+
         // Positive cache
-        if (userIdentifier in this.userRecords) {
-            return [this.userRecords[userIdentifier] ?? null, null];
+        if (cacheKey in this.userRecords) {
+            return [this.userRecords[cacheKey] ?? null, null];
         }
 
         // Negative cache — skip users we know don't exist (TTL-based)
-        const notFoundAt = this.notFoundUsers.get(userIdentifier);
+        const notFoundAt = this.notFoundUsers.get(cacheKey);
         if (notFoundAt && Date.now() - notFoundAt < Client.NOT_FOUND_TTL) {
             return [null, null];
         }
 
         try {
             const res = await this.http.get(
-                this.getHost() + "/user/" + userIdentifier,
+                this.getHost() + "/user/" + cacheKey,
             );
             const userRecord = decodeAxios(UserCodec, res.data);
-            this.userRecords[userIdentifier] = userRecord;
-            this.notFoundUsers.delete(userIdentifier);
+            this.userRecords[cacheKey] = userRecord;
+            this.notFoundUsers.delete(cacheKey);
             return [userRecord, null];
         } catch (err: unknown) {
             if (isAxiosError(err) && err.response?.status === 404) {
                 // Definitive: user doesn't exist — cache and don't retry
-                this.notFoundUsers.set(userIdentifier, Date.now());
+                this.notFoundUsers.set(cacheKey, Date.now());
                 return [null, err];
             }
             // Transient (5xx, network error) — don't cache, caller can retry

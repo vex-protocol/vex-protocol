@@ -913,7 +913,13 @@ export class Database extends EventEmitter {
         return serverList;
     }
 
-    // the identifier can be username, public key, or userID
+    // The identifier is matched as either a userID (UUID branch) or a
+    // username (string branch). Username comparison is case-folded so
+    // `User` and `user` resolve to the same row regardless of how the
+    // caller typed it — the canonical form on disk is lowercase
+    // (`normalizeRegistrationUsername`), but legacy mixed-case rows
+    // from before the canonicalization landed still resolve via the
+    // `lower(username) = lower(?)` predicate below.
     public async retrieveUser(
         userIdentifier: string,
     ): Promise<InternalUserRecord | null> {
@@ -926,10 +932,11 @@ export class Database extends EventEmitter {
                 .limit(1)
                 .execute();
         } else {
+            const normalized = userIdentifier.toLowerCase();
             rows = await this.db
                 .selectFrom("users")
                 .selectAll()
-                .where("username", "=", userIdentifier)
+                .where(sql<string>`lower(username)`, "=", normalized)
                 .limit(1)
                 .execute();
         }
@@ -1074,11 +1081,16 @@ export async function verifyPassword(
     return { needsRehash: valid, valid };
 }
 
+// Mirrors `Spire.normalizeRegistrationUsername` — kept in sync so a
+// caller invoking `createUser` directly (e.g. tests, future internal
+// flows) gets the same lowercase canonicalization the public
+// `POST /register` route applies. Usernames are case-insensitive at
+// the protocol level.
 function normalizeRegistrationUsername(
     providedUsername: string | undefined,
     userID: string,
 ): string {
-    const trimmed = providedUsername?.trim();
+    const trimmed = providedUsername?.trim().toLowerCase();
     if (trimmed && trimmed.length > 0) {
         return trimmed;
     }
