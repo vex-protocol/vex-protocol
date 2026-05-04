@@ -170,6 +170,25 @@ export class MemoryStorage extends EventEmitter implements Storage {
         return Promise.resolve();
     }
 
+    pruneExpiredLocalMessages(clientMaxRetentionDays: number): Promise<void> {
+        const cap = Math.min(
+            30,
+            Math.max(1, Math.round(clientMaxRetentionDays)),
+        );
+        const now = Date.now();
+        const msPerDay = 86_400_000;
+        this.messages = this.messages.filter((m) => {
+            const hintDays = m.retentionHintDays ?? 30;
+            const maxDays = Math.min(30, cap, hintDays);
+            const ts = new Date(m.timestamp).getTime();
+            if (!Number.isFinite(ts)) {
+                return true;
+            }
+            return now - ts <= maxDays * msPerDay;
+        });
+        return Promise.resolve();
+    }
+
     purgeHistory(): Promise<void> {
         this.messages = [];
         return Promise.resolve();

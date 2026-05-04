@@ -38,6 +38,10 @@ export type {
     VexFile,
 } from "./Client.js";
 export { createCodec, msgpack } from "./codec.js";
+export {
+    clampLocalMessageRetentionDays,
+    MAX_LOCAL_MESSAGE_RETENTION_DAYS,
+} from "./retention.js";
 export type { Storage } from "./Storage.js";
 export type {
     KeyPair,

@@ -349,6 +349,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     )
                     .execute();
                 await this.ensureSessionRatchetColumns();
+                await this.ensureRetentionHintColumn();
 
                 await this.db.schema
                     .createTable("preKeys")
@@ -415,6 +416,46 @@ export class SqliteStorage extends EventEmitter implements Storage {
     }
 
     // ── PreKeys / OneTimeKeys ────────────────────────────────────────────────
+
+    async pruneExpiredLocalMessages(
+        clientMaxRetentionDays: number,
+    ): Promise<void> {
+        await this.untilReady();
+        if (this.closing) {
+            return;
+        }
+        const cap = Math.min(
+            30,
+            Math.max(1, Math.round(clientMaxRetentionDays)),
+        );
+        const rows = await this.db
+            .selectFrom("messages")
+            .select(["mailID", "timestamp", "retentionHintDays"])
+            .execute();
+        const now = Date.now();
+        const msPerDay = 86_400_000;
+        const toDelete: string[] = [];
+        for (const r of rows) {
+            const hintDays = r.retentionHintDays ?? 30;
+            const maxDays = Math.min(30, cap, hintDays);
+            const ts = new Date(r.timestamp).getTime();
+            if (!Number.isFinite(ts)) {
+                continue;
+            }
+            if (now - ts > maxDays * msPerDay) {
+                toDelete.push(r.mailID);
+            }
+        }
+        if (toDelete.length === 0) {
+            return;
+        }
+        for (const mailID of toDelete) {
+            await this.db
+                .deleteFrom("messages")
+                .where("mailID", "=", mailID)
+                .execute();
+        }
+    }
 
     async purgeHistory(): Promise<void> {
         await this.db.deleteFrom("messages").execute();
@@ -489,6 +530,16 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     nonce: message.nonce,
                     readerID: message.readerID,
                     recipient: message.recipient,
+                    retentionHintDays:
+                        message.retentionHintDays === undefined
+                            ? null
+                            : Math.min(
+                                  30,
+                                  Math.max(
+                                      1,
+                                      Math.round(message.retentionHintDays),
+                                  ),
+                              ),
                     sender: message.sender,
                     timestamp: message.timestamp,
                 })
@@ -638,7 +689,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             }
             const direction =
                 msg.direction === "incoming" ? "incoming" : "outgoing";
-            out.push({
+            const rowMessage: Message = {
                 authorID: msg.authorID,
                 decrypted: decryptedFlag,
                 direction,
@@ -651,7 +702,11 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 recipient: msg.recipient,
                 sender: msg.sender,
                 timestamp: msg.timestamp,
-            });
+            };
+            if (msg.retentionHintDays != null) {
+                rowMessage.retentionHintDays = msg.retentionHintDays;
+            }
+            out.push(rowMessage);
         }
         return out;
     }
@@ -667,6 +722,18 @@ export class SqliteStorage extends EventEmitter implements Storage {
             owner: row.owner,
             signKey: row.signKey,
         };
+    }
+
+    private async ensureRetentionHintColumn(): Promise<void> {
+        try {
+            await sql
+                .raw(
+                    "ALTER TABLE messages ADD COLUMN retentionHintDays integer",
+                )
+                .execute(this.db);
+        } catch {
+            // Existing databases may already have this column.
+        }
     }
 
     private async ensureSessionRatchetColumns(): Promise<void> {

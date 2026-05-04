@@ -91,6 +91,13 @@ export interface Storage extends EventEmitter {
      * @event
      */
     on(event: "error", callback: (error: Error) => void): this;
+    /**
+     * Deletes local messages older than the effective per-row retention:
+     * `min(30 days, clientMaxRetentionDays, retentionHintDays ?? 30)`.
+     */
+    pruneExpiredLocalMessages: (
+        clientMaxRetentionDays: number,
+    ) => Promise<void>;
     /** Deletes all message history. */
     purgeHistory: () => Promise<void>;
     /** Deletes all local key/session state. */

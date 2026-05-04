@@ -65,6 +65,8 @@ interface MessagesTable {
     nonce: string;
     readerID: string;
     recipient: string;
+    /** Optional peer hint (1–30 days); null when absent or legacy row. */
+    retentionHintDays: null | number;
     sender: string;
     timestamp: string;
 }

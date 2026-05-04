@@ -17,6 +17,7 @@ export default defineConfig({
                     include: [
                         "src/__tests__/codec.test.ts",
                         "src/__tests__/ratchet.test.ts",
+                        "src/__tests__/retention.test.ts",
                     ],
                     name: "unit",
                     testTimeout: 10_000,
