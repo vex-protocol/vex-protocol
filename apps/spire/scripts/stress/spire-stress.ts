@@ -1389,6 +1389,8 @@ function printSpireStressCliHelp(): void {
             "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
             "  SPIRE_STRESS_WS_DELIVERY_MS    floor (ms) for post-burst WS waits; also scales with client count (chat/noise)",
             "  SPIRE_STRESS_WS_WITNESS_MAX    post-burst: how many guests must see each ping (default 3; `all` = every guest)",
+            "  SPIRE_STRESS_WS_CI=0           disable CI timeout multiplier (CI/GITHUB_ACTIONS default ~1.3×)",
+            "  SPIRE_STRESS_WS_CI_FACTOR      override CI multiplier (1–4; default on CI ~1.3)",
             "",
             "npm run integration:web   ·   npm run integration:cli (headless matrix)",
             "",

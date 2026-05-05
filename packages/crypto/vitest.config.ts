@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 const asyncTestFiles = [
+    "src/__tests__/cryptoProfileScope.test.ts",
     "src/__tests__/xAsyncProfile.ts",
     "src/__tests__/xAsyncApi.extended.test.ts",
 ];
@@ -16,16 +17,16 @@ export default defineConfig({
             {
                 extends: true,
                 test: {
-                    name: "core",
-                    include: ["src/__tests__/**/*.ts"],
                     exclude: asyncTestFiles,
+                    include: ["src/__tests__/**/*.ts"],
+                    name: "core",
                 },
             },
             {
                 extends: true,
                 test: {
-                    name: "async-api",
                     include: asyncTestFiles,
+                    name: "async-api",
                 },
             },
         ],

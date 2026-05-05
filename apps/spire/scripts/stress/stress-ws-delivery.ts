@@ -13,6 +13,10 @@
  * CI stays reliable with many clients; set `SPIRE_STRESS_WS_WITNESS_MAX=all` to
  * require every guest. Timeout uses `SPIRE_STRESS_WS_DELIVERY_MS` and scales with
  * client count unless the env value is already higher.
+ *
+ * When `CI=true` or `GITHUB_ACTIONS=true`, budgets are multiplied by
+ * **~1.3** unless overridden (`SPIRE_STRESS_WS_CI_FACTOR`, or disabled with
+ * `SPIRE_STRESS_WS_CI=0`).
  */
 import type { Client, Message } from "@vex-chat/libvex";
 
@@ -31,15 +35,19 @@ import {
 
 const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
 const WS_WITNESS_MAX_ENV = "SPIRE_STRESS_WS_WITNESS_MAX";
+const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
+const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
+
+const DEFAULT_WS_DELIVERY_MS = 25_000;
 
 /**
  * Per-check budget: at least env / default, plus headroom when many clients exist
  * (fan-out decrypt + event loop).
  */
 export function postBurstWsTimeoutMs(totalClients: number): number {
-    const base = wsDeliveryTimeoutMs();
+    const base = rawWsDeliveryFloorMs();
     const scaled = 28_000 + Math.max(0, Math.min(32, totalClients - 1)) * 4_500;
-    return Math.max(base, scaled);
+    return withStressWsCiBudget(Math.max(base, scaled));
 }
 
 /**
@@ -61,7 +69,7 @@ export function waitForClientMessageWs(
             client.off("message", onMessage);
             reject(
                 new Error(
-                    `${diagnosticLabel}: WebSocket delivery not observed within ${String(timeoutMs)}ms (set ${WS_DELIVERY_ENV} or ${WS_WITNESS_MAX_ENV}; see scripts/stress/stress-ws-delivery.ts)`,
+                    `${diagnosticLabel}: WebSocket delivery not observed within ${String(timeoutMs)}ms (set ${WS_DELIVERY_ENV}, ${WS_WITNESS_MAX_ENV}, or ${WS_CI_FACTOR_ENV}; see scripts/stress/stress-ws-delivery.ts)`,
                 ),
             );
         }, timeoutMs);
@@ -87,12 +95,41 @@ export function waitForClientMessageWs(
 }
 
 export function wsDeliveryTimeoutMs(): number {
-    const raw = process.env[WS_DELIVERY_ENV]?.trim();
+    return withStressWsCiBudget(rawWsDeliveryFloorMs());
+}
+
+function parsePositiveMsEnv(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
     if (raw === undefined || raw === "") {
-        return 25_000;
+        return fallback;
     }
     const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 25_000;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function rawWsDeliveryFloorMs(): number {
+    return parsePositiveMsEnv(WS_DELIVERY_ENV, DEFAULT_WS_DELIVERY_MS);
+}
+
+/**
+ * GitHub-hosted runners are slower and more jittery than typical laptops; scale
+ * WS wait budgets unless the harness opts out.
+ */
+function stressWsCiMultiplier(): number {
+    if (process.env[WS_CI_OFF_ENV]?.trim() === "0") {
+        return 1;
+    }
+    const factorRaw = process.env[WS_CI_FACTOR_ENV]?.trim();
+    if (factorRaw !== undefined && factorRaw !== "") {
+        const n = Number(factorRaw);
+        if (Number.isFinite(n) && n >= 1 && n <= 4) {
+            return n;
+        }
+    }
+    const onCi =
+        process.env["CI"] === "true" ||
+        process.env["GITHUB_ACTIONS"] === "true";
+    return onCi ? 1.3 : 1;
 }
 
 function touchCtx(
@@ -101,6 +138,10 @@ function touchCtx(
     clientIndex: number,
 ): TelemetryTouchCtx {
     return { burst, clientIndex, phase };
+}
+
+function withStressWsCiBudget(ms: number): number {
+    return Math.ceil(ms * stressWsCiMultiplier());
 }
 
 function wsWitnessCap(guestCount: number): number {

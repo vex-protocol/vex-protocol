@@ -205,6 +205,34 @@ export function setCryptoProfile(profile: CryptoProfile): void {
     activeCryptoProvider = providers[profile];
 }
 
+const cryptoProfileScopeStack: CryptoProfile[] = [];
+
+/**
+ * Saves the current profile and switches to `profile`. Pair every call with
+ * {@link leaveCryptoProfileScope} in a `finally` block.
+ *
+ * **Why:** `setCryptoProfile` is process-wide. Several async libvex `Client`s
+ * can overlap on `readMail`; a naive save/restore in `finally` can reset the
+ * profile while another client still needs FIPS — `xSecretboxOpenAsync` then
+ * reads `tweetnacl` and fails to decrypt AES-GCM payloads. Nesting this stack
+ * fixes that.
+ */
+export function enterCryptoProfileScope(profile: CryptoProfile): void {
+    cryptoProfileScopeStack.push(activeCryptoProfile);
+    setCryptoProfile(profile);
+}
+
+/** Restores the profile saved by the innermost {@link enterCryptoProfileScope}. */
+export function leaveCryptoProfileScope(): void {
+    const prev = cryptoProfileScopeStack.pop();
+    if (prev === undefined) {
+        throw new Error(
+            "leaveCryptoProfileScope called without a matching enterCryptoProfileScope",
+        );
+    }
+    setCryptoProfile(prev);
+}
+
 function bytesToBase64Url(bytes: Uint8Array): string {
     return globalThis
         .btoa(String.fromCodePoint(...Array.from(bytes)))
