@@ -1,8 +1,8 @@
 name: Spire integration CLI
 
 # Headless Spire integration tests (`integration:cli`): one Docker Compose stack
-# per crypto profile; all scenarios run in series on that instance (fresh 10-client
-# harness each scenario). Two jobs (tweetnacl + fips).
+# per crypto profile; all scenarios run in series on that instance (fresh 4-client
+# harness each scenario — lighter on GHA runners). Two jobs (tweetnacl + fips).
 
 on:
     pull_request:
@@ -126,12 +126,12 @@ jobs:
                   set -euo pipefail
                   scenarios=(chat noise mixed whoami servers)
                   for s in "${scenarios[@]}"; do
-                    echo "::group::integration:cli --scenario ${s} (10 clients, 10 walls)"
+                    echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls)"
                     pnpm integration:cli -- \
                       --host "127.0.0.1:16777" \
                       --walls 10 \
-                      --clients 10 \
-                      --conc 3 \
+                      --clients 4 \
+                      --conc 2 \
                       --scenario "${s}" \
                       --seconds 600 \
                       --stop-on-fail
