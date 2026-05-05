@@ -43,6 +43,7 @@ import { MailType } from "@vex-chat/types";
 import argon2 from "argon2";
 
 import { serverMailRetentionCutoffIso } from "./mailRetention.ts";
+import { assertDevicePayloadPreKeySignature } from "./utils/preKeyValidation.ts";
 
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
@@ -205,6 +206,8 @@ export class Database extends EventEmitter {
         owner: string,
         payload: DevicePayload,
     ): Promise<Device> {
+        await assertDevicePayloadPreKeySignature(payload);
+
         const device = {
             deleted: 0,
             deviceID: crypto.randomUUID(),
@@ -359,6 +362,8 @@ export class Database extends EventEmitter {
         regPayload: RegistrationPayload,
     ): Promise<[null | UserRecord, Error | null]> {
         try {
+            await assertDevicePayloadPreKeySignature(regPayload);
+
             const userID = uuidStringify(regKey);
             const username = normalizeRegistrationUsername(
                 regPayload.username,
@@ -1186,7 +1191,7 @@ export class Database extends EventEmitter {
     ): Promise<void> {
         for (const otk of otks) {
             const newOTK = {
-                deviceID: otk.deviceID,
+                deviceID,
                 index: otk.index ?? 0,
                 keyID: crypto.randomUUID(),
                 publicKey: XUtils.encodeHex(otk.publicKey),

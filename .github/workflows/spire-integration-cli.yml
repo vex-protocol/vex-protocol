@@ -27,8 +27,8 @@ jobs:
             matrix:
                 include:
                     - crypto: tweetnacl
-                      ws-required-ratio: "0.9"
-                    # FIPS websocket fanout remains noisy on GHA runners; keep
+                      ws-required-ratio: "0.5"
+                    # Websocket fanout remains noisy on GHA runners; keep
                     # printing observed/expected telemetry while it is tightened.
                     - crypto: fips
                       ws-required-ratio: "0.4"

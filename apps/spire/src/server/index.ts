@@ -28,6 +28,10 @@ import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
 import { getJwtSecret } from "../utils/jwtSecret.ts";
 import { msgpack } from "../utils/msgpack.ts";
+import {
+    assertPreKeysBelongToDevice,
+    PreKeyValidationError,
+} from "../utils/preKeyValidation.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { getAvatarRouter } from "./avatar.ts";
@@ -682,20 +686,26 @@ export const initApp = (
         const userDetails = getUser(req);
 
         const deviceID = getParam(req, "id");
-        const otk = submittedOTKs[0];
 
         const device = await db.retrieveDevice(deviceID);
-        if (!device || !otk) {
+        if (!device) {
             res.sendStatus(404);
             return;
         }
 
-        const message = await spireXSignOpenAsync(
-            otk.signature,
-            XUtils.decodeHex(device.signKey),
-        );
+        try {
+            await assertPreKeysBelongToDevice(device, submittedOTKs, {
+                oneTime: true,
+            });
+        } catch (err: unknown) {
+            if (err instanceof PreKeyValidationError) {
+                res.status(err.status).send({ error: err.message });
+                return;
+            }
+            throw err;
+        }
 
-        if (!message) {
+        if (device.owner !== userDetails.userID) {
             res.sendStatus(401);
             return;
         }
