@@ -124,8 +124,12 @@ import {
 } from "./stress-trace-db.ts";
 import { startStressWebServer } from "./stress-web-server.ts";
 import {
+    formatWsDeliveryStats,
+    getWsDeliveryStats,
     verifyChatPostBurstWsDelivery,
     verifyNoisePostBurstWsDelivery,
+    waitForWsDeliveryFinalGrace,
+    wsDeliveryGatePassed,
 } from "./stress-ws-delivery.ts";
 
 /** libvex / `ws` attach many `"message"` handlers; default (10) spams MaxListenersExceededWarning. */
@@ -1082,6 +1086,7 @@ async function main(): Promise<void> {
             }
 
             if (!sessionRestart) {
+                await waitForWsDeliveryFinalGrace();
                 await closeAllStressClients(clients);
             }
 
@@ -1170,6 +1175,11 @@ async function main(): Promise<void> {
             }
         }
 
+        const wsDeliveryStats = getWsDeliveryStats();
+        if (wsDeliveryStats.expected > 0) {
+            process.stderr.write(`${formatWsDeliveryStats(wsDeliveryStats)}\n`);
+        }
+
         const failures = httpFailureTotal(lastHttpStats);
         const totalCounted = lastHttpStats.ok + failures;
         const minOkRate = minOkRateRequired();
@@ -1183,6 +1193,12 @@ async function main(): Promise<void> {
             process.exitCode = 3;
         } else if (failures > 0) {
             process.exitCode = 1;
+        }
+        if (!wsDeliveryGatePassed(wsDeliveryStats)) {
+            process.stderr.write(
+                `[stress] websocket delivery gate failed: observed=${String(wsDeliveryStats.observed)}/${String(wsDeliveryStats.expected)} (${(wsDeliveryStats.ratio * 100).toFixed(1)}%) < required ${(wsDeliveryStats.requiredRatio * 100).toFixed(1)}%\n`,
+            );
+            process.exitCode = 3;
         }
 
         traceEndedReason = runFlags.interrupted ? "interrupt" : "completed";
@@ -1388,7 +1404,9 @@ function printSpireStressCliHelp(): void {
             "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
             "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
             "  SPIRE_STRESS_WS_DELIVERY_MS    floor (ms) for post-burst WS waits; also scales with client count (chat/noise)",
-            "  SPIRE_STRESS_WS_WITNESS_MAX    post-burst: how many guests must see each ping (default 3; `all` = every guest)",
+            "  SPIRE_STRESS_WS_WITNESS_MAX    post-burst: how many guests to sample per ping (default 3; `all` = every guest)",
+            "  SPIRE_STRESS_WS_REQUIRED_RATIO final observed/expected WS delivery gate (default 0.9)",
+            "  SPIRE_STRESS_WS_FINAL_GRACE_MS final grace before teardown so in-flight WS pings can arrive (default 5000)",
             "  SPIRE_STRESS_WS_CI=0           disable CI timeout multiplier (CI/GITHUB_ACTIONS default ~1.3×)",
             "  SPIRE_STRESS_WS_CI_FACTOR      override CI multiplier (1–4; default on CI ~1.3)",
             "",
