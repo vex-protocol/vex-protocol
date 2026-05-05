@@ -1,8 +1,8 @@
-name: Spire stress CLI
+name: Spire integration CLI
 
-# One Docker Compose stack per crypto profile; all stress scenarios run in series
-# on that same Spire instance (fresh 10-client harness each scenario). Two jobs
-# total (tweetnacl + fips) instead of a job per scenario to limit Actions minutes.
+# Headless Spire integration tests (`integration:cli`): one Docker Compose stack
+# per crypto profile; all scenarios run in series on that instance (fresh 10-client
+# harness each scenario). Two jobs (tweetnacl + fips).
 
 on:
     pull_request:
@@ -15,12 +15,12 @@ permissions:
     contents: read
 
 jobs:
-    stress-cli:
-        name: stress:cli (${{ matrix.crypto }}, all scenarios, Docker :16777)
+    integration-cli:
+        name: integration:cli (${{ matrix.crypto }}, all scenarios, Docker :16777)
         runs-on: ubuntu-latest
         timeout-minutes: 50
         concurrency:
-            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
+            group: spire-integration-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
             cancel-in-progress: true
         strategy:
             fail-fast: false
@@ -58,9 +58,9 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            # stress:cli imports @vex-chat/libvex → package.json "import": "./dist/index.js";
+            # integration:cli imports @vex-chat/libvex → package.json "import": "./dist/index.js";
             # dist/ only exists after building workspace deps (same filter as Spire Dockerfile).
-            - name: Build workspace packages for stress harness
+            - name: Build workspace packages for integration harness
               run: pnpm --filter @vex-chat/spire^... build
 
             - name: Write apps/spire/.env for Compose
@@ -106,7 +106,7 @@ jobs:
                   docker compose ps || true
                   exit 1
 
-            - name: Run stress CLI (all scenarios, one stack)
+            - name: Run integration CLI (all scenarios, one stack)
               shell: bash
               working-directory: apps/spire
               env:
@@ -115,8 +115,8 @@ jobs:
                   set -euo pipefail
                   scenarios=(chat noise mixed whoami servers)
                   for s in "${scenarios[@]}"; do
-                    echo "::group::stress:cli --scenario ${s} (10 clients, fresh harness)"
-                    pnpm stress:cli -- \
+                    echo "::group::integration:cli --scenario ${s} (10 clients, fresh harness)"
+                    pnpm integration:cli -- \
                       --host "127.0.0.1:16777" \
                       --walls 2 \
                       --clients 10 \

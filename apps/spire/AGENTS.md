@@ -20,12 +20,12 @@ Spire-specific rules. Shared rules (release flow, NEVER list, dependabot policy,
 
 Anything else — `.github/`, tsconfig, eslint config, `src/__tests__/**`, `vitest.config.ts`, `AGENTS.md`, `scripts/` (dev utilities), `services/` (sibling service helpers — currently `status-monitor/`), `public/` (static docs assets served by the running server) — is NOT in the tarball's footprint and is NOT user-visible. PRs touching only those files should ship an **empty changeset** (`---\n---\n`).
 
-## Stress jobs in CI
+## Integration jobs in CI
 
-`build.yml` runs two Docker stress jobs in addition to the main `checks`:
+`.github/workflows/spire-integration-cli.yml` runs two Docker-backed jobs (tweetnacl + FIPS) in addition to the main `build.yml` checks:
 
-- **`stress (tweetnacl)`** — uses `gen-spk.js`, default server profile, runs `pnpm run stress:cli` against `127.0.0.1:16777` (informational; non-blocking).
-- **`stress (FIPS)`** — uses `gen-spk-fips.js`, sets `SPIRE_FIPS=true`, asserts `GET /status` reports `cryptoProfile: fips`. Same `pnpm run stress:cli` path.
+- **`integration (tweetnacl)`** — uses `gen-spk.js`, default server profile, runs `pnpm run integration:cli` against `127.0.0.1:16777`.
+- **`integration (FIPS)`** — uses `gen-spk-fips.js`, sets `SPIRE_FIPS=true`, asserts `GET /status` reports `cryptoProfile: fips`. Same `pnpm run integration:cli` path.
 
 Both build the same image and use a fresh GHA layer cache. The repo previously ran a multi-OS matrix for native edge cases — if you reintroduce that, don't drop coverage without reason.
 

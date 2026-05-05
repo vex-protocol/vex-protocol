@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Ensure Docker is reachable, Spire + nginx compose is up, then run stress:cli.
-# Usage (from vex-protocol/): pnpm run stress:cli [-- stress-cli-sweep args…]
+# Ensure Docker is reachable, Spire + nginx compose is up, then run integration:cli.
+# Usage (from vex-protocol/): pnpm run integration:cli [-- stress-cli-sweep args…]
 # Defaults when omitted (later argv wins): --host 127.0.0.1:16777, --walls 10,
 # --clients 10, --conc 20, --scenario chat, --seconds 180, --stop-on-fail
 # (omit --stop-on-fail if you pass --informational). Prints a RESULT: line from exit code.
@@ -15,12 +15,12 @@ DOCKER_WAIT_SEC="${SPIRE_STRESS_DOCKER_WAIT_SEC:-180}"
 for a in "$@"; do
     if [[ "$a" == "--help" || "$a" == "-h" ]]; then
         if [[ ! -d "$SPIRE_DIR" ]]; then
-            echo "[stress] Expected Spire app at ${SPIRE_DIR}" >&2
+            echo "[integration-cli] Expected Spire app at ${SPIRE_DIR}" >&2
             exit 1
         fi
         cd "$SPIRE_DIR"
         export SPIRE_STRESS_TRACE="${SPIRE_STRESS_TRACE:-0}"
-        exec pnpm run stress:cli -- "$@"
+        exec pnpm run integration:cli -- "$@"
     fi
 done
 
@@ -43,13 +43,13 @@ maybe_start_docker_desktop() {
     case "$(uname -s)" in
         Darwin)
             if command -v open >/dev/null 2>&1; then
-                echo "[stress] Docker daemon not reachable — launching Docker Desktop (macOS)…" >&2
+                echo "[integration-cli] Docker daemon not reachable — launching Docker Desktop (macOS)…" >&2
                 open -a Docker 2>/dev/null || true
             fi
             ;;
         *)
-            echo "[stress] Docker daemon not reachable — start the Docker engine, then retry." >&2
-            echo "[stress]   Linux: sudo systemctl start docker   (or your distro’s service)" >&2
+            echo "[integration-cli] Docker daemon not reachable — start the Docker engine, then retry." >&2
+            echo "[integration-cli]   Linux: sudo systemctl start docker   (or your distro’s service)" >&2
             return 1
             ;;
     esac
@@ -57,21 +57,21 @@ maybe_start_docker_desktop() {
 
 if ! docker_info_ok; then
     maybe_start_docker_desktop || exit 1
-    echo "[stress] Waiting for Docker daemon (up to ${DOCKER_WAIT_SEC}s)…" >&2
+    echo "[integration-cli] Waiting for Docker daemon (up to ${DOCKER_WAIT_SEC}s)…" >&2
     if ! wait_for_docker; then
-        echo "[stress] Docker did not become ready within ${DOCKER_WAIT_SEC}s." >&2
+        echo "[integration-cli] Docker did not become ready within ${DOCKER_WAIT_SEC}s." >&2
         exit 1
     fi
 fi
 
 if [[ ! -d "$SPIRE_DIR" ]]; then
-    echo "[stress] Expected Spire app at ${SPIRE_DIR}" >&2
+    echo "[integration-cli] Expected Spire app at ${SPIRE_DIR}" >&2
     exit 1
 fi
 
 if [[ ! -f "${SPIRE_DIR}/.env" ]]; then
-    echo "[stress] Missing ${SPIRE_DIR}/.env" >&2
-    echo "[stress] Create it before stress (e.g. SPK, JWT_SECRET, DEV_API_KEY — see apps/spire README / gen-spk)." >&2
+    echo "[integration-cli] Missing ${SPIRE_DIR}/.env" >&2
+    echo "[integration-cli] Create it before running (e.g. SPK, JWT_SECRET, DEV_API_KEY — see apps/spire README / gen-spk)." >&2
     exit 1
 fi
 
@@ -126,11 +126,11 @@ set -- "${def[@]}" "$@"
 cd "$SPIRE_DIR"
 
 if curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
-    echo "[stress] Stack already healthy (${STATUS_URL})" >&2
+    echo "[integration-cli] Stack already healthy (${STATUS_URL})" >&2
 else
-    echo "[stress] Stack not ready — docker compose up -d --build …" >&2
+    echo "[integration-cli] Stack not ready — docker compose up -d --build …" >&2
     docker compose up -d --build
-    echo "[stress] Waiting for ${STATUS_URL} (up to ${STACK_WAIT_SEC}s)…" >&2
+    echo "[integration-cli] Waiting for ${STATUS_URL} (up to ${STACK_WAIT_SEC}s)…" >&2
     deadline=$((SECONDS + STACK_WAIT_SEC))
     while ((SECONDS < deadline)); do
         if curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
@@ -139,24 +139,24 @@ else
         sleep 1
     done
     if ! curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
-        echo "[stress] Stack did not become ready. Try: cd apps/spire && docker compose ps && docker compose logs" >&2
+        echo "[integration-cli] Stack did not become ready. Try: cd apps/spire && docker compose ps && docker compose logs" >&2
         exit 1
     fi
 fi
 
 export SPIRE_STRESS_TRACE="${SPIRE_STRESS_TRACE:-0}"
 
-echo "[stress] pnpm run stress:cli -- $*" >&2
+echo "[integration-cli] pnpm run integration:cli -- $*" >&2
 set +e
-pnpm run stress:cli -- "$@"
-stress_exit=$?
+pnpm run integration:cli -- "$@"
+integration_exit=$?
 set -e
 
-if [[ "$stress_exit" -eq 0 ]]; then
-    echo "[stress] RESULT: PASS (exit 0)" >&2
-elif [[ "$stress_exit" -eq 2 ]]; then
-    echo "[stress] RESULT: FAIL — target unreachable (exit 2)" >&2
+if [[ "$integration_exit" -eq 0 ]]; then
+    echo "[integration-cli] RESULT: PASS (exit 0)" >&2
+elif [[ "$integration_exit" -eq 2 ]]; then
+    echo "[integration-cli] RESULT: FAIL — target unreachable (exit 2)" >&2
 else
-    echo "[stress] RESULT: FAIL (exit $stress_exit)" >&2
+    echo "[integration-cli] RESULT: FAIL (exit $integration_exit)" >&2
 fi
-exit "$stress_exit"
+exit "$integration_exit"

@@ -12,7 +12,7 @@
  *   STRESS_DOCS_PACK_PATH  — output path (default ~/.spire-stress/docs-pack.json)
  *
  * @example
- *   npm run stress:docs-pack
+ *   npm run integration:docs-pack
  */
 import {
     mkdirSync,

@@ -5,7 +5,7 @@
  */
 
 /**
- * Human-readable final report for the Spire stress harness.
+ * Human-readable final report for the Spire integration harness (spire-stress).
  * Set SPIRE_STRESS_JSON=1 to also print a machine-readable JSON block.
  * Per-surface facet tallies (same as web UI): SPIRE_STRESS_FACET_REPORT=1 or default on in quiet/CI (WEB=0).
  */
@@ -50,7 +50,7 @@ const FACET_GROUP_LABEL: Record<"bootstrap" | "load" | "world", string> = {
     world: "Shared world",
 };
 
-/** Written by spire-stress when `SPIRE_STRESS_FACET_DUMP_PATH` is set (e.g. stress:cli matrix). */
+/** Written by spire-stress when `SPIRE_STRESS_FACET_DUMP_PATH` is set (e.g. integration:cli matrix). */
 export interface StressFacetDumpV1 {
     readonly facets: readonly StressUiFacetRow[];
     readonly host: string;

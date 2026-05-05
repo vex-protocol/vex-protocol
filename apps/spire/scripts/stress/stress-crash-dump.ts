@@ -60,7 +60,7 @@ export function formatStressCrashDump(
         "      (harness snapshot + error + telemetry slice + correlated failure groups).",
         "    • If SPIRE_STRESS_TRACE is enabled, see SQLite table incidents (harness_snapshot_json, recent_events_json).",
         "    • Optional: NODE_OPTIONS='--trace-uncaught' for Node async stack hints.",
-        "    • Repo file index for LLM context: npm run stress:repo-manifest",
+        "    • Repo file index for LLM context: npm run integration:repo-manifest",
         "────────────────────────────────────────────────────────────────",
         "",
         stack,
