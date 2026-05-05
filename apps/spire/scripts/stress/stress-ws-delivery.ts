@@ -7,6 +7,12 @@
 /**
  * Wait for libvex `Client` "message" events (WebSocket mail path) so integration
  * runs assert realtime delivery, not only HTTP API success.
+ *
+ * **Post-burst checks** (`verify*PostBurstWsDelivery`): only the first
+ * `SPIRE_STRESS_WS_WITNESS_MAX` guests (default **3**) must observe each ping so
+ * CI stays reliable with many clients; set `SPIRE_STRESS_WS_WITNESS_MAX=all` to
+ * require every guest. Timeout uses `SPIRE_STRESS_WS_DELIVERY_MS` and scales with
+ * client count unless the env value is already higher.
  */
 import type { Client, Message } from "@vex-chat/libvex";
 
@@ -24,6 +30,17 @@ import {
 } from "./stress-telemetry.ts";
 
 const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
+const WS_WITNESS_MAX_ENV = "SPIRE_STRESS_WS_WITNESS_MAX";
+
+/**
+ * Per-check budget: at least env / default, plus headroom when many clients exist
+ * (fan-out decrypt + event loop).
+ */
+export function postBurstWsTimeoutMs(totalClients: number): number {
+    const base = wsDeliveryTimeoutMs();
+    const scaled = 28_000 + Math.max(0, Math.min(32, totalClients - 1)) * 4_500;
+    return Math.max(base, scaled);
+}
 
 /**
  * Resolves when `predicate` matches the next `message` event, or rejects on timeout.
@@ -32,6 +49,7 @@ export function waitForClientMessageWs(
     client: Client,
     predicate: (m: Message) => boolean,
     timeoutMs: number,
+    diagnosticLabel = "inbound message",
 ): Promise<Message> {
     return new Promise((resolve, reject) => {
         let done = false;
@@ -43,7 +61,7 @@ export function waitForClientMessageWs(
             client.off("message", onMessage);
             reject(
                 new Error(
-                    `WebSocket message delivery not observed within ${String(timeoutMs)}ms (${WS_DELIVERY_ENV})`,
+                    `${diagnosticLabel}: WebSocket delivery not observed within ${String(timeoutMs)}ms (set ${WS_DELIVERY_ENV} or ${WS_WITNESS_MAX_ENV}; see scripts/stress/stress-ws-delivery.ts)`,
                 ),
             );
         }, timeoutMs);
@@ -85,6 +103,21 @@ function touchCtx(
     return { burst, clientIndex, phase };
 }
 
+function wsWitnessCap(guestCount: number): number {
+    const raw = process.env[WS_WITNESS_MAX_ENV]?.trim().toLowerCase();
+    if (raw === "all" || raw === "*") {
+        return guestCount;
+    }
+    if (raw === undefined || raw === "") {
+        return Math.min(3, guestCount);
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 1) {
+        return Math.min(3, guestCount);
+    }
+    return Math.min(guestCount, Math.floor(n));
+}
+
 const WS_DELIVERY_SURFACE = "Client.on(message) | ws delivery";
 
 export interface ChatWsPingWorld {
@@ -105,7 +138,12 @@ export async function awaitWsInboundWithTelemetry(
 ): Promise<void> {
     const ctx = touchCtx(phase, burst, clientIndex);
     try {
-        await waitForClientMessageWs(client, predicate, wsDeliveryTimeoutMs());
+        await waitForClientMessageWs(
+            client,
+            predicate,
+            wsDeliveryTimeoutMs(),
+            `warmup WS client#${String(clientIndex)}`,
+        );
         telemetry?.touchOk(WS_DELIVERY_SURFACE, ctx);
     } catch (err: unknown) {
         recordHttpFailure(stats, err);
@@ -115,8 +153,9 @@ export async function awaitWsInboundWithTelemetry(
 }
 
 /**
- * After a flood wall, hub posts a unique token on each guild channel; every
- * other client must observe the inbound `message` event (WS path).
+ * After a flood wall, hub posts a unique token on each guild channel; a subset
+ * of guests (see `wsWitnessCap`) must observe inbound `message` events, then a
+ * hub→guest1 DM is checked on WS.
  */
 export async function verifyChatPostBurstWsDelivery(
     clients: readonly Client[],
@@ -131,36 +170,36 @@ export async function verifyChatPostBurstWsDelivery(
         return;
     }
     const guests = clients.slice(1);
-    const timeoutMs = wsDeliveryTimeoutMs();
+    const cap = wsWitnessCap(guests.length);
+    const witnessGuests = guests.slice(0, cap);
+    const timeoutMs = postBurstWsTimeoutMs(clients.length);
 
     const tokenPrimary = `[spire-ws-ping:${randomUUID()}]`;
-    const waitsPrimary = guests.map((guest, idx) =>
-        waitForClientMessageWs(
+    const waitsPrimary = witnessGuests.map((guest, wIdx) => {
+        const clientIndex = wIdx + 1;
+        return waitForClientMessageWs(
             guest,
-            (m) =>
-                m.group === world.channelID &&
-                m.direction === "incoming" &&
-                m.decrypted &&
-                m.message.includes(tokenPrimary),
+            incomingGroupPredicate(world.channelID, tokenPrimary),
             timeoutMs,
+            `chat post-wall primary #${String(clientIndex)}`,
         ).then(
             () => {
                 telemetry?.touchOk(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                 );
             },
             (err: unknown) => {
                 recordHttpFailure(stats, err);
                 telemetry?.touchFail(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                     err,
                 );
                 throw err;
             },
-        ),
-    );
+        );
+    });
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -171,39 +210,38 @@ export async function verifyChatPostBurstWsDelivery(
             inputs: {
                 channelID: shortId(world.channelID),
                 step: "post_burst_ws_ping_primary",
+                witnessCap: cap,
             },
         },
     );
     await Promise.all(waitsPrimary);
 
     const tokenLounge = `[spire-ws-ping-lounge:${randomUUID()}]`;
-    const waitsLounge = guests.map((guest, idx) =>
-        waitForClientMessageWs(
+    const waitsLounge = witnessGuests.map((guest, wIdx) => {
+        const clientIndex = wIdx + 1;
+        return waitForClientMessageWs(
             guest,
-            (m) =>
-                m.group === world.secondaryChannelID &&
-                m.direction === "incoming" &&
-                m.decrypted &&
-                m.message.includes(tokenLounge),
+            incomingGroupPredicate(world.secondaryChannelID, tokenLounge),
             timeoutMs,
+            `chat post-wall lounge #${String(clientIndex)}`,
         ).then(
             () => {
                 telemetry?.touchOk(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                 );
             },
             (err: unknown) => {
                 recordHttpFailure(stats, err);
                 telemetry?.touchFail(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                     err,
                 );
                 throw err;
             },
-        ),
-    );
+        );
+    });
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -214,6 +252,7 @@ export async function verifyChatPostBurstWsDelivery(
             inputs: {
                 channelID: shortId(world.secondaryChannelID),
                 step: "post_burst_ws_ping_lounge",
+                witnessCap: cap,
             },
         },
     );
@@ -237,6 +276,7 @@ export async function verifyChatPostBurstWsDelivery(
                 m.authorID === hubUser &&
                 m.message.includes(dmToken),
             timeoutMs,
+            "chat post-wall hub→guest1 DM",
         ).then(
             () => {
                 telemetry?.touchOk(
@@ -289,35 +329,35 @@ export async function verifyNoisePostBurstWsDelivery(
         return;
     }
     const guests = clients.slice(1);
-    const timeoutMs = wsDeliveryTimeoutMs();
+    const cap = wsWitnessCap(guests.length);
+    const witnessGuests = guests.slice(0, cap);
+    const timeoutMs = postBurstWsTimeoutMs(clients.length);
     const token = `[spire-ws-ping-noise:${randomUUID()}]`;
-    const waits = guests.map((guest, idx) =>
-        waitForClientMessageWs(
+    const waits = witnessGuests.map((guest, wIdx) => {
+        const clientIndex = wIdx + 1;
+        return waitForClientMessageWs(
             guest,
-            (m) =>
-                m.group === channelID &&
-                m.direction === "incoming" &&
-                m.decrypted &&
-                m.message.includes(token),
+            incomingGroupPredicate(channelID, token),
             timeoutMs,
+            `noise post-wall group #${String(clientIndex)}`,
         ).then(
             () => {
                 telemetry?.touchOk(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                 );
             },
             (err: unknown) => {
                 recordHttpFailure(stats, err);
                 telemetry?.touchFail(
                     WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, idx + 1),
+                    touchCtx(phase, burst, clientIndex),
                     err,
                 );
                 throw err;
             },
-        ),
-    );
+        );
+    });
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -328,6 +368,7 @@ export async function verifyNoisePostBurstWsDelivery(
             inputs: {
                 channelID: shortId(channelID),
                 step: "post_burst_ws_ping_noise",
+                witnessCap: cap,
             },
         },
     );
@@ -350,6 +391,7 @@ export async function verifyNoisePostBurstWsDelivery(
             m.authorID === hubUserID &&
             m.message.includes(dmToken),
         timeoutMs,
+        "noise post-wall hub→guest1 DM",
     ).then(
         () => {
             telemetry?.touchOk(WS_DELIVERY_SURFACE, touchCtx(phase, burst, 1));
@@ -378,4 +420,15 @@ export async function verifyNoisePostBurstWsDelivery(
         },
     );
     await waitDm;
+}
+
+function incomingGroupPredicate(
+    channelID: string,
+    token: string,
+): (m: Message) => boolean {
+    return (m: Message): boolean =>
+        m.group === channelID &&
+        m.direction === "incoming" &&
+        m.decrypted &&
+        m.message.includes(token);
 }

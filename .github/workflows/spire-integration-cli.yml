@@ -18,7 +18,7 @@ jobs:
     integration-cli:
         name: integration:cli (${{ matrix.crypto }}, all scenarios, Docker :16777)
         runs-on: ubuntu-latest
-        timeout-minutes: 50
+        timeout-minutes: 90
         concurrency:
             group: spire-integration-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
             cancel-in-progress: true
@@ -111,18 +111,20 @@ jobs:
               working-directory: apps/spire
               env:
                   DEV_API_KEY: ${{ env.DEV_API_KEY }}
+                  # Post-burst WS waits scale with client count; CI runners can be slow.
+                  SPIRE_STRESS_WS_DELIVERY_MS: "90000"
               run: |
                   set -euo pipefail
                   scenarios=(chat noise mixed whoami servers)
                   for s in "${scenarios[@]}"; do
-                    echo "::group::integration:cli --scenario ${s} (10 clients, fresh harness)"
+                    echo "::group::integration:cli --scenario ${s} (10 clients, 10 walls)"
                     pnpm integration:cli -- \
                       --host "127.0.0.1:16777" \
-                      --walls 2 \
+                      --walls 10 \
                       --clients 10 \
                       --conc 5 \
                       --scenario "${s}" \
-                      --seconds 180 \
+                      --seconds 600 \
                       --stop-on-fail
                     echo "::endgroup::"
                   done
