@@ -20,6 +20,9 @@ export const DEV_API_KEY_HEADER = "x-dev-api-key";
  * (Future: first-class API keys with scopes may reuse this header name.)
  */
 export function devApiKeySkipsRateLimits(req: Request): boolean {
+    if (disableRateLimitsByEnv()) {
+        return true;
+    }
     const configured = process.env["DEV_API_KEY"]?.trim() ?? "";
     if (configured.length === 0) {
         return false;
@@ -36,6 +39,11 @@ export function devApiKeySkipsRateLimits(req: Request): boolean {
     } catch {
         return false;
     }
+}
+
+function disableRateLimitsByEnv(): boolean {
+    const raw = process.env["SPIRE_DISABLE_RATE_LIMITS"]?.trim().toLowerCase();
+    return raw === "1" || raw === "true";
 }
 
 /**
