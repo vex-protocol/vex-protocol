@@ -50,6 +50,10 @@ import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { resolveSpireListenPort } from "./spireListenPort.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
+import {
+    assertDevicePayloadPreKeySignature,
+    PreKeyValidationError,
+} from "./utils/preKeyValidation.ts";
 import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
 
 // expiry of regkeys = 24hr
@@ -895,6 +899,20 @@ export class Spire extends EventEmitter {
                         TokenScopes.Register,
                     )
                 ) {
+                    try {
+                        await assertDevicePayloadPreKeySignature(
+                            normalizedPayload,
+                        );
+                    } catch (err: unknown) {
+                        if (err instanceof PreKeyValidationError) {
+                            res.status(err.status).send({
+                                error: err.message,
+                            });
+                            return;
+                        }
+                        throw err;
+                    }
+
                     const [user, err] = await this.db.createUser(
                         regKey,
                         normalizedPayload,
