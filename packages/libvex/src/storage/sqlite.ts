@@ -28,6 +28,13 @@ import type { Device, PreKeysSQL, SessionSQL } from "@vex-chat/types";
  *
  * This replaces three separate storage classes (Storage.ts, TauriStorage,
  * ExpoStorage) with a single implementation.
+ *
+ * **One database file today** holds both `sessions` (Double Ratchet /
+ * X3DH state — required to decrypt *new* traffic) and `messages` (history).
+ * If the file is lost or corrupted you lose both; restoring from backup
+ * re-seeds device keys but cannot reconstruct dropped ratchet chains from
+ * the server alone. A future split could park `sessions` + OTKs in a
+ * smaller “crypto state” store separate from bulk message history.
  */
 import {
     getCryptoProfile,
@@ -671,6 +678,14 @@ export class SqliteStorage extends EventEmitter implements Storage {
     ): Promise<Message[]> {
         const fips = getCryptoProfile() === "fips";
         const out: Message[] = [];
+        let processed = 0;
+        /** Yield so RN / web UIs can paint between at-rest decrypt blocks. */
+        const yieldToHost = (): Promise<void> =>
+            new Promise((resolve) => {
+                setTimeout(resolve, 0);
+            });
+        const yieldEvery = 28;
+
         for (const msg of messages) {
             const decryptedFlag = msg.decrypted !== 0;
             let plaintext = msg.message;
@@ -710,6 +725,11 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 rowMessage.retentionHintDays = msg.retentionHintDays;
             }
             out.push(rowMessage);
+
+            processed += 1;
+            if (processed % yieldEvery === 0) {
+                await yieldToHost();
+            }
         }
         return out;
     }

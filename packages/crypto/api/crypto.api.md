@@ -15,6 +15,9 @@ import { encode as encode_2 } from '@stablelib/base64';
 export type CryptoProfile = "fips" | "tweetnacl";
 
 // @public
+export function enterCryptoProfileScope(profile: CryptoProfile): void;
+
+// @public
 export function fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(ecdsaSpki: Uint8Array): Promise<Uint8Array>;
 
 // @public
@@ -27,6 +30,9 @@ export interface KeyPair {
     // (undocumented)
     secretKey: Uint8Array;
 }
+
+// @public
+export function leaveCryptoProfileScope(): void;
 
 // @public
 export function setCryptoProfile(profile: CryptoProfile): void;

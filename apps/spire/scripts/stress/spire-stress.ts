@@ -5,27 +5,27 @@
  */
 
 /**
- * Local stress harness against a running Spire.
+ * Local Spire integration harness (interactive web or headless matrix child).
  *
  * Prerequisites:
  * - Same `DEV_API_KEY` on Spire and in env; sent as `x-dev-api-key` (rate-limit bypass).
  * - `NODE_ENV` must be `development` or `test` for libvex `unsafeHttp` (forced when unset).
  *
  * @example Default — RNG “noise” across libvex (10 clients, shared server, invites, DMs, WS):
- *   DEV_API_KEY=secret npm run stress:web
+ *   DEV_API_KEY=secret npm run integration:web
  *   Opens http://127.0.0.1:18777/ by default in your browser (SPIRE_STRESS_OPEN_BROWSER=0 to skip).
  *
  * @example Lighter read-only mix (no multi-user noise world):
- *   SPIRE_STRESS_SCENARIO=mixed DEV_API_KEY=secret npm run stress:web
+ *   SPIRE_STRESS_SCENARIO=mixed DEV_API_KEY=secret npm run integration:web
  *
  * @example Chat-shaped load (WebSocket + shared server, group/DM + history reads):
- *   SPIRE_STRESS_SCENARIO=chat DEV_API_KEY=secret npm run stress:web
+ *   SPIRE_STRESS_SCENARIO=chat DEV_API_KEY=secret npm run integration:web
  *
  * @example Finite run — exit after N flood walls:
- *   SPIRE_STRESS_ROUNDS=25 DEV_API_KEY=secret npm run stress:web
+ *   SPIRE_STRESS_ROUNDS=25 DEV_API_KEY=secret npm run integration:web
  *
  * @example Reuse one account (do not use with default `noise`; use `mixed` or `chat`):
- *   SPIRE_STRESS_SCENARIO=mixed SPIRE_STRESS_USERNAME=alice SPIRE_STRESS_PASSWORD='…' npm run stress:web
+ *   SPIRE_STRESS_SCENARIO=mixed SPIRE_STRESS_USERNAME=alice SPIRE_STRESS_PASSWORD='…' npm run integration:web
  *
  * Trace SQLite (harness steps + fatals): default ~/.spire-stress/traces.sqlite — disable with SPIRE_STRESS_TRACE=0,
  * or set SPIRE_STRESS_TRACE_DB=/path/to/file.sqlite
@@ -41,10 +41,10 @@
  * That is not raw HTTP RPS — noise/chat often do several requests per slot. Scale SPIRE_STRESS_CLIENTS and
  * SPIRE_STRESS_CONCURRENCY gradually while watching Spire CPU and this number.
  *
- * Time cap (stress:cli matrix / unattended soak): SPIRE_STRESS_MAX_WALL_SEC=N stops the flood loop after N seconds
- * of wall time (flood walls + any paced idle gaps). Works with SPIRE_STRESS_FOREVER=1. See npm run stress:cli.
+ * Time cap (integration:cli matrix / unattended soak): SPIRE_STRESS_MAX_WALL_SEC=N stops the flood loop after N seconds
+ * of wall time (flood walls + any paced idle gaps). Works with SPIRE_STRESS_FOREVER=1. See npm run integration:cli.
  * Client teardown: SPIRE_STRESS_CLIENT_CLOSE_MS caps how long `Client.close()` may run (default 120000); harness then calls process.exit.
- * Facet report (stdout, same surfaces as web UI): default when SPIRE_STRESS_WEB=0; SPIRE_STRESS_FACET_REPORT=0 off, =1 force, =all include idle. JSON: SPIRE_STRESS_JSON=1 adds `facets`. stress:cli sets SPIRE_STRESS_FACET_DEFER=1 and SPIRE_STRESS_FACET_DUMP_PATH so children skip stdout and the parent prints one merged table after the matrix.
+ * Facet report (stdout, same surfaces as web UI): default when SPIRE_STRESS_WEB=0; SPIRE_STRESS_FACET_REPORT=0 off, =1 force, =all include idle. JSON: SPIRE_STRESS_JSON=1 adds `facets`. integration:cli sets SPIRE_STRESS_FACET_DEFER=1 and SPIRE_STRESS_FACET_DUMP_PATH so children skip stdout and the parent prints one merged table after the matrix.
  *
  * Web dashboard: POST /api/restart-run queues a full session restart (clients + load mode + concurrency)
  * after the current flood wall (see Session controls in scripts/stress/web/index.html).
@@ -77,6 +77,7 @@ import {
     bootstrapChatWorld,
     type ChatWorld,
     oneChatBurst,
+    runChatSocialWarmup,
 } from "./stress-chat.ts";
 import { createStressClientViz } from "./stress-client-viz.ts";
 import {
@@ -122,6 +123,10 @@ import {
     StressTraceDb,
 } from "./stress-trace-db.ts";
 import { startStressWebServer } from "./stress-web-server.ts";
+import {
+    verifyChatPostBurstWsDelivery,
+    verifyNoisePostBurstWsDelivery,
+} from "./stress-ws-delivery.ts";
 
 /** libvex / `ws` attach many `"message"` handlers; default (10) spams MaxListenersExceededWarning. */
 EventEmitter.defaultMaxListeners = 100;
@@ -506,7 +511,7 @@ async function main(): Promise<void> {
     const stressQuietCli =
         process.env["SPIRE_STRESS_WEB"] === "0" &&
         process.env["SPIRE_STRESS_VERBOSE"] !== "1";
-    /** When set (e.g. stress:cli), skip printing the facet table here; still write dump if `SPIRE_STRESS_FACET_DUMP_PATH` is set. */
+    /** When set (e.g. integration:cli), skip printing the facet table here; still write dump if `SPIRE_STRESS_FACET_DUMP_PATH` is set. */
     const facetDefer = process.env["SPIRE_STRESS_FACET_DEFER"] === "1";
     /** Per-surface ok/fail table on stdout (default on when quiet/CI). Set `SPIRE_STRESS_FACET_REPORT=0` to skip, `=1` to force, `=all` to include idle facets. */
     const facetReportWanted =
@@ -750,13 +755,23 @@ async function main(): Promise<void> {
             if (chatWorld !== null) {
                 crashCtx.chatWorld = {
                     channelID: chatWorld.channelID,
+                    secondaryChannelID: chatWorld.secondaryChannelID,
                     serverID: chatWorld.serverID,
                 };
+                await runChatSocialWarmup(
+                    clients,
+                    chatWorld,
+                    httpStats,
+                    telemetry,
+                    crashCtx.phase,
+                    crashCtx.currentBurst,
+                );
                 trace?.append({
                     burst: 0,
                     detail: {
                         channelID: chatWorld.channelID,
                         clientCount: clients.length,
+                        secondaryChannelID: chatWorld.secondaryChannelID,
                         serverID: chatWorld.serverID,
                     },
                     event: "chat_world_ready",
@@ -876,6 +891,16 @@ async function main(): Promise<void> {
                         inFlight: 0,
                         lastBurstMs: dt,
                     });
+                    await verifyRealtimeWsDeliveryIfNeeded(
+                        scenario,
+                        clients,
+                        chatWorld,
+                        noiseWorld,
+                        httpStats,
+                        telemetry,
+                        crashCtx.phase,
+                        crashCtx.currentBurst,
+                    );
                     if (stressQuietCli) {
                         writeStressCliWallSnapshot({
                             burstGapMs: sessionBurstGapMs,
@@ -990,6 +1015,16 @@ async function main(): Promise<void> {
                         inFlight: 0,
                         lastBurstMs: dt,
                     });
+                    await verifyRealtimeWsDeliveryIfNeeded(
+                        scenario,
+                        clients,
+                        chatWorld,
+                        noiseWorld,
+                        httpStats,
+                        telemetry,
+                        crashCtx.phase,
+                        crashCtx.currentBurst,
+                    );
                     if (stressQuietCli) {
                         writeStressCliWallSnapshot({
                             burstGapMs: sessionBurstGapMs,
@@ -1352,8 +1387,12 @@ function printSpireStressCliHelp(): void {
             "  SPIRE_STRESS_MAX_WALL_SEC      wall-time cap when FOREVER=1",
             "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
             "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
+            "  SPIRE_STRESS_WS_DELIVERY_MS    floor (ms) for post-burst WS waits; also scales with client count (chat/noise)",
+            "  SPIRE_STRESS_WS_WITNESS_MAX    post-burst: how many guests must see each ping (default 3; `all` = every guest)",
+            "  SPIRE_STRESS_WS_CI=0           disable CI timeout multiplier (CI/GITHUB_ACTIONS default ~1.3×)",
+            "  SPIRE_STRESS_WS_CI_FACTOR      override CI multiplier (1–4; default on CI ~1.3)",
             "",
-            "npm run stress:web   ·   npm run stress:cli (headless matrix)",
+            "npm run integration:web   ·   npm run integration:cli (headless matrix)",
             "",
         ].join("\n"),
     );
@@ -1480,6 +1519,47 @@ function sleepMs(ms: number): Promise<void> {
     });
 }
 
+/** After each flood wall, assert peers saw group traffic on the WebSocket path. */
+async function verifyRealtimeWsDeliveryIfNeeded(
+    scenario: string,
+    clients: readonly Client[],
+    chatWorld: ChatWorld | null,
+    noiseWorld: NoiseWorld | null,
+    httpStats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+): Promise<void> {
+    if (clients.length < 2) {
+        return;
+    }
+    if (scenario === "chat" && chatWorld !== null) {
+        await verifyChatPostBurstWsDelivery(
+            clients,
+            chatWorld,
+            httpStats,
+            telemetry,
+            phase,
+            burst,
+        );
+    } else if (
+        scenario === "noise" &&
+        noiseWorld !== null &&
+        noiseWorld.userIDs.length >= 2
+    ) {
+        await verifyNoisePostBurstWsDelivery(
+            clients,
+            noiseWorld.channelID,
+            httpStats,
+            telemetry,
+            phase,
+            burst,
+            noiseWorld.userIDs[0] ?? "",
+            noiseWorld.userIDs[1] ?? "",
+        );
+    }
+}
+
 /** One stderr line per wall when `SPIRE_STRESS_WEB=0` — mirrors the web stats strip (dashboard). */
 function writeStressCliWallSnapshot(p: {
     readonly burstGapMs: number;
@@ -1528,7 +1608,7 @@ void main()
     .catch((err: unknown) => {
         process.stderr.write(`${formatStressUncaughtError(err)}\n`);
         process.stderr.write(
-            "Hint: match `requestId` in Spire logs (e.g. docker logs). For per-wall details set SPIRE_STRESS_VERBOSE=1, or use stress:web.\n",
+            "Hint: match `requestId` in Spire logs (e.g. docker logs). For per-wall details set SPIRE_STRESS_VERBOSE=1, or use integration:web.\n",
         );
         process.exit(1);
     });

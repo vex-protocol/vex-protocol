@@ -8,8 +8,10 @@ FROM node:24-alpine AS build
 # argon2 + better-sqlite3 compile native code via node-gyp.
 RUN apk add --no-cache python3 make g++
 
-# Pin pnpm via corepack (matches packageManager field in root package.json).
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Pin pnpm to match root `packageManager` (pnpm@10.33.0). Use npm global
+# install instead of `corepack prepare`: Corepack’s pnpm fetch often fails in
+# CI/Docker (transient TLS/registry errors on :443) while `npm i -g` is stable.
+RUN npm install -g pnpm@10.33.0
 
 WORKDIR /repo
 COPY . .

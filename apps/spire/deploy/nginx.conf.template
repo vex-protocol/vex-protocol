@@ -1,6 +1,6 @@
 worker_processes auto;
-# Only serious nginx faults — avoids noisy startup and request-adjacent messages.
-error_log /dev/stderr crit;
+# Spire logs HTTP requests; nginx stderr is for proxy/upstream/nginx faults only.
+error_log /dev/stderr warn;
 pid /run/nginx.pid;
 
 events {
@@ -36,8 +36,9 @@ http {
         ~^/[^/]+/devices(?:/|$) /:id/devices;
         ~^/(api|channels|groups|invites|login|logout|messages|metrics|register|servers|users|ws)(?:/|$) /$1;
     }
+    # Redacted format kept for local debugging: set `access_log /dev/stderr redacted;` on `server` if needed.
     log_format redacted '[$time_local] $request_method $route_static $status $body_bytes_sent $request_time';
-    access_log /dev/stderr redacted;
+    access_log off;
 
     map $http_upgrade $connection_upgrade {
         default upgrade;

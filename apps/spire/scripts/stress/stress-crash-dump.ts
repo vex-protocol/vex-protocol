@@ -18,7 +18,11 @@ import {
 } from "./stress-issue-bundle.ts";
 
 export interface StressCrashContext {
-    chatWorld: null | { channelID: string; serverID: string };
+    chatWorld: null | {
+        channelID: string;
+        secondaryChannelID: string;
+        serverID: string;
+    };
     clientCount: number;
     clientViz: null | StressClientViz[];
     currentBurst: number;
@@ -56,7 +60,7 @@ export function formatStressCrashDump(
         "      (harness snapshot + error + telemetry slice + correlated failure groups).",
         "    • If SPIRE_STRESS_TRACE is enabled, see SQLite table incidents (harness_snapshot_json, recent_events_json).",
         "    • Optional: NODE_OPTIONS='--trace-uncaught' for Node async stack hints.",
-        "    • Repo file index for LLM context: npm run stress:repo-manifest",
+        "    • Repo file index for LLM context: npm run integration:repo-manifest",
         "────────────────────────────────────────────────────────────────",
         "",
         stack,
@@ -157,7 +161,8 @@ function formatChatWorld(world: StressCrashContext["chatWorld"]): string {
     if (world === null) {
         return "";
     }
-    return `  chat server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
+    const side = world.secondaryChannelID.slice(0, 12);
+    return `  chat server ${world.serverID.slice(0, 12)}…  #general ${world.channelID.slice(0, 12)}…  side ${side}…\n`;
 }
 
 function formatClientRows(viz: null | StressClientViz[]): string {

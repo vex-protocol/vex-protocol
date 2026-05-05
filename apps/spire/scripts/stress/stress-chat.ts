@@ -5,9 +5,11 @@
  */
 
 /**
- * Chat-shaped load: WebSocket + one shared server/channel + mixed reads, group
- * sends, DMs, and history fetches (so other members exercise the same paths as
- * real recipients).
+ * Chat-shaped load: WebSocket + one shared guild where the hub invites every
+ * guest, then a hub-created side channel models two group rooms. A one-shot
+ * warmup exercises “everyone reads both channels, posts in both, ring DMs,
+ * then reads the neighbor who messaged you.” Ongoing bursts mix the same
+ * surfaces with deterministic DM peer rotation across rounds.
  */
 import type { Client } from "@vex-chat/libvex";
 
@@ -20,18 +22,24 @@ import {
     type StressTelemetry,
     type TelemetryTouchCtx,
 } from "./stress-telemetry.ts";
+import { awaitWsInboundWithTelemetry } from "./stress-ws-delivery.ts";
 
 export interface ChatWorld {
+    /** Default guild channel (#general or first). */
     readonly channelID: string;
+    /** Hub-created text channel (everyone is a member). */
+    readonly secondaryChannelID: string;
     readonly serverID: string;
     readonly userIDs: readonly string[];
 }
 
 const DURATIONS = ["1h", "24h", "48h", "7d"] as const;
 
+const CHAT_LOAD_CYCLE = 12;
+
 /**
  * Hub creates one server, invites every other client (same pattern as noise),
- * so all stress clients share #general instead of each living on its own server.
+ * adds a second text channel, so all stress clients share #general + lounge.
  */
 export async function bootstrapChatWorld(
     clients: Client[],
@@ -107,6 +115,21 @@ export async function bootstrapChatWorld(
         );
     }
 
+    const loungeName = `stress-lounge-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+    const lounge = await settleWithTelemetry(
+        stats,
+        telemetry,
+        "Client.channels.create",
+        base,
+        hub.channels.create(loungeName, server.serverID),
+        {
+            inputs: {
+                channelName: loungeName,
+                serverID: shortId(server.serverID),
+            },
+        },
+    );
+
     const meta = await Promise.all(
         clients.map((c, i) =>
             settleWithTelemetry(
@@ -123,6 +146,7 @@ export async function bootstrapChatWorld(
 
     return {
         channelID: primary.channelID,
+        secondaryChannelID: lounge.channelID,
         serverID: server.serverID,
         userIDs,
     };
@@ -166,8 +190,10 @@ export async function oneChatOp(
     burst: number,
 ): Promise<void> {
     const ctx = touchCtx(phase, burst, clientIndex);
-    const m = slot % 10;
-    if (m === 0 || m === 1) {
+    const m = slot % CHAT_LOAD_CYCLE;
+    const dmRound = Math.floor(slot / CHAT_LOAD_CYCLE);
+
+    if (m === 0) {
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -180,6 +206,28 @@ export async function oneChatOp(
             {
                 inputs: {
                     channelID: shortId(world.channelID),
+                    room: "primary",
+                    serverID: shortId(world.serverID),
+                    slot,
+                },
+            },
+        );
+        return;
+    }
+    if (m === 1) {
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.group | chat",
+            ctx,
+            client.messages.group(
+                world.secondaryChannelID,
+                `[stress-lounge] c${String(clientIndex)} s${String(slot)}-${Date.now().toString(36)}`,
+            ),
+            {
+                inputs: {
+                    channelID: shortId(world.secondaryChannelID),
+                    room: "secondary",
                     serverID: shortId(world.serverID),
                     slot,
                 },
@@ -197,6 +245,7 @@ export async function oneChatOp(
             {
                 inputs: {
                     channelID: shortId(world.channelID),
+                    room: "primary",
                     slot,
                 },
             },
@@ -204,7 +253,24 @@ export async function oneChatOp(
         return;
     }
     if (m === 3) {
-        const peer = pickPeerUserID(world, clientIndex);
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.retrieveGroup | chat",
+            ctx,
+            client.messages.retrieveGroup(world.secondaryChannelID),
+            {
+                inputs: {
+                    channelID: shortId(world.secondaryChannelID),
+                    room: "secondary",
+                    slot,
+                },
+            },
+        );
+        return;
+    }
+    if (m === 4) {
+        const peer = pickPeerUserIDDeterministic(world, clientIndex, dmRound);
         if (peer === null) {
             await settleWithTelemetry(
                 stats,
@@ -227,6 +293,7 @@ export async function oneChatOp(
             ),
             {
                 inputs: {
+                    dmRound,
                     peerUserID: shortId(peer),
                     slot,
                 },
@@ -234,8 +301,8 @@ export async function oneChatOp(
         );
         return;
     }
-    if (m === 4) {
-        const peer = pickPeerUserID(world, clientIndex);
+    if (m === 5) {
+        const peer = pickPeerUserIDDeterministic(world, clientIndex, dmRound);
         if (peer === null) {
             await settleWithTelemetry(
                 stats,
@@ -253,11 +320,11 @@ export async function oneChatOp(
             "Client.messages.retrieve | chat",
             ctx,
             client.messages.retrieve(peer),
-            { inputs: { peerUserID: shortId(peer), slot } },
+            { inputs: { dmRound, peerUserID: shortId(peer), slot } },
         );
         return;
     }
-    if (m === 5) {
+    if (m === 6) {
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -268,7 +335,7 @@ export async function oneChatOp(
         );
         return;
     }
-    if (m === 6) {
+    if (m === 7) {
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -279,7 +346,7 @@ export async function oneChatOp(
         );
         return;
     }
-    if (m === 7) {
+    if (m === 8) {
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -290,7 +357,7 @@ export async function oneChatOp(
         );
         return;
     }
-    if (m === 8) {
+    if (m === 9) {
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -300,6 +367,24 @@ export async function oneChatOp(
             {
                 inputs: {
                     channelID: shortId(world.channelID),
+                    room: "primary",
+                    slot,
+                },
+            },
+        );
+        return;
+    }
+    if (m === 10) {
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.channels.userList | chat",
+            ctx,
+            client.channels.userList(world.secondaryChannelID),
+            {
+                inputs: {
+                    channelID: shortId(world.secondaryChannelID),
+                    room: "secondary",
                     slot,
                 },
             },
@@ -316,16 +401,243 @@ export async function oneChatOp(
     );
 }
 
+/**
+ * One scripted pass after bootstrap: every member reads both channel histories,
+ * posts once in each, sends a DM to the next person in the ring, then pulls
+ * DM history with the previous neighbor (who DM’d them).
+ */
+export async function runChatSocialWarmup(
+    clients: readonly Client[],
+    world: ChatWorld,
+    stats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+): Promise<void> {
+    const n = clients.length;
+    if (n === 0) {
+        return;
+    }
+    const readBoth = clients.map((c, i) => {
+        const ctx = touchCtx(phase, burst, i);
+        return Promise.all([
+            settleWithTelemetry(
+                stats,
+                telemetry,
+                "Client.messages.retrieveGroup | chat",
+                ctx,
+                c.messages.retrieveGroup(world.channelID),
+                {
+                    inputs: {
+                        channelID: shortId(world.channelID),
+                        step: "warmup_read",
+                        which: "primary",
+                    },
+                },
+            ),
+            settleWithTelemetry(
+                stats,
+                telemetry,
+                "Client.messages.retrieveGroup | chat",
+                ctx,
+                c.messages.retrieveGroup(world.secondaryChannelID),
+                {
+                    inputs: {
+                        channelID: shortId(world.secondaryChannelID),
+                        step: "warmup_read",
+                        which: "secondary",
+                    },
+                },
+            ),
+        ]);
+    });
+    await Promise.all(readBoth);
+
+    for (let i = 0; i < n; i++) {
+        const sender = clients[i];
+        if (sender === undefined) {
+            continue;
+        }
+        const token = `[warmup-general:${String(i)}:${randomUUID().slice(0, 10)}]`;
+        const wsWaits = clients
+            .map((witness, j) => ({ j, witness }))
+            .filter(({ j }) => j !== i)
+            .map(({ j, witness }) =>
+                awaitWsInboundWithTelemetry(
+                    witness,
+                    j,
+                    (m) =>
+                        m.group === world.channelID &&
+                        m.direction === "incoming" &&
+                        m.decrypted &&
+                        m.message.includes(token),
+                    stats,
+                    telemetry,
+                    phase,
+                    burst,
+                ),
+            );
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.group | chat",
+            touchCtx(phase, burst, i),
+            sender.messages.group(world.channelID, token),
+            {
+                inputs: {
+                    channelID: shortId(world.channelID),
+                    step: "warmup_post_general",
+                },
+            },
+        );
+        await Promise.all(wsWaits);
+    }
+
+    for (let i = 0; i < n; i++) {
+        const sender = clients[i];
+        if (sender === undefined) {
+            continue;
+        }
+        const token = `[warmup-lounge:${String(i)}:${randomUUID().slice(0, 10)}]`;
+        const wsWaits = clients
+            .map((witness, j) => ({ j, witness }))
+            .filter(({ j }) => j !== i)
+            .map(({ j, witness }) =>
+                awaitWsInboundWithTelemetry(
+                    witness,
+                    j,
+                    (m) =>
+                        m.group === world.secondaryChannelID &&
+                        m.direction === "incoming" &&
+                        m.decrypted &&
+                        m.message.includes(token),
+                    stats,
+                    telemetry,
+                    phase,
+                    burst,
+                ),
+            );
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.group | chat",
+            touchCtx(phase, burst, i),
+            sender.messages.group(world.secondaryChannelID, token),
+            {
+                inputs: {
+                    channelID: shortId(world.secondaryChannelID),
+                    step: "warmup_post_lounge",
+                },
+            },
+        );
+        await Promise.all(wsWaits);
+    }
+
+    if (n < 2) {
+        return;
+    }
+
+    const dmMarkers = clients.map(
+        (_, i) =>
+            `[warmup-dm-ring] from-${String(i)}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}]`,
+    );
+    const dmWsWaits = clients.map((recipient, i) => {
+        const senderIndex = (i + n - 1) % n;
+        const fromUser = world.userIDs[senderIndex];
+        const marker = dmMarkers[senderIndex];
+        if (fromUser === undefined || marker === undefined) {
+            return Promise.resolve();
+        }
+        return awaitWsInboundWithTelemetry(
+            recipient,
+            i,
+            (m) =>
+                m.group === null &&
+                m.direction === "incoming" &&
+                m.decrypted &&
+                m.authorID === fromUser &&
+                m.message.includes(marker),
+            stats,
+            telemetry,
+            phase,
+            burst,
+        );
+    });
+    await Promise.all(
+        clients.map((c, i) => {
+            const peer = world.userIDs[(i + 1) % n];
+            if (peer === undefined) {
+                return Promise.resolve();
+            }
+            const marker = dmMarkers[i];
+            if (marker === undefined) {
+                return Promise.resolve();
+            }
+            return settleWithTelemetry(
+                stats,
+                telemetry,
+                "Client.messages.send | chat",
+                touchCtx(phase, burst, i),
+                c.messages.send(peer, marker),
+                {
+                    inputs: {
+                        peerUserID: shortId(peer),
+                        step: "warmup_dm_send_ring",
+                    },
+                },
+            );
+        }),
+    );
+    await Promise.all(dmWsWaits);
+
+    await Promise.all(
+        clients.map((c, i) => {
+            const from = world.userIDs[(i + n - 1) % n];
+            if (from === undefined) {
+                return Promise.resolve();
+            }
+            return settleWithTelemetry(
+                stats,
+                telemetry,
+                "Client.messages.retrieve | chat",
+                touchCtx(phase, burst, i),
+                c.messages.retrieve(from),
+                {
+                    inputs: {
+                        peerUserID: shortId(from),
+                        step: "warmup_dm_read_ring",
+                    },
+                },
+            );
+        }),
+    );
+}
+
 function pickDuration(): string {
     return DURATIONS[randomInt(0, DURATIONS.length)] ?? "24h";
 }
 
-function pickPeerUserID(world: ChatWorld, clientIndex: number): null | string {
-    const choices = world.userIDs.filter((_id, i) => i !== clientIndex);
-    if (choices.length === 0) {
+/**
+ * Deterministic peer for DM send/history: as `round` increments, cycles
+ * through every other member so long runs cover all ordered pairs.
+ */
+function pickPeerUserIDDeterministic(
+    world: ChatWorld,
+    clientIndex: number,
+    round: number,
+): null | string {
+    const ids = world.userIDs;
+    if (ids.length < 2) {
         return null;
     }
-    return choices[randomInt(0, choices.length)] ?? null;
+    const n = ids.length;
+    const span = n - 1;
+    const step = 1 + (round % span);
+    let peerIndex = (clientIndex + step) % n;
+    if (peerIndex === clientIndex) {
+        peerIndex = (peerIndex + 1) % n;
+    }
+    return ids[peerIndex] ?? null;
 }
 
 function touchCtx(

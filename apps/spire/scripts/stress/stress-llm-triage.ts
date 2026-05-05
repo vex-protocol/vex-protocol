@@ -16,10 +16,10 @@
  *   SPIRE_STRESS_LLM_FULL=1   — include full manifest/docsPack and long JSON (CLI issue triage). Omit for default slim facet payloads.
  *   STRESS_ISSUE_BUNDLE_PATH  — override bundle path (default ~/.spire-stress/last-issue-bundle.json)
  *   STRESS_MANIFEST_PATH      — optional repo-manifest.json to include (trimmed)
- *   STRESS_DOCS_PACK_PATH     — optional docs-pack.json from `npm run stress:docs-pack` (trimmed)
+ *   STRESS_DOCS_PACK_PATH     — optional docs-pack.json from `npm run integration:docs-pack` (trimmed)
  *
  * @example
- *   SPIRE_STRESS_LLM_URL=http://127.0.0.1:8080/v1/chat/completions SPIRE_STRESS_LLM_MODEL=llama3 npm run stress:llm-triage
+ *   SPIRE_STRESS_LLM_URL=http://127.0.0.1:8080/v1/chat/completions SPIRE_STRESS_LLM_MODEL=llama3 npm run integration:llm-triage
  */
 import {
     loadDocsPackFromEnv,

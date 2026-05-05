@@ -5,16 +5,19 @@
  */
 
 /**
- * Headless stress matrix (CI-style): run spire-stress for each (clients × concurrency) combo.
+ * Headless integration matrix (CI-style): run spire-stress for each (clients × concurrency) combo.
  * Each child exits after **N flood walls** (default 10), not a time budget — use `--seconds` only if you also want a wall-time cap.
  *
- * Requires DEV_API_KEY (same as Spire). Loads `.env` from the spire-js package root via dotenv, like `stress:web`.
+ * Requires DEV_API_KEY (same as Spire). Loads `.env` from the spire-js package root via dotenv, like `integration:web`.
  *
  * @example
- *   DEV_API_KEY=secret npm run stress:cli -- --walls 10 --clients 5,10 --conc 20,40
+ *   DEV_API_KEY=secret pnpm integration:cli --walls 10 --clients 5,10 --conc 20,40
+ *
+ * @example Same with npm (needs `--` before script flags):
+ *   DEV_API_KEY=secret npm run integration:cli -- --walls 10 --clients 5,10 --conc 20,40
  *
  * @example Chat scenario, stop the matrix on first harness failure (exit 1):
- *   DEV_API_KEY=secret npm run stress:cli -- --scenario chat --stop-on-fail
+ *   DEV_API_KEY=secret pnpm integration:cli --scenario chat --stop-on-fail
  */
 
 import type { StressUiFacetRow } from "./stress-telemetry.ts";
@@ -106,7 +109,9 @@ const STRESS_ENTRY = join(
 
 async function main(): Promise<void> {
     config();
-    const argv = process.argv.slice(2);
+    // npm strips the delimiter before forwarding args; pnpm often leaves a
+    // standalone `--` in argv — ignore it so both invocations work.
+    const argv = process.argv.slice(2).filter((a) => a !== "--");
     let opts;
     try {
         opts = parseArgs(argv);
@@ -114,7 +119,9 @@ async function main(): Promise<void> {
         process.stderr.write(
             (e instanceof Error ? e.message : String(e)) + "\n",
         );
-        process.stderr.write("Try npm run stress:cli -- --help\n");
+        process.stderr.write(
+            "Try: pnpm integration:cli --help   or   npm run integration:cli -- --help\n",
+        );
         process.exit(1);
     }
     if (opts.help) {
@@ -143,7 +150,7 @@ async function main(): Promise<void> {
             ? `, cap ${String(opts.seconds)}s wall time`
             : "";
     process.stderr.write(
-        `\nstress:cli — ${String(total)} combo(s), ${String(opts.walls)} wall(s)/combo${cap}, scenario=${opts.scenario}, pacing=${opts.loadPacing}\n\n`,
+        `\nintegration:cli — ${String(total)} combo(s), ${String(opts.walls)} wall(s)/combo${cap}, scenario=${opts.scenario}, pacing=${opts.loadPacing}\n\n`,
     );
 
     matrix: for (const c of opts.clients) {
@@ -194,13 +201,13 @@ async function main(): Promise<void> {
             );
             if (opts.stopOnFail && !opts.informational && code === 1) {
                 process.stderr.write(
-                    "\nstress:cli: stopping (--stop-on-fail) after exit code 1.\n",
+                    "\nintegration:cli: stopping (--stop-on-fail) after exit code 1.\n",
                 );
                 break matrix;
             }
             if (code === 2) {
                 process.stderr.write(
-                    "\nstress:cli: target unreachable (exit 2) — aborting matrix.\n",
+                    "\nintegration:cli: target unreachable (exit 2) — aborting matrix.\n",
                 );
                 process.stderr.write(rows.join("\n") + "\n");
                 process.exit(2);
@@ -234,7 +241,7 @@ async function main(): Promise<void> {
     }
     if (rowLists.length > 0) {
         const merged = mergeStressFacetRowLists(rowLists);
-        const headline = `stress:cli matrix · ${String(rowLists.length)} run(s) · scenario=${opts.scenario} · target=${hostForReport} · clients ${opts.clients.join(",")} · conc ${opts.conc.join(",")}`;
+        const headline = `integration:cli matrix · ${String(rowLists.length)} run(s) · scenario=${opts.scenario} · target=${hostForReport} · clients ${opts.clients.join(",")} · conc ${opts.conc.join(",")}`;
         process.stdout.write(
             formatStressFacetCiReport(
                 {
@@ -248,17 +255,17 @@ async function main(): Promise<void> {
     }
 
     process.stderr.write("\n" + rows.join("\n") + "\n\n");
-    process.stderr.write(`stress:cli: worst exit code ${String(worst)}\n`);
+    process.stderr.write(`integration:cli: worst exit code ${String(worst)}\n`);
     if (opts.informational && worst === 1) {
         process.stderr.write(
-            "stress:cli: informational mode enabled; forcing final exit code 0.\n",
+            "integration:cli: informational mode enabled; forcing final exit code 0.\n",
         );
     }
     if (worst === 2) {
         process.exit(2);
     }
     if (opts.informational) {
-        // Informational mode only suppresses generic stress failures (exit 1).
+        // Informational mode only suppresses generic harness failures (exit 1).
         // Keep non-1 codes hard-failing (e.g. explicit quality-gate breaches).
         if (worst <= 1) {
             process.exit(0);
@@ -384,10 +391,11 @@ function parseCommaNums(label: string, raw: string): number[] {
 function printHelp(): void {
     process.stderr.write(
         [
-            "stress:cli — headless clients × concurrency matrix (no web UI).",
+            "integration:cli — headless Spire integration matrix (libvex clients × concurrency; no web UI).",
             "",
             "Usage:",
-            "  DEV_API_KEY=… npm run stress:cli -- [options]",
+            "  DEV_API_KEY=… pnpm integration:cli [options]",
+            "  DEV_API_KEY=… npm run integration:cli -- [options]   # npm needs `--` before flags",
             "",
             "Options:",
             "  --walls <n>           flood walls per combo (default 10); sets SPIRE_STRESS_ROUNDS",
@@ -398,13 +406,13 @@ function printHelp(): void {
             "  --load immediate|paced  SPIRE_STRESS_LOAD_MODE (default immediate; legacy: continuous|burst)",
             "  --burst-gap-ms <n>    SPIRE_STRESS_BURST_GAP_MS when load=paced",
             "  --host <host:port>    SPIRE_STRESS_HOST",
-            "  --informational       always exit 0 for stress failures (exit 2 still reserved for unreachable target)",
+            "  --informational       always exit 0 for harness failures (exit 2 still reserved for unreachable target)",
             "  --stop-on-fail        stop the matrix early if a child exits with code 1 (harness saw HTTP failures)",
             "  -v, --verbose         set SPIRE_STRESS_VERBOSE=1 on the child (noisier per-wall stderr)",
             "  -h, --help",
             "",
-            "Child runs with SPIRE_STRESS_WEB=0 (quiet stderr) unless -v. Per-wall logs: SPIRE_STRESS_VERBOSE=1 (or -v on stress:cli).",
-            "  Facet CI table: each child defers stdout; after the full matrix, one merged ✓/✗ table is printed (same as summing per-combo dumps). Direct spire-stress (not stress:cli) still prints its own table.",
+            "Child runs with SPIRE_STRESS_WEB=0 (quiet stderr) unless -v. Per-wall logs: SPIRE_STRESS_VERBOSE=1 (or -v on integration:cli).",
+            "  Facet CI table: each child defers stdout; after the full matrix, one merged ✓/✗ table is printed (same as summing per-combo dumps). Direct spire-stress (not this matrix parent) still prints its own table.",
             "  SPIRE_STRESS_FACET_REPORT=0 off, =1 on, =all include idle surfaces. SPIRE_STRESS_JSON=1 adds facets[] in JSON.",
             "",
         ].join("\n"),

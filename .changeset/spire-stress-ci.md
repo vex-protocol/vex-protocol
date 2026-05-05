@@ -1,4 +1,4 @@
 ---
 ---
 
-CI: add `spire-stress-cli` workflow with Docker Compose matrix (tweetnacl / FIPS) for bounded stress runs.
+CI: add `spire-integration-cli` workflow with Docker Compose matrix (tweetnacl / FIPS) for bounded Spire integration runs.

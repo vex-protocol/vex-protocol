@@ -42,7 +42,9 @@ import type { AxiosInstance } from "axios";
 
 import {
     type CryptoProfile,
+    enterCryptoProfileScope,
     getCryptoProfile,
+    leaveCryptoProfileScope,
     setCryptoProfile,
     xBoxKeyPairAsync,
     xBoxKeyPairFromSecretAsync,
@@ -4365,15 +4367,11 @@ export class Client {
     private async runWithThisCryptoProfile<T>(
         fn: () => Promise<T>,
     ): Promise<T> {
-        const prev = getCryptoProfile();
-        if (prev === this.cryptoProfile) {
-            return await fn();
-        }
-        setCryptoProfile(this.cryptoProfile);
+        enterCryptoProfileScope(this.cryptoProfile);
         try {
             return await fn();
         } finally {
-            setCryptoProfile(prev);
+            leaveCryptoProfileScope();
         }
     }
 
