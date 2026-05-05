@@ -220,6 +220,14 @@ export const STRESS_FACET_CATALOG: Readonly<
         protocolPath: "Client.moderation.fetchPermissionList",
         title: "Mod permissions",
     },
+    "Client.on(message) | ws delivery": {
+        apiCall: 'client.on("message") inbound',
+        description:
+            "Inbound plaintext observed on the WebSocket mail path (confirms realtime delivery).",
+        group: "load",
+        protocolPath: "Client.on(message)",
+        title: "WS · inbound message delivery",
+    },
     "Client.permissions.retrieve": {
         apiCall: "permissions.retrieve()",
         description: "Permissions for the current user across servers.",
@@ -474,6 +482,7 @@ export function facetIdsForScenario(scenario: string): readonly string[] {
             "Client.servers.create; Client.channels.retrieve",
             "Client.invites.create; Client.invites.redeem | world guests",
             "Client.connect | websocket mesh",
+            "Client.on(message) | ws delivery",
             ...NOISE_LOAD_IDS.map((id) => surfaceKeyForNoiseOpId(id)),
         ];
     }
@@ -482,6 +491,7 @@ export function facetIdsForScenario(scenario: string): readonly string[] {
             ...base,
             "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
             "Client.channels.create",
+            "Client.on(message) | ws delivery",
             "Client.messages.group | chat",
             "Client.messages.retrieveGroup | chat",
             "Client.messages.send | chat",

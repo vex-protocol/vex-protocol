@@ -22,6 +22,7 @@ import {
     type StressTelemetry,
     type TelemetryTouchCtx,
 } from "./stress-telemetry.ts";
+import { awaitWsInboundWithTelemetry } from "./stress-ws-delivery.ts";
 
 export interface ChatWorld {
     /** Default guild channel (#general or first). */
@@ -452,56 +453,124 @@ export async function runChatSocialWarmup(
     });
     await Promise.all(readBoth);
 
-    await Promise.all(
-        clients.map((c, i) =>
-            settleWithTelemetry(
-                stats,
-                telemetry,
-                "Client.messages.group | chat",
-                touchCtx(phase, burst, i),
-                c.messages.group(
-                    world.channelID,
-                    `[warmup-general] #${String(i)} ${Date.now().toString(36)}`,
+    for (let i = 0; i < n; i++) {
+        const sender = clients[i];
+        if (sender === undefined) {
+            continue;
+        }
+        const token = `[warmup-general:${String(i)}:${randomUUID().slice(0, 10)}]`;
+        const wsWaits = clients
+            .map((witness, j) => ({ j, witness }))
+            .filter(({ j }) => j !== i)
+            .map(({ j, witness }) =>
+                awaitWsInboundWithTelemetry(
+                    witness,
+                    j,
+                    (m) =>
+                        m.group === world.channelID &&
+                        m.direction === "incoming" &&
+                        m.decrypted &&
+                        m.message.includes(token),
+                    stats,
+                    telemetry,
+                    phase,
+                    burst,
                 ),
-                {
-                    inputs: {
-                        channelID: shortId(world.channelID),
-                        step: "warmup_post_general",
-                    },
+            );
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.group | chat",
+            touchCtx(phase, burst, i),
+            sender.messages.group(world.channelID, token),
+            {
+                inputs: {
+                    channelID: shortId(world.channelID),
+                    step: "warmup_post_general",
                 },
-            ),
-        ),
-    );
+            },
+        );
+        await Promise.all(wsWaits);
+    }
 
-    await Promise.all(
-        clients.map((c, i) =>
-            settleWithTelemetry(
-                stats,
-                telemetry,
-                "Client.messages.group | chat",
-                touchCtx(phase, burst, i),
-                c.messages.group(
-                    world.secondaryChannelID,
-                    `[warmup-lounge] #${String(i)} ${Date.now().toString(36)}`,
+    for (let i = 0; i < n; i++) {
+        const sender = clients[i];
+        if (sender === undefined) {
+            continue;
+        }
+        const token = `[warmup-lounge:${String(i)}:${randomUUID().slice(0, 10)}]`;
+        const wsWaits = clients
+            .map((witness, j) => ({ j, witness }))
+            .filter(({ j }) => j !== i)
+            .map(({ j, witness }) =>
+                awaitWsInboundWithTelemetry(
+                    witness,
+                    j,
+                    (m) =>
+                        m.group === world.secondaryChannelID &&
+                        m.direction === "incoming" &&
+                        m.decrypted &&
+                        m.message.includes(token),
+                    stats,
+                    telemetry,
+                    phase,
+                    burst,
                 ),
-                {
-                    inputs: {
-                        channelID: shortId(world.secondaryChannelID),
-                        step: "warmup_post_lounge",
-                    },
+            );
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            "Client.messages.group | chat",
+            touchCtx(phase, burst, i),
+            sender.messages.group(world.secondaryChannelID, token),
+            {
+                inputs: {
+                    channelID: shortId(world.secondaryChannelID),
+                    step: "warmup_post_lounge",
                 },
-            ),
-        ),
-    );
+            },
+        );
+        await Promise.all(wsWaits);
+    }
 
     if (n < 2) {
         return;
     }
 
+    const dmMarkers = clients.map(
+        (_, i) =>
+            `[warmup-dm-ring] from-${String(i)}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}]`,
+    );
+    const dmWsWaits = clients.map((recipient, i) => {
+        const senderIndex = (i + n - 1) % n;
+        const fromUser = world.userIDs[senderIndex];
+        const marker = dmMarkers[senderIndex];
+        if (fromUser === undefined || marker === undefined) {
+            return Promise.resolve();
+        }
+        return awaitWsInboundWithTelemetry(
+            recipient,
+            i,
+            (m) =>
+                m.group === null &&
+                m.direction === "incoming" &&
+                m.decrypted &&
+                m.authorID === fromUser &&
+                m.message.includes(marker),
+            stats,
+            telemetry,
+            phase,
+            burst,
+        );
+    });
     await Promise.all(
         clients.map((c, i) => {
             const peer = world.userIDs[(i + 1) % n];
             if (peer === undefined) {
+                return Promise.resolve();
+            }
+            const marker = dmMarkers[i];
+            if (marker === undefined) {
                 return Promise.resolve();
             }
             return settleWithTelemetry(
@@ -509,10 +578,7 @@ export async function runChatSocialWarmup(
                 telemetry,
                 "Client.messages.send | chat",
                 touchCtx(phase, burst, i),
-                c.messages.send(
-                    peer,
-                    `[warmup-dm-ring] from-${String(i)}-${Date.now().toString(36)}`,
-                ),
+                c.messages.send(peer, marker),
                 {
                     inputs: {
                         peerUserID: shortId(peer),
@@ -522,6 +588,7 @@ export async function runChatSocialWarmup(
             );
         }),
     );
+    await Promise.all(dmWsWaits);
 
     await Promise.all(
         clients.map((c, i) => {

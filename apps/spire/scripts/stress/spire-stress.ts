@@ -123,6 +123,10 @@ import {
     StressTraceDb,
 } from "./stress-trace-db.ts";
 import { startStressWebServer } from "./stress-web-server.ts";
+import {
+    verifyChatPostBurstWsDelivery,
+    verifyNoisePostBurstWsDelivery,
+} from "./stress-ws-delivery.ts";
 
 /** libvex / `ws` attach many `"message"` handlers; default (10) spams MaxListenersExceededWarning. */
 EventEmitter.defaultMaxListeners = 100;
@@ -887,6 +891,16 @@ async function main(): Promise<void> {
                         inFlight: 0,
                         lastBurstMs: dt,
                     });
+                    await verifyRealtimeWsDeliveryIfNeeded(
+                        scenario,
+                        clients,
+                        chatWorld,
+                        noiseWorld,
+                        httpStats,
+                        telemetry,
+                        crashCtx.phase,
+                        crashCtx.currentBurst,
+                    );
                     if (stressQuietCli) {
                         writeStressCliWallSnapshot({
                             burstGapMs: sessionBurstGapMs,
@@ -1001,6 +1015,16 @@ async function main(): Promise<void> {
                         inFlight: 0,
                         lastBurstMs: dt,
                     });
+                    await verifyRealtimeWsDeliveryIfNeeded(
+                        scenario,
+                        clients,
+                        chatWorld,
+                        noiseWorld,
+                        httpStats,
+                        telemetry,
+                        crashCtx.phase,
+                        crashCtx.currentBurst,
+                    );
                     if (stressQuietCli) {
                         writeStressCliWallSnapshot({
                             burstGapMs: sessionBurstGapMs,
@@ -1363,6 +1387,7 @@ function printSpireStressCliHelp(): void {
             "  SPIRE_STRESS_MAX_WALL_SEC      wall-time cap when FOREVER=1",
             "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
             "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
+            "  SPIRE_STRESS_WS_DELIVERY_MS    max wait (ms) for inbound `message` WS asserts (chat/noise; default 25000)",
             "",
             "npm run integration:web   ·   npm run integration:cli (headless matrix)",
             "",
@@ -1489,6 +1514,47 @@ function sleepMs(ms: number): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+/** After each flood wall, assert peers saw group traffic on the WebSocket path. */
+async function verifyRealtimeWsDeliveryIfNeeded(
+    scenario: string,
+    clients: readonly Client[],
+    chatWorld: ChatWorld | null,
+    noiseWorld: NoiseWorld | null,
+    httpStats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+): Promise<void> {
+    if (clients.length < 2) {
+        return;
+    }
+    if (scenario === "chat" && chatWorld !== null) {
+        await verifyChatPostBurstWsDelivery(
+            clients,
+            chatWorld,
+            httpStats,
+            telemetry,
+            phase,
+            burst,
+        );
+    } else if (
+        scenario === "noise" &&
+        noiseWorld !== null &&
+        noiseWorld.userIDs.length >= 2
+    ) {
+        await verifyNoisePostBurstWsDelivery(
+            clients,
+            noiseWorld.channelID,
+            httpStats,
+            telemetry,
+            phase,
+            burst,
+            noiseWorld.userIDs[0] ?? "",
+            noiseWorld.userIDs[1] ?? "",
+        );
+    }
 }
 
 /** One stderr line per wall when `SPIRE_STRESS_WEB=0` — mirrors the web stats strip (dashboard). */
