@@ -27,6 +27,7 @@ import { MailWSSchema, SocketAuthErrors } from "@vex-chat/types";
 
 import { parse as uuidParse, validate as uuidValidate } from "uuid";
 
+import { validateMailIngress } from "./server/mailIngress.ts";
 import { TOKEN_EXPIRY } from "./Spire.ts";
 import { createUint8UUID } from "./utils/createUint8UUID.ts";
 import { msgpack } from "./utils/msgpack.ts";
@@ -252,26 +253,22 @@ export class ClientManager extends EventEmitter {
                     const mail = mailResult.data;
 
                     try {
+                        const { recipientDevice } = await validateMailIngress(
+                            this.db,
+                            mail,
+                            this.getDevice().deviceID,
+                            this.getUser().userID,
+                        );
                         await this.db.saveMail(
                             mail,
                             header,
                             this.getDevice().deviceID,
                             this.getUser().userID,
                         );
-                        const deviceDetails = await this.db.retrieveDevice(
-                            mail.recipient,
-                        );
-                        if (!deviceDetails) {
-                            this.sendErr(
-                                msg.transmissionID,
-                                "No associated user record found for device.",
-                            );
-                            return;
-                        }
 
                         this.sendSuccess(msg.transmissionID, null);
                         this.notify(
-                            deviceDetails.owner,
+                            recipientDevice.owner,
                             "mail",
                             msg.transmissionID,
                             null,

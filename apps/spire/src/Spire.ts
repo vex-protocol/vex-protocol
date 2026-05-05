@@ -40,6 +40,10 @@ import { z } from "zod/v4";
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
+import {
+    MailIngressValidationError,
+    validateMailIngress,
+} from "./server/mailIngress.ts";
 import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
 import { createPendingDeviceEnrollmentRequest } from "./server/user.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
@@ -766,19 +770,29 @@ export class Spire extends EventEmitter {
             }
             const { header, mail } = parsed.data;
 
+            let recipientDeviceDetails;
+            try {
+                ({ recipientDevice: recipientDeviceDetails } =
+                    await validateMailIngress(
+                        this.db,
+                        mail,
+                        senderDeviceDetails.deviceID,
+                        authorUserDetails.userID,
+                    ));
+            } catch (err: unknown) {
+                if (err instanceof MailIngressValidationError) {
+                    res.status(err.status).json({ error: err.message });
+                    return;
+                }
+                throw err;
+            }
+
             await this.db.saveMail(
                 mail,
                 header,
                 senderDeviceDetails.deviceID,
                 authorUserDetails.userID,
             );
-            const recipientDeviceDetails = await this.db.retrieveDevice(
-                mail.recipient,
-            );
-            if (!recipientDeviceDetails) {
-                res.sendStatus(400);
-                return;
-            }
 
             res.sendStatus(200);
             this.notify(
