@@ -39,6 +39,12 @@ export interface Server {
     serverID: string;
 }
 
+/** Combined server list + per-server channel index for fast app bootstrap. */
+export interface ServerChannelBootstrap {
+    channelsByServer: Record<string, Channel[]>;
+    servers: Server[];
+}
+
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 /** Chat server. */
@@ -58,6 +64,14 @@ export const ChannelSchema: z.ZodType<Channel> = z
         serverID: z.string().describe("Parent server ID"),
     })
     .describe("Server channel");
+
+/** Combined server list + per-server channel index for fast app bootstrap. */
+export const ServerChannelBootstrapSchema: z.ZodType<ServerChannelBootstrap> = z
+    .object({
+        channelsByServer: z.record(z.string(), z.array(ChannelSchema)),
+        servers: z.array(ServerSchema),
+    })
+    .describe("Server/channel bootstrap payload");
 
 /** Permission grant. */
 export const PermissionSchema: z.ZodType<Permission> = z

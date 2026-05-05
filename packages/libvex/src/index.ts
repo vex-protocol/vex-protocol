@@ -30,6 +30,7 @@ export type {
     Permission,
     Permissions,
     Server,
+    ServerChannelBootstrap,
     Servers,
     Session,
     Sessions,

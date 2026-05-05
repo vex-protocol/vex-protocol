@@ -35,6 +35,7 @@ import type {
     ResourceMsg,
     RespMsg,
     Server,
+    ServerChannelBootstrap,
     SessionSQL,
 } from "@vex-chat/types";
 import type { ClientMessage } from "@vex-chat/types";
@@ -287,6 +288,7 @@ import {
     RegisterPendingApprovalCodec,
     RegisterResponseCodec,
     ServerArrayCodec,
+    ServerChannelBootstrapCodec,
     ServerCodec,
     UserArrayCodec,
     UserCodec,
@@ -522,6 +524,11 @@ export type { Channel } from "@vex-chat/types";
  * - `icon` (optional URL/data)
  */
 export type { Server } from "@vex-chat/types";
+
+/**
+ * Combined server + channels payload used for fast UI bootstrap.
+ */
+export type { ServerChannelBootstrap } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -829,6 +836,8 @@ export interface Servers {
     retrieve: () => Promise<Server[]>;
     /** Gets one server by ID. */
     retrieveByID: (serverID: string) => Promise<null | Server>;
+    /** Fetches servers and channels in one request for fast bootstraps. */
+    retrieveWithChannels: () => Promise<ServerChannelBootstrap>;
 }
 
 /**
@@ -1229,6 +1238,7 @@ export class Client {
          * @returns The requested Server object, or null if the id does not exist.
          */
         retrieveByID: this.getServerByID.bind(this),
+        retrieveWithChannels: this.getServerChannelBootstrap.bind(this),
     };
 
     /**
@@ -3042,6 +3052,16 @@ export class Client {
         } catch (_err: unknown) {
             return null;
         }
+    }
+
+    private async getServerChannelBootstrap(): Promise<ServerChannelBootstrap> {
+        const res = await this.http.get(
+            this.getHost() +
+                "/user/" +
+                this.getUser().userID +
+                "/servers/bootstrap",
+        );
+        return decodeAxios(ServerChannelBootstrapCodec, res.data);
     }
 
     private async getServerList(): Promise<Server[]> {

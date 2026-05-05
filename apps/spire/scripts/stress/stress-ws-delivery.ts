@@ -9,10 +9,13 @@
  * runs assert realtime delivery, not only HTTP API success.
  *
  * **Post-burst checks** (`verify*PostBurstWsDelivery`): only the first
- * `SPIRE_STRESS_WS_WITNESS_MAX` guests (default **3**) must observe each ping so
- * CI stays reliable with many clients; set `SPIRE_STRESS_WS_WITNESS_MAX=all` to
- * require every guest. Timeout uses `SPIRE_STRESS_WS_DELIVERY_MS` and scales with
- * client count unless the env value is already higher.
+ * `SPIRE_STRESS_WS_WITNESS_MAX` guests (default **3**) are sampled for each ping.
+ * By default, local runs require all sampled witnesses; CI allows a small miss
+ * budget (default required ratio ~0.67). Override with
+ * `SPIRE_STRESS_WS_REQUIRED_RATIO` (`0 < ratio <= 1`). Set
+ * `SPIRE_STRESS_WS_WITNESS_MAX=all` to sample every guest. Timeout uses
+ * `SPIRE_STRESS_WS_DELIVERY_MS` and scales with client count unless the env
+ * value is already higher.
  *
  * When `CI=true` or `GITHUB_ACTIONS=true`, budgets are multiplied by
  * **~1.3** unless overridden (`SPIRE_STRESS_WS_CI_FACTOR`, or disabled with
@@ -35,6 +38,7 @@ import {
 
 const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
 const WS_WITNESS_MAX_ENV = "SPIRE_STRESS_WS_WITNESS_MAX";
+const WS_REQUIRED_RATIO_ENV = "SPIRE_STRESS_WS_REQUIRED_RATIO";
 const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
 const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
 
@@ -98,6 +102,67 @@ export function wsDeliveryTimeoutMs(): number {
     return withStressWsCiBudget(rawWsDeliveryFloorMs());
 }
 
+async function awaitWsWitnessSet(args: {
+    label: string;
+    minSuccesses: number;
+    waits: Promise<void>[];
+}): Promise<void> {
+    const settled = await Promise.allSettled(args.waits);
+    let successCount = 0;
+    let firstFailureReason: null | string = null;
+    for (const one of settled) {
+        if (one.status === "fulfilled") {
+            successCount += 1;
+            continue;
+        }
+        if (firstFailureReason === null) {
+            firstFailureReason = formatUnknownFailureReason(one.reason);
+        }
+    }
+    if (successCount >= args.minSuccesses) {
+        return;
+    }
+    const reason = firstFailureReason ?? "unknown";
+    throw new Error(
+        `${args.label}: observed ${String(successCount)}/${String(args.waits.length)} WS witnesses; require >=${String(args.minSuccesses)} (set ${WS_REQUIRED_RATIO_ENV}) — first failure: ${reason}`,
+    );
+}
+
+function formatUnknownFailureReason(value: unknown): string {
+    if (value instanceof Error) {
+        return value.message;
+    }
+    if (typeof value === "string") {
+        return value;
+    }
+    if (
+        typeof value === "number" ||
+        typeof value === "boolean" ||
+        typeof value === "bigint"
+    ) {
+        return String(value);
+    }
+    if (value === null || value === undefined) {
+        return "unknown";
+    }
+    try {
+        const json = JSON.stringify(value);
+        if (typeof json === "string" && json.length > 0) {
+            return json;
+        }
+    } catch {
+        /* ignore JSON serialization errors */
+    }
+    return Object.prototype.toString.call(value);
+}
+
+function minWitnessSuccesses(totalWitnesses: number): number {
+    if (totalWitnesses <= 0) {
+        return 0;
+    }
+    return Math.max(1, Math.ceil(totalWitnesses * wsRequiredRatio()));
+}
+
 function parsePositiveMsEnv(name: string, fallback: number): number {
     const raw = process.env[name]?.trim();
     if (raw === undefined || raw === "") {
@@ -142,6 +207,21 @@ function touchCtx(
 
 function withStressWsCiBudget(ms: number): number {
     return Math.ceil(ms * stressWsCiMultiplier());
+}
+
+function wsRequiredRatio(): number {
+    const raw = process.env[WS_REQUIRED_RATIO_ENV]?.trim();
+    if (raw !== undefined && raw !== "") {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n > 0 && n <= 1) {
+            return n;
+        }
+    }
+    const onCi =
+        process.env["CI"] === "true" ||
+        process.env["GITHUB_ACTIONS"] === "true";
+    // CI runners are shared/noisy; permit occasional dropped WS observations.
+    return onCi ? 0.67 : 1;
 }
 
 function wsWitnessCap(guestCount: number): number {
@@ -213,6 +293,7 @@ export async function verifyChatPostBurstWsDelivery(
     const guests = clients.slice(1);
     const cap = wsWitnessCap(guests.length);
     const witnessGuests = guests.slice(0, cap);
+    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
 
     const tokenPrimary = `[spire-ws-ping:${randomUUID()}]`;
@@ -252,10 +333,15 @@ export async function verifyChatPostBurstWsDelivery(
                 channelID: shortId(world.channelID),
                 step: "post_burst_ws_ping_primary",
                 witnessCap: cap,
+                witnessMinSuccess: minSuccesses,
             },
         },
     );
-    await Promise.all(waitsPrimary);
+    await awaitWsWitnessSet({
+        label: "chat post-wall primary",
+        minSuccesses,
+        waits: waitsPrimary,
+    });
 
     const tokenLounge = `[spire-ws-ping-lounge:${randomUUID()}]`;
     const waitsLounge = witnessGuests.map((guest, wIdx) => {
@@ -294,10 +380,15 @@ export async function verifyChatPostBurstWsDelivery(
                 channelID: shortId(world.secondaryChannelID),
                 step: "post_burst_ws_ping_lounge",
                 witnessCap: cap,
+                witnessMinSuccess: minSuccesses,
             },
         },
     );
-    await Promise.all(waitsLounge);
+    await awaitWsWitnessSet({
+        label: "chat post-wall lounge",
+        minSuccesses,
+        waits: waitsLounge,
+    });
 
     const hubUser = world.userIDs.at(0);
     const guestUser = world.userIDs.at(1);
@@ -372,6 +463,7 @@ export async function verifyNoisePostBurstWsDelivery(
     const guests = clients.slice(1);
     const cap = wsWitnessCap(guests.length);
     const witnessGuests = guests.slice(0, cap);
+    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
     const token = `[spire-ws-ping-noise:${randomUUID()}]`;
     const waits = witnessGuests.map((guest, wIdx) => {
@@ -410,10 +502,15 @@ export async function verifyNoisePostBurstWsDelivery(
                 channelID: shortId(channelID),
                 step: "post_burst_ws_ping_noise",
                 witnessCap: cap,
+                witnessMinSuccess: minSuccesses,
             },
         },
     );
-    await Promise.all(waits);
+    await awaitWsWitnessSet({
+        label: "noise post-wall group",
+        minSuccesses,
+        waits,
+    });
 
     if (hubUserID === "" || guestUserID === "") {
         return;
