@@ -77,6 +77,7 @@ import {
     bootstrapChatWorld,
     type ChatWorld,
     oneChatBurst,
+    runChatSocialWarmup,
 } from "./stress-chat.ts";
 import { createStressClientViz } from "./stress-client-viz.ts";
 import {
@@ -750,13 +751,23 @@ async function main(): Promise<void> {
             if (chatWorld !== null) {
                 crashCtx.chatWorld = {
                     channelID: chatWorld.channelID,
+                    secondaryChannelID: chatWorld.secondaryChannelID,
                     serverID: chatWorld.serverID,
                 };
+                await runChatSocialWarmup(
+                    clients,
+                    chatWorld,
+                    httpStats,
+                    telemetry,
+                    crashCtx.phase,
+                    crashCtx.currentBurst,
+                );
                 trace?.append({
                     burst: 0,
                     detail: {
                         channelID: chatWorld.channelID,
                         clientCount: clients.length,
+                        secondaryChannelID: chatWorld.secondaryChannelID,
                         serverID: chatWorld.serverID,
                     },
                     event: "chat_world_ready",

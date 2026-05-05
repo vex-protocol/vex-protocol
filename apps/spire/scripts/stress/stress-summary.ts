@@ -31,7 +31,7 @@ export interface StressRunSummary {
 function scenarioPlainEnglish(scenario: string): string {
     switch (scenario) {
         case "chat":
-            return "chat-shaped load (WS + one shared server, group + DM + history reads)";
+            return "chat-shaped load (WS + shared guild, #general + side channel, ring DMs, scripted warmup)";
         case "noise":
             return "RNG libvex noise (multi-user server, invites, DMs, group chat, files, emoji, …)";
         case "servers":

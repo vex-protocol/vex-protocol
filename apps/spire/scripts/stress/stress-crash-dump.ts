@@ -18,7 +18,11 @@ import {
 } from "./stress-issue-bundle.ts";
 
 export interface StressCrashContext {
-    chatWorld: null | { channelID: string; serverID: string };
+    chatWorld: null | {
+        channelID: string;
+        secondaryChannelID: string;
+        serverID: string;
+    };
     clientCount: number;
     clientViz: null | StressClientViz[];
     currentBurst: number;
@@ -157,7 +161,8 @@ function formatChatWorld(world: StressCrashContext["chatWorld"]): string {
     if (world === null) {
         return "";
     }
-    return `  chat server ${world.serverID.slice(0, 12)}…  channel ${world.channelID.slice(0, 12)}…\n`;
+    const side = world.secondaryChannelID.slice(0, 12);
+    return `  chat server ${world.serverID.slice(0, 12)}…  #general ${world.channelID.slice(0, 12)}…  side ${side}…\n`;
 }
 
 function formatClientRows(viz: null | StressClientViz[]): string {

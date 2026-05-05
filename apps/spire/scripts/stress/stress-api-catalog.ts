@@ -58,7 +58,7 @@ export const STRESS_FACET_CATALOG: Readonly<
     },
     "Client.channels.userList | chat": {
         apiCall: "channels.userList(channelID)",
-        description: "Member list for #general.",
+        description: "Member list for a guild text channel (general + side).",
         group: "load",
         protocolPath: "Client.channels.userList",
         title: "Chat · channel members",
@@ -164,7 +164,8 @@ export const STRESS_FACET_CATALOG: Readonly<
     },
     "Client.messages.group | chat": {
         apiCall: "messages.group(channelID, body)",
-        description: "Group posts in the shared stress-chat guild.",
+        description:
+            "Group posts in the shared guild (#general + hub-created side channel).",
         group: "load",
         protocolPath: "Client.messages.group",
         title: "Chat · group send",
@@ -185,7 +186,8 @@ export const STRESS_FACET_CATALOG: Readonly<
     },
     "Client.messages.retrieveGroup | chat": {
         apiCall: "messages.retrieveGroup(channelID)",
-        description: "Read shared channel history from each client.",
+        description:
+            "Read shared channel history (#general and side channel) from each client.",
         group: "load",
         protocolPath: "Client.messages.retrieveGroup",
         title: "Chat · group history",
@@ -416,6 +418,7 @@ export const LEGACY_FACET_ID_TO_SURFACE_KEY: Readonly<Record<string, string>> =
         "bootstrap.login": "Client.login",
         "bootstrap.register": "Client.register",
         "bootstrap.ws_connect": "Client.connect",
+        "chat.channels_create": "Client.channels.create",
         "chat.channels_retrieve": "Client.channels.retrieve | chat",
         "chat.channels_userList": "Client.channels.userList | chat",
         "chat.messages_group": "Client.messages.group | chat",
@@ -478,6 +481,7 @@ export function facetIdsForScenario(scenario: string): readonly string[] {
         return [
             ...base,
             "Client.servers.create; Client.channels.retrieve; Client.invites.create; Client.invites.redeem; Client.whoami",
+            "Client.channels.create",
             "Client.messages.group | chat",
             "Client.messages.retrieveGroup | chat",
             "Client.messages.send | chat",
