@@ -1,8 +1,8 @@
 name: Spire stress CLI
 
-# Bounded `pnpm stress:cli` in apps/spire against Spire + nginx (`docker compose`
-# in apps/spire). Matrix: crypto × scenario — every `SPIRE_STRESS_SCENARIO` the
-# harness supports (chat, noise, mixed, whoami, servers) on both tweetnacl and fips.
+# One Docker Compose stack per crypto profile; all stress scenarios run in series
+# on that same Spire instance (fresh 10-client harness each scenario). Two jobs
+# total (tweetnacl + fips) instead of a job per scenario to limit Actions minutes.
 
 on:
     pull_request:
@@ -16,17 +16,16 @@ permissions:
 
 jobs:
     stress-cli:
-        name: stress:cli (${{ matrix.crypto }}, ${{ matrix.scenario }}, Docker :16777)
+        name: stress:cli (${{ matrix.crypto }}, all scenarios, Docker :16777)
         runs-on: ubuntu-latest
-        timeout-minutes: 40
+        timeout-minutes: 50
         concurrency:
-            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}-${{ matrix.scenario }}
+            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
             cancel-in-progress: true
         strategy:
             fail-fast: false
             matrix:
                 crypto: [tweetnacl, fips]
-                scenario: [chat, noise, mixed, whoami, servers]
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -58,6 +57,11 @@ jobs:
 
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
+
+            # stress:cli imports @vex-chat/libvex → package.json "import": "./dist/index.js";
+            # dist/ only exists after building workspace deps (same filter as Spire Dockerfile).
+            - name: Build workspace packages for stress harness
+              run: pnpm --filter @vex-chat/spire^... build
 
             - name: Write apps/spire/.env for Compose
               shell: bash
@@ -102,21 +106,26 @@ jobs:
                   docker compose ps || true
                   exit 1
 
-            - name: Run stress CLI (${{ matrix.scenario }})
+            - name: Run stress CLI (all scenarios, one stack)
               shell: bash
               working-directory: apps/spire
               env:
                   DEV_API_KEY: ${{ env.DEV_API_KEY }}
               run: |
                   set -euo pipefail
-                  pnpm stress:cli -- \
-                    --host "127.0.0.1:16777" \
-                    --walls 2 \
-                    --clients 2 \
-                    --conc 5 \
-                    --scenario "${{ matrix.scenario }}" \
-                    --seconds 180 \
-                    --stop-on-fail
+                  scenarios=(chat noise mixed whoami servers)
+                  for s in "${scenarios[@]}"; do
+                    echo "::group::stress:cli --scenario ${s} (10 clients, fresh harness)"
+                    pnpm stress:cli -- \
+                      --host "127.0.0.1:16777" \
+                      --walls 2 \
+                      --clients 10 \
+                      --conc 5 \
+                      --scenario "${s}" \
+                      --seconds 180 \
+                      --stop-on-fail
+                    echo "::endgroup::"
+                  done
 
             - name: Stop stack and remove volumes
               if: always()
