@@ -11,10 +11,13 @@
  * Requires DEV_API_KEY (same as Spire). Loads `.env` from the spire-js package root via dotenv, like `stress:web`.
  *
  * @example
+ *   DEV_API_KEY=secret pnpm stress:cli --walls 10 --clients 5,10 --conc 20,40
+ *
+ * @example Same with npm (needs `--` before script flags):
  *   DEV_API_KEY=secret npm run stress:cli -- --walls 10 --clients 5,10 --conc 20,40
  *
  * @example Chat scenario, stop the matrix on first harness failure (exit 1):
- *   DEV_API_KEY=secret npm run stress:cli -- --scenario chat --stop-on-fail
+ *   DEV_API_KEY=secret pnpm stress:cli --scenario chat --stop-on-fail
  */
 
 import type { StressUiFacetRow } from "./stress-telemetry.ts";
@@ -106,7 +109,9 @@ const STRESS_ENTRY = join(
 
 async function main(): Promise<void> {
     config();
-    const argv = process.argv.slice(2);
+    // npm strips the delimiter before forwarding args; pnpm often leaves a
+    // standalone `--` in argv — ignore it so both invocations work.
+    const argv = process.argv.slice(2).filter((a) => a !== "--");
     let opts;
     try {
         opts = parseArgs(argv);
@@ -114,7 +119,9 @@ async function main(): Promise<void> {
         process.stderr.write(
             (e instanceof Error ? e.message : String(e)) + "\n",
         );
-        process.stderr.write("Try npm run stress:cli -- --help\n");
+        process.stderr.write(
+            "Try: pnpm stress:cli --help   or   npm run stress:cli -- --help\n",
+        );
         process.exit(1);
     }
     if (opts.help) {
@@ -387,7 +394,8 @@ function printHelp(): void {
             "stress:cli — headless clients × concurrency matrix (no web UI).",
             "",
             "Usage:",
-            "  DEV_API_KEY=… npm run stress:cli -- [options]",
+            "  DEV_API_KEY=… pnpm stress:cli [options]",
+            "  DEV_API_KEY=… npm run stress:cli -- [options]   # npm needs `--` before flags",
             "",
             "Options:",
             "  --walls <n>           flood walls per combo (default 10); sets SPIRE_STRESS_ROUNDS",
