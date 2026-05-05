@@ -1,13 +1,14 @@
 name: Spire stress CLI
 
-# Bounded `pnpm --filter @vex-chat/spire stress:cli` against Spire + nginx
-# started with `docker compose` in apps/spire. Matrix: tweetnacl (gen-spk) and
-# fips (gen-spk-fips + SPIRE_FIPS=true), matching local Docker crypto modes.
-#
-# Optional only: does not run on PRs or pushes (unblocks merges while stress is
-# flaky). Re-enable push / pull_request / schedule when the Docker matrix is green.
+# Bounded `pnpm stress:cli` in apps/spire against Spire + nginx started with
+# `docker compose` in apps/spire. Matrix: tweetnacl (gen-spk) and fips
+# (gen-spk-fips + SPIRE_FIPS=true), matching local Docker crypto modes.
 
 on:
+    pull_request:
+        branches: [master]
+    push:
+        branches: [master]
     workflow_dispatch:
 
 permissions:
