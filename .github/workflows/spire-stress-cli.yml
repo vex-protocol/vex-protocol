@@ -1,8 +1,8 @@
 name: Spire stress CLI
 
-# Bounded `pnpm stress:cli` in apps/spire against Spire + nginx started with
-# `docker compose` in apps/spire. Matrix: tweetnacl (gen-spk) and fips
-# (gen-spk-fips + SPIRE_FIPS=true), matching local Docker crypto modes.
+# Bounded `pnpm stress:cli` in apps/spire against Spire + nginx (`docker compose`
+# in apps/spire). Matrix: crypto × scenario — every `SPIRE_STRESS_SCENARIO` the
+# harness supports (chat, noise, mixed, whoami, servers) on both tweetnacl and fips.
 
 on:
     pull_request:
@@ -16,16 +16,17 @@ permissions:
 
 jobs:
     stress-cli:
-        name: stress:cli (${{ matrix.crypto }}, Docker + nginx :16777)
+        name: stress:cli (${{ matrix.crypto }}, ${{ matrix.scenario }}, Docker :16777)
         runs-on: ubuntu-latest
         timeout-minutes: 40
         concurrency:
-            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
+            group: spire-stress-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}-${{ matrix.scenario }}
             cancel-in-progress: true
         strategy:
             fail-fast: false
             matrix:
                 crypto: [tweetnacl, fips]
+                scenario: [chat, noise, mixed, whoami, servers]
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -101,7 +102,7 @@ jobs:
                   docker compose ps || true
                   exit 1
 
-            - name: Run stress CLI matrix
+            - name: Run stress CLI (${{ matrix.scenario }})
               shell: bash
               working-directory: apps/spire
               env:
@@ -113,7 +114,7 @@ jobs:
                     --walls 2 \
                     --clients 2 \
                     --conc 5 \
-                    --scenario chat \
+                    --scenario "${{ matrix.scenario }}" \
                     --seconds 180 \
                     --stop-on-fail
 
