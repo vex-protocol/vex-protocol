@@ -4393,10 +4393,14 @@ export class Client {
         let elapsed = 0;
         let backoff = 50;
         while (this.socket.readyState !== 1) {
+            if (this.isManualCloseInFlight()) {
+                throw new WebSocketNotOpenError(this.socket.readyState);
+            }
+            if (this.socket.readyState === 2 || this.socket.readyState === 3) {
+                throw new WebSocketNotOpenError(this.socket.readyState);
+            }
             if (elapsed >= maxWaitMs) {
-                throw new Error(
-                    "WebSocket did not reach OPEN state within 30 seconds.",
-                );
+                throw new WebSocketNotOpenError(this.socket.readyState);
             }
             await sleep(backoff);
             elapsed += backoff;
