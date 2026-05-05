@@ -1726,9 +1726,12 @@ export class Client {
 
         this.initSocket();
         // Yield the event loop so the WS open callback fires and sends the
-        // auth message before OTK generation blocks for ~5s on mobile.
+        // auth message before OTK generation starts. OTK top-up is best-effort
+        // and should not block app bootstrap/hydration.
         await new Promise((r) => setTimeout(r, 0));
-        await this.negotiateOTK();
+        this.negotiateOTK().catch(() => {
+            // Best-effort: lacking fresh OTKs should not fail login/boot.
+        });
     }
 
     /**
@@ -2899,16 +2902,14 @@ export class Client {
     /* Retrieves the current list of users you have sessions with. */
     private async getFamiliars(): Promise<User[]> {
         const sessions = await this.database.getAllSessions();
-        const familiars: User[] = [];
-
-        for (const session of sessions) {
-            const [user, _err] = await this.fetchUser(session.userID);
-            if (user) {
-                familiars.push(user);
-            }
-        }
-
-        return familiars;
+        const userIDs = [...new Set(sessions.map((session) => session.userID))];
+        const familiarEntries = await Promise.all(
+            userIDs.map(async (userID) => {
+                const [user] = await this.fetchUser(userID);
+                return user ?? null;
+            }),
+        );
+        return familiarEntries.filter((user): user is User => user !== null);
     }
 
     private async getGroupHistory(channelID: string): Promise<Message[]> {
