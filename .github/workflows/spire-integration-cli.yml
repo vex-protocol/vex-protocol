@@ -27,11 +27,15 @@ jobs:
             matrix:
                 include:
                     - crypto: tweetnacl
+                      # Lightweight chat owns the strict transport gate; the
+                      # broader noise sweep stays telemetry-first while noisy.
+                      ws-chat-required-ratio: "0.9"
                       ws-required-ratio: "0.5"
-                    # Websocket fanout remains noisy on GHA runners; keep
-                    # printing observed/expected telemetry while it is tightened.
+                    # FIPS still sweeps the protocol under the slower crypto
+                    # profile, but WS fanout is telemetry-only on GHA runners.
                     - crypto: fips
-                      ws-required-ratio: "0.4"
+                      ws-chat-required-ratio: "0"
+                      ws-required-ratio: "0"
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -132,12 +136,17 @@ jobs:
                   SPIRE_STRESS_WS_REQUIRED_RATIO: ${{ matrix.ws-required-ratio }}
                   # Fewer parallel guest witnesses than default 3 — less load on slow runners.
                   SPIRE_STRESS_WS_WITNESS_MAX: "2"
+                  SPIRE_STRESS_WS_DUMP_PATH: ${{ runner.temp }}/spire-ws-delivery-${{ matrix.crypto }}.jsonl
               run: |
                   set -euo pipefail
                   scenarios=(chat noise mixed whoami servers)
                   for s in "${scenarios[@]}"; do
-                    echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls)"
-                    pnpm integration:cli -- \
+                    ws_required="${{ matrix.ws-required-ratio }}"
+                    if [[ "${s}" == "chat" ]]; then
+                      ws_required="${{ matrix.ws-chat-required-ratio }}"
+                    fi
+                    echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls, ws>=${ws_required})"
+                    SPIRE_STRESS_WS_REQUIRED_RATIO="${ws_required}" pnpm integration:cli -- \
                       --host "127.0.0.1:16777" \
                       --walls 10 \
                       --clients 4 \
@@ -147,6 +156,25 @@ jobs:
                       --stop-on-fail
                     echo "::endgroup::"
                   done
+
+            - name: Summarize WebSocket delivery telemetry
+              if: always()
+              shell: bash
+              env:
+                  SPIRE_STRESS_WS_DUMP_PATH: ${{ runner.temp }}/spire-ws-delivery-${{ matrix.crypto }}.jsonl
+              run: |
+                  set -euo pipefail
+                  if [[ ! -s "${SPIRE_STRESS_WS_DUMP_PATH}" ]]; then
+                    echo "No WebSocket delivery telemetry was written." >> "$GITHUB_STEP_SUMMARY"
+                    exit 0
+                  fi
+                  {
+                    echo "### WebSocket delivery telemetry (${{ matrix.crypto }})"
+                    echo
+                    echo '```jsonl'
+                    cat "${SPIRE_STRESS_WS_DUMP_PATH}"
+                    echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
 
             - name: Stop stack and remove volumes
               if: always()

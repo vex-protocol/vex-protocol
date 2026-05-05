@@ -223,7 +223,7 @@ function wsRequiredRatio(): number {
     const raw = process.env[WS_REQUIRED_RATIO_ENV]?.trim();
     if (raw !== undefined && raw !== "") {
         const n = Number(raw);
-        if (Number.isFinite(n) && n > 0 && n <= 1) {
+        if (Number.isFinite(n) && n >= 0 && n <= 1) {
             return n;
         }
     }
