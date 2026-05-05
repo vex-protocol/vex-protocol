@@ -457,6 +457,14 @@ export const getUserRouter = (
         res.send(msgpack.encode(servers));
     });
 
+    router.get("/:id/servers/bootstrap", protect, async (req, res) => {
+        const userDetails = getUser(req);
+        const payload = await db.retrieveServerChannelBootstrap(
+            userDetails.userID,
+        );
+        res.send(msgpack.encode(payload));
+    });
+
     router.delete("/:userID/devices/:deviceID", protect, async (req, res) => {
         const device = await db.retrieveDevice(getParam(req, "deviceID"));
 

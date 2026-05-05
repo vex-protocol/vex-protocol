@@ -100,6 +100,8 @@ export {
     type Permission,
     PermissionSchema,
     type Server,
+    type ServerChannelBootstrap,
+    ServerChannelBootstrapSchema,
     ServerSchema,
 } from "./servers.js";
 

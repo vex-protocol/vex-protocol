@@ -23,6 +23,7 @@ import {
     KeyBundleSchema,
     PasskeySchema,
     PermissionSchema,
+    ServerChannelBootstrapSchema,
     ServerSchema,
     UserSchema,
 } from "@vex-chat/types";
@@ -53,6 +54,9 @@ export const ChannelArrayCodec = createCodec(z.array(ChannelSchema));
 export const PermissionArrayCodec = createCodec(z.array(PermissionSchema));
 export const InviteArrayCodec = createCodec(z.array(InviteSchema));
 export const EmojiArrayCodec = createCodec(z.array(EmojiSchema));
+export const ServerChannelBootstrapCodec = createCodec(
+    ServerChannelBootstrapSchema,
+);
 
 // ── Inline ad-hoc response codecs ───────────────────────────────────────────
 

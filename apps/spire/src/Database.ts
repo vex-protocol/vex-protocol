@@ -1007,6 +1007,47 @@ export class Database extends EventEmitter {
         return row ? toServer(row) : null;
     }
 
+    public async retrieveServerChannelBootstrap(userID: string): Promise<{
+        channelsByServer: Record<string, Channel[]>;
+        servers: Server[];
+    }> {
+        const serverPerms = await this.retrievePermissions(userID, "server");
+        const serverIDs = [
+            ...new Set(serverPerms.map((perm) => perm.resourceID)),
+        ];
+        if (serverIDs.length === 0) {
+            return { channelsByServer: {}, servers: [] };
+        }
+
+        const [servers, channels] = await Promise.all([
+            this.db
+                .selectFrom("servers")
+                .selectAll()
+                .where("serverID", "in", serverIDs)
+                .execute(),
+            this.db
+                .selectFrom("channels")
+                .selectAll()
+                .where("serverID", "in", serverIDs)
+                .execute(),
+        ]);
+
+        const channelsByServer: Record<string, Channel[]> = {};
+        for (const serverID of serverIDs) {
+            channelsByServer[serverID] = [];
+        }
+        for (const channel of channels) {
+            const existing = channelsByServer[channel.serverID];
+            if (existing) {
+                existing.push(channel);
+            } else {
+                channelsByServer[channel.serverID] = [channel];
+            }
+        }
+
+        return { channelsByServer, servers };
+    }
+
     public async retrieveServerInvites(serverID: string): Promise<Invite[]> {
         const rows = await this.db
             .selectFrom("invites")
@@ -1037,14 +1078,17 @@ export class Database extends EventEmitter {
 
     public async retrieveServers(userID: string): Promise<Server[]> {
         const serverPerms = await this.retrievePermissions(userID, "server");
-        const serverList: Server[] = [];
-        for (const perm of serverPerms) {
-            const server = await this.retrieveServer(perm.resourceID);
-            if (server) {
-                serverList.push(server);
-            }
+        const serverIDs = [
+            ...new Set(serverPerms.map((perm) => perm.resourceID)),
+        ];
+        if (serverIDs.length === 0) {
+            return [];
         }
-        return serverList;
+        return this.db
+            .selectFrom("servers")
+            .selectAll()
+            .where("serverID", "in", serverIDs)
+            .execute();
     }
 
     // The identifier is matched as either a userID (UUID branch) or a
