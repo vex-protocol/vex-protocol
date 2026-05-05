@@ -62,14 +62,27 @@ export class SqliteStorage extends EventEmitter implements Storage {
     private readonly db: Kysely<ClientDatabase>;
     /** Shared across concurrent `init()` callers; `close()` awaits it before `destroy()`. */
     private initInFlight: null | Promise<void> = null;
+    private readonly legacyAtRestAesKeys: Uint8Array[];
 
-    constructor(db: Kysely<ClientDatabase>, atRestAesKey: Uint8Array) {
+    constructor(
+        db: Kysely<ClientDatabase>,
+        atRestAesKey: Uint8Array,
+        legacyAtRestAesKeys: Uint8Array[] = [],
+    ) {
         super();
         this.db = db;
         if (atRestAesKey.length !== 32) {
             throw new Error("SqliteStorage requires a 32-byte atRestAes key.");
         }
+        for (const legacyKey of legacyAtRestAesKeys) {
+            if (legacyKey.length !== 32) {
+                throw new Error(
+                    "SqliteStorage requires 32-byte legacy atRestAes keys.",
+                );
+            }
+        }
         this.atRestAesKey = atRestAesKey;
+        this.legacyAtRestAesKeys = legacyAtRestAesKeys;
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -613,7 +626,10 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const sealedCKs = session.CKs ? await this.sealHex(session.CKs) : null;
         const sealedDHsPrivate = await this.sealHex(session.DHsPrivate);
         const sealedRK = await this.sealHex(session.RK);
-        const sealedSK = await this.sealHex(session.SK);
+        const sealedSK = await this.sealHex(
+            retiredSessionSecretHex(session.sessionID),
+        );
+        const sealedSkippedKeys = await this.sealText(session.skippedKeys);
         try {
             await this.db
                 .insertInto("sessions")
@@ -634,7 +650,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     RK: sealedRK,
                     sessionID: session.sessionID,
                     SK: sealedSK,
-                    skippedKeys: session.skippedKeys,
+                    skippedKeys: sealedSkippedKeys,
                     userID: session.userID,
                     verified: session.verified ? 1 : 0,
                 })
@@ -659,7 +675,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                         publicKey: session.publicKey,
                         RK: sealedRK,
                         SK: sealedSK,
-                        skippedKeys: session.skippedKeys,
+                        skippedKeys: sealedSkippedKeys,
                         userID: session.userID,
                         verified: session.verified ? 1 : 0,
                     })
@@ -676,7 +692,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
     private async decryptMessagesAsync(
         messages: MessageRow[],
     ): Promise<Message[]> {
-        const fips = getCryptoProfile() === "fips";
         const out: Message[] = [];
         let processed = 0;
         /** Yield so RN / web UIs can paint between at-rest decrypt blocks. */
@@ -692,13 +707,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             if (decryptedFlag) {
                 const cipher = XUtils.decodeHex(msg.message);
                 const nonce = XUtils.decodeHex(msg.nonce);
-                const decrypted = fips
-                    ? await xSecretboxOpenAsync(
-                          cipher,
-                          nonce,
-                          this.atRestAesKey,
-                      )
-                    : xSecretboxOpen(cipher, nonce, this.atRestAesKey);
+                const decrypted = await this.openAtRestBytes(cipher, nonce);
                 if (decrypted) {
                     plaintext = XUtils.encodeUTF8(decrypted);
                 } else {
@@ -822,29 +831,52 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return false;
     }
 
+    private async openAtRestBytes(
+        cipher: Uint8Array,
+        nonce: Uint8Array,
+    ): Promise<null | Uint8Array> {
+        const fips = getCryptoProfile() === "fips";
+        for (const key of [this.atRestAesKey, ...this.legacyAtRestAesKeys]) {
+            const plain = fips
+                ? await xSecretboxOpenAsync(cipher, nonce, key)
+                : xSecretboxOpen(cipher, nonce, key);
+            if (plain) {
+                return plain;
+            }
+        }
+        return null;
+    }
+
+    private async sealBytes(plain: Uint8Array): Promise<string> {
+        const nonce = xMakeNonce();
+        const fips = getCryptoProfile() === "fips";
+        const ct = fips
+            ? await xSecretboxAsync(plain, nonce, this.atRestAesKey)
+            : xSecretbox(plain, nonce, this.atRestAesKey);
+        const sealed = new Uint8Array(nonce.length + ct.length);
+        sealed.set(nonce);
+        sealed.set(ct, nonce.length);
+        const out = XUtils.encodeHex(sealed);
+        plain.fill(0);
+        return out;
+    }
+
     /**
      * Encrypt a hex-encoded secret for at-rest storage.
      * Returns hex(nonce || ciphertext) where nonce is 24 random bytes.
      */
     private async sealHex(plainHex: string): Promise<string> {
-        const nonce = xMakeNonce();
-        const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeHex(plainHex),
-                  nonce,
-                  this.atRestAesKey,
-              )
-            : xSecretbox(XUtils.decodeHex(plainHex), nonce, this.atRestAesKey);
-        const sealed = new Uint8Array(nonce.length + ct.length);
-        sealed.set(nonce);
-        sealed.set(ct, nonce.length);
-        return XUtils.encodeHex(sealed);
+        return this.sealBytes(XUtils.decodeHex(plainHex));
+    }
+
+    private async sealText(plainText: string): Promise<string> {
+        return this.sealBytes(new TextEncoder().encode(plainText));
     }
 
     private async sessionRowToSQLAsync(row: SessionRow): Promise<SessionSQL> {
         const rawSK = await this.unsealHex(row.SK);
         const rawRK = row.RK ? await this.unsealHex(row.RK) : rawSK;
+        const skippedKeys = await this.unsealSkippedKeys(row.skippedKeys);
         return {
             CKr: row.CKr ? await this.unsealHex(row.CKr) : null,
             CKs: row.CKs ? await this.unsealHex(row.CKs) : null,
@@ -864,7 +896,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             RK: rawRK,
             sessionID: row.sessionID,
             SK: rawSK,
-            skippedKeys: row.skippedKeys,
+            skippedKeys,
             userID: row.userID,
             verified: row.verified !== 0,
         };
@@ -902,14 +934,26 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const bytes = XUtils.decodeHex(sealed);
         const nonce = bytes.slice(0, 24);
         const ct = bytes.slice(24);
-        const fips = getCryptoProfile() === "fips";
-        const plain = fips
-            ? await xSecretboxOpenAsync(ct, nonce, this.atRestAesKey)
-            : xSecretboxOpen(ct, nonce, this.atRestAesKey);
+        const plain = await this.openAtRestBytes(ct, nonce);
         if (!plain) {
             throw new Error("Failed to decrypt sealed column value.");
         }
         return XUtils.encodeHex(plain);
+    }
+
+    private async unsealSkippedKeys(value: string): Promise<string> {
+        if (value.trim().startsWith("{")) {
+            return value;
+        }
+        try {
+            const bytes = XUtils.decodeHex(value);
+            const nonce = bytes.slice(0, 24);
+            const ct = bytes.slice(24);
+            const plain = await this.openAtRestBytes(ct, nonce);
+            return plain ? XUtils.encodeUTF8(plain) : "{}";
+        } catch {
+            return "{}";
+        }
     }
 
     private async untilReady(): Promise<void> {
@@ -925,4 +969,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             check();
         });
     }
+}
+
+function retiredSessionSecretHex(sessionID: string): string {
+    return XUtils.encodeHex(new TextEncoder().encode(`retired:${sessionID}`));
 }

@@ -22,6 +22,14 @@ export async function resolveAtRestAesKeyFromSignKeyHex(
     privateKeyHex: string,
     profile: CryptoProfile,
 ): Promise<Uint8Array> {
+    return (await resolveAtRestAesKeysFromSignKeyHex(privateKeyHex, profile))
+        .primary;
+}
+
+export async function resolveAtRestAesKeysFromSignKeyHex(
+    privateKeyHex: string,
+    profile: CryptoProfile,
+): Promise<{ legacy: Uint8Array[]; primary: Uint8Array }> {
     const dec = XUtils.decodeHex(privateKeyHex);
     if (profile === "tweetnacl") {
         const sign = xSignKeyPairFromSecret(dec);
@@ -31,9 +39,15 @@ export async function resolveAtRestAesKeyFromSignKeyHex(
                 "Could not convert signing key to X25519 identity.",
             );
         }
-        return XUtils.deriveLocalAtRestAesKey(id.secretKey, "tweetnacl");
+        return {
+            legacy: [new Uint8Array(id.secretKey.slice(0, 32))],
+            primary: XUtils.deriveLocalAtRestAesKey(id.secretKey, "tweetnacl"),
+        };
     }
     const sign = await xSignKeyPairFromSecretAsync(dec);
     const id = await xEcdhKeyPairFromEcdsaKeyPairAsync(sign);
-    return XUtils.deriveLocalAtRestAesKey(id.secretKey, "fips");
+    return {
+        legacy: [],
+        primary: XUtils.deriveLocalAtRestAesKey(id.secretKey, "fips"),
+    };
 }

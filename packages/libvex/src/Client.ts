@@ -1487,6 +1487,10 @@ export class Client {
             idKeys.secretKey,
             profile,
         );
+        const legacyAtRestAes =
+            profile === "tweetnacl"
+                ? new Uint8Array(idKeys.secretKey.slice(0, 32))
+                : null;
 
         let resolvedStorage = storage;
         if (!resolvedStorage) {
@@ -1497,7 +1501,11 @@ export class Client {
             const dbPath = options?.dbFolder
                 ? options.dbFolder + "/" + dbFileName
                 : dbFileName;
-            resolvedStorage = createNodeStorage(dbPath, atRestAes);
+            resolvedStorage = createNodeStorage(
+                dbPath,
+                atRestAes,
+                legacyAtRestAes ? [legacyAtRestAes] : [],
+            );
         }
 
         await resolvedStorage.init();
