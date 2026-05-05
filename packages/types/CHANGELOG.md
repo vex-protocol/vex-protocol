@@ -1,5 +1,11 @@
 # @vex-chat/types
 
+## 3.3.0
+
+### Minor Changes
+
+- [#62](https://github.com/vex-protocol/vex-protocol/pull/62) [`0f2e7ed`](https://github.com/vex-protocol/vex-protocol/commit/0f2e7ed578f47081a9cbf81627fc2303b7ccc7d9) Thanks [@yuki111888](https://github.com/yuki111888)! - Adds `ServerChannelBootstrap` type and schema to `@vex-chat/types`. Call `client.servers.retrieveWithChannels()` in `@vex-chat/libvex` to fetch all servers and their channels in a single request — useful for fast initial renders. Spire exposes the corresponding `GET /user/:id/servers/bootstrap` endpoint.
+
 ## 3.2.0
 
 ### Minor Changes
