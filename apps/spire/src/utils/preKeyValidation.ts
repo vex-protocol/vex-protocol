@@ -8,9 +8,8 @@ import type { Device, DevicePayload, PreKeysWS } from "@vex-chat/types";
 
 import {
     getCryptoProfile,
-    xConcat,
-    xConstants,
-    xEncode,
+    xPreKeySignaturePayloadV1,
+    xPreKeySignaturePayloadV2,
     XUtils,
 } from "@vex-chat/crypto";
 
@@ -35,6 +34,7 @@ export async function assertDevicePayloadPreKeySignature(
 
     await assertPreKeySignature(
         {
+            deviceID: payload.deviceID,
             index: payload.preKeyIndex,
             publicKey: decodeHexField(payload.preKey, "signed prekey"),
             signature: decodeHexField(
@@ -44,6 +44,7 @@ export async function assertDevicePayloadPreKeySignature(
         },
         decodeHexField(payload.signKey, "device signing key"),
         "signed prekey",
+        "signed_prekey",
     );
 }
 
@@ -71,28 +72,50 @@ export async function assertPreKeysBelongToDevice(
             throw new PreKeyValidationError(`${label} has an invalid index.`);
         }
 
-        await assertPreKeySignature(entry, signKey, label);
+        await assertPreKeySignature(
+            entry,
+            signKey,
+            label,
+            options.oneTime ? "one_time_prekey" : "signed_prekey",
+        );
     }
 }
 
 export function preKeySignaturePayload(publicKey: Uint8Array): Uint8Array {
-    return getCryptoProfile() === "fips"
-        ? xConcat(new Uint8Array([0xa1]), publicKey)
-        : xEncode(xConstants.CURVE, publicKey);
+    return xPreKeySignaturePayloadV1(publicKey);
 }
 
 async function assertPreKeySignature(
-    entry: Pick<PreKeysWS, "index" | "publicKey" | "signature">,
+    entry: Pick<PreKeysWS, "index" | "publicKey" | "signature"> & {
+        deviceID?: string | undefined;
+    },
     signKey: Uint8Array,
     label: string,
+    keyType: "one_time_prekey" | "signed_prekey",
 ): Promise<void> {
     const opened = await spireXSignOpenAsync(entry.signature, signKey);
-    if (
-        !opened ||
-        !XUtils.bytesEqual(opened, preKeySignaturePayload(entry.publicKey))
-    ) {
+    if (!opened) {
         throw new PreKeyValidationError(`${label} signature is invalid.`, 401);
     }
+
+    if (entry.deviceID && entry.index !== null) {
+        const v2Payload = xPreKeySignaturePayloadV2({
+            cryptoProfile: getCryptoProfile(),
+            deviceID: entry.deviceID,
+            keyIndex: entry.index,
+            keyType,
+            publicKey: entry.publicKey,
+        });
+        if (XUtils.bytesEqual(opened, v2Payload)) {
+            return;
+        }
+    }
+
+    if (XUtils.bytesEqual(opened, preKeySignaturePayload(entry.publicKey))) {
+        return;
+    }
+
+    throw new PreKeyValidationError(`${label} signature is invalid.`, 401);
 }
 
 function decodeHexField(hex: string, label: string): Uint8Array {

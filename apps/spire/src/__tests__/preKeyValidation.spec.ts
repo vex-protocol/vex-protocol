@@ -10,6 +10,8 @@ import type { Device, DevicePayload, PreKeysWS } from "@vex-chat/types";
 import {
     setCryptoProfile,
     xBoxKeyPairAsync,
+    xPreKeySignaturePayloadV1,
+    xPreKeySignaturePayloadV2,
     xSignAsync,
     xSignKeyPairAsync,
     XUtils,
@@ -20,7 +22,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
     assertDevicePayloadPreKeySignature,
     assertPreKeysBelongToDevice,
-    preKeySignaturePayload,
 } from "../utils/preKeyValidation.ts";
 
 describe("preKeyValidation", () => {
@@ -38,6 +39,16 @@ describe("preKeyValidation", () => {
 
     it("accepts a valid fips device signed prekey payload", async () => {
         const { payload } = await makeMaterial("fips");
+
+        await expect(
+            assertDevicePayloadPreKeySignature(payload),
+        ).resolves.toBeUndefined();
+    });
+
+    it("accepts legacy v1 prekey signatures during migration", async () => {
+        const { payload } = await makeMaterial("tweetnacl", 1, {
+            legacy: true,
+        });
 
         await expect(
             assertDevicePayloadPreKeySignature(payload),
@@ -106,6 +117,7 @@ function flipHexByte(hex: string): string {
 async function makeMaterial(
     profile: CryptoProfile,
     otkCount = 1,
+    options?: { legacy?: boolean },
 ): Promise<{
     device: Device;
     otks: PreKeysWS[];
@@ -114,10 +126,17 @@ async function makeMaterial(
     setCryptoProfile(profile);
     const signKeyPair = await xSignKeyPairAsync();
     const preKeyPair = await xBoxKeyPairAsync();
-    const preKeySignature = await signPreKey(preKeyPair, signKeyPair);
     const deviceID = "device-1";
+    const preKeySignature = await signPreKey(preKeyPair, signKeyPair, {
+        deviceID,
+        index: 1,
+        keyType: "signed_prekey",
+        legacy: options?.legacy,
+        profile,
+    });
     const signKey = XUtils.encodeHex(signKeyPair.publicKey);
     const payload: DevicePayload = {
+        ...(options?.legacy ? {} : { deviceID }),
         deviceName: "test device",
         preKey: XUtils.encodeHex(preKeyPair.publicKey),
         preKeyIndex: 1,
@@ -140,7 +159,13 @@ async function makeMaterial(
             deviceID,
             index: i + 1,
             publicKey: keyPair.publicKey,
-            signature: await signPreKey(keyPair, signKeyPair),
+            signature: await signPreKey(keyPair, signKeyPair, {
+                deviceID,
+                index: i + 1,
+                keyType: "one_time_prekey",
+                legacy: options?.legacy,
+                profile,
+            }),
         });
     }
     return { device, otks, payload };
@@ -149,9 +174,22 @@ async function makeMaterial(
 async function signPreKey(
     preKeyPair: KeyPair,
     signKeyPair: KeyPair,
+    options: {
+        deviceID: string;
+        index: number;
+        keyType: "one_time_prekey" | "signed_prekey";
+        legacy?: boolean | undefined;
+        profile: CryptoProfile;
+    },
 ): Promise<Uint8Array> {
-    return xSignAsync(
-        preKeySignaturePayload(preKeyPair.publicKey),
-        signKeyPair.secretKey,
-    );
+    const payload = options.legacy
+        ? xPreKeySignaturePayloadV1(preKeyPair.publicKey, options.profile)
+        : xPreKeySignaturePayloadV2({
+              cryptoProfile: options.profile,
+              deviceID: options.deviceID,
+              keyIndex: options.index,
+              keyType: options.keyType,
+              publicKey: preKeyPair.publicKey,
+          });
+    return xSignAsync(payload, signKeyPair.secretKey);
 }

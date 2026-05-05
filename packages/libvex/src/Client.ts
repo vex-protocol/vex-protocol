@@ -59,6 +59,7 @@ import {
     XKeyConvert,
     xMakeNonce,
     xMnemonic,
+    xPreKeySignaturePayloadV2,
     xRandomBytes,
     xSecretboxAsync,
     xSecretboxOpenAsync,
@@ -2002,6 +2003,7 @@ export class Client {
                     ? password
                     : uuid.v4();
             const signKey = XUtils.encodeHex(this.signKeys.publicKey);
+            const deviceID = uuid.v4();
             const signed = XUtils.encodeHex(
                 await xSignAsync(
                     Uint8Array.from(uuid.parse(regKey.key)),
@@ -2010,6 +2012,7 @@ export class Client {
             );
             const preKeyIndex = this.xKeyRing.preKeys.index;
             const regMsg: RegistrationPayload = {
+                deviceID,
                 deviceName: this.options?.deviceName ?? "unknown",
                 password: resolvedPassword,
                 preKey: XUtils.encodeHex(
@@ -2017,7 +2020,12 @@ export class Client {
                 ),
                 preKeyIndex,
                 preKeySignature: XUtils.encodeHex(
-                    this.xKeyRing.preKeys.signature,
+                    await this.signPreKeyV2(
+                        this.xKeyRing.preKeys.keyPair.publicKey,
+                        deviceID,
+                        preKeyIndex,
+                        "signed_prekey",
+                    ),
                 ),
                 signed,
                 signKey,
@@ -2242,7 +2250,10 @@ export class Client {
         return decodeAxios(PasskeyOptionsCodec, response.data);
     }
 
-    private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
+    private censorPreKey(
+        preKey: PreKeysSQL,
+        signature?: Uint8Array,
+    ): PreKeysWS {
         if (!preKey.index) {
             throw new Error("Key index is required.");
         }
@@ -2250,7 +2261,7 @@ export class Client {
             deviceID: this.getDevice().deviceID,
             index: preKey.index,
             publicKey: XUtils.decodeHex(preKey.publicKey),
-            signature: XUtils.decodeHex(preKey.signature),
+            signature: signature ?? XUtils.decodeHex(preKey.signature),
         };
     }
 
@@ -2621,6 +2632,7 @@ export class Client {
     private async deletePermission(permissionID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/permission/" + permissionID);
     }
+
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
@@ -2637,7 +2649,6 @@ export class Client {
         }
         return "";
     }
-
     /**
      * Gets a list of permissions for a server.
      *
@@ -3146,8 +3157,6 @@ export class Client {
         return decodeAxios(UserArrayCodec, res.data);
     }
 
-    // ── Passkeys ────────────────────────────────────────────────────────
-
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
             case "deviceRequest": {
@@ -3215,6 +3224,8 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
+
+    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -4227,6 +4238,7 @@ export class Client {
         // P-256 ECDSA SPKI (hex) in FIPS. The server maps this to a raw ECDH
         // identity in `getKeyBundle` for X3DH; see spire `Database.getKeyBundle`.
         const signKey = this.getKeys().public;
+        const deviceID = uuid.v4();
         const signed = XUtils.encodeHex(
             await xSignAsync(
                 Uint8Array.from(uuid.parse(token.key)),
@@ -4240,10 +4252,18 @@ export class Client {
                 ? userDetails.username
                 : `key_${userDetails.userID.replaceAll("-", "").slice(0, 12)}`;
         const devMsg: DevicePayload = {
+            deviceID,
             deviceName: this.options?.deviceName ?? "unknown",
             preKey: XUtils.encodeHex(this.xKeyRing.preKeys.keyPair.publicKey),
             preKeyIndex: devPreKeyIndex,
-            preKeySignature: XUtils.encodeHex(this.xKeyRing.preKeys.signature),
+            preKeySignature: XUtils.encodeHex(
+                await this.signPreKeyV2(
+                    this.xKeyRing.preKeys.keyPair.publicKey,
+                    deviceID,
+                    devPreKeyIndex,
+                    "signed_prekey",
+                ),
+            ),
             signed,
             signKey,
             username: normalizedUsername,
@@ -4974,6 +4994,24 @@ export class Client {
         );
     }
 
+    private async signPreKeyV2(
+        publicKey: Uint8Array,
+        deviceID: string,
+        keyIndex: number,
+        keyType: "one_time_prekey" | "signed_prekey",
+    ): Promise<Uint8Array> {
+        return xSignAsync(
+            xPreKeySignaturePayloadV2({
+                cryptoProfile: this.cryptoProfile,
+                deviceID,
+                keyIndex,
+                keyType,
+                publicKey,
+            }),
+            this.signKeys.secretKey,
+        );
+    }
+
     private async submitOTK(amount: number) {
         const otks: UnsavedPreKey[] = [];
 
@@ -4982,10 +5020,28 @@ export class Client {
         }
 
         const savedKeys = await this.database.savePreKeys(otks, true);
+        const deviceID = this.getDevice().deviceID;
 
         await this.http.post(
-            this.getHost() + "/device/" + this.getDevice().deviceID + "/otk",
-            msgpack.encode(savedKeys.map((key) => this.censorPreKey(key))),
+            this.getHost() + "/device/" + deviceID + "/otk",
+            msgpack.encode(
+                await Promise.all(
+                    savedKeys.map(async (key) => {
+                        if (!key.index) {
+                            throw new Error("OTK index is required.");
+                        }
+                        return this.censorPreKey(
+                            key,
+                            await this.signPreKeyV2(
+                                XUtils.decodeHex(key.publicKey),
+                                deviceID,
+                                key.index,
+                                "one_time_prekey",
+                            ),
+                        );
+                    }),
+                ),
+            ),
             {
                 headers: { "Content-Type": "application/msgpack" },
             },

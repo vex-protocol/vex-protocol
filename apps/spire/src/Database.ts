@@ -43,7 +43,13 @@ import { MailType } from "@vex-chat/types";
 import argon2 from "argon2";
 
 import { serverMailRetentionCutoffIso } from "./mailRetention.ts";
-import { assertDevicePayloadPreKeySignature } from "./utils/preKeyValidation.ts";
+import {
+    assertDevicePayloadPreKeySignature,
+    PreKeyValidationError,
+} from "./utils/preKeyValidation.ts";
+
+const DEVICE_ID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
@@ -207,10 +213,14 @@ export class Database extends EventEmitter {
         payload: DevicePayload,
     ): Promise<Device> {
         await assertDevicePayloadPreKeySignature(payload);
+        const deviceID = payload.deviceID ?? crypto.randomUUID();
+        if (!DEVICE_ID_PATTERN.test(deviceID)) {
+            throw new PreKeyValidationError("Invalid device ID.");
+        }
 
         const device = {
             deleted: 0,
-            deviceID: crypto.randomUUID(),
+            deviceID,
             lastLogin: new Date().toISOString(),
             name: payload.deviceName,
             owner,

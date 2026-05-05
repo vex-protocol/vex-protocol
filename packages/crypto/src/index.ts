@@ -31,6 +31,15 @@ import { z } from "zod/v4";
 
 /** Runtime crypto profile selector. */
 export type CryptoProfile = "fips" | "tweetnacl";
+export type PreKeySignatureKeyType = "one_time_prekey" | "signed_prekey";
+
+export interface PreKeySignaturePayloadV2Input {
+    cryptoProfile: CryptoProfile;
+    deviceID: string;
+    keyIndex: number;
+    keyType: PreKeySignatureKeyType;
+    publicKey: Uint8Array;
+}
 
 interface CryptoProvider {
     boxBefore(myPrivateKey: Uint8Array, theirPublicKey: Uint8Array): Uint8Array;
@@ -1001,8 +1010,6 @@ export async function xEcdhKeyPairFromEcdsaKeyPairAsync(
     };
 }
 
-// ── Signing ────────────────────────────────────────────────────────────────
-
 /**
  * Encode an X25519 or X448 public key PK into a byte sequence.
  * The encoding consists of 0 or 1 to represent the type of curve, followed by l
@@ -1057,8 +1064,6 @@ export function xHash(data: Uint8Array) {
     return XUtils.encodeHex(sha512(data));
 }
 
-// ── Symmetric encryption (XSalsa20-Poly1305) ──────────────────────────────
-
 export function xKDF(IKM: Uint8Array): Uint8Array {
     return hkdf(
         sha512,
@@ -1076,12 +1081,42 @@ export function xMakeNonce(): Uint8Array {
     return provider().randomBytes(24);
 }
 
-// ── Random ─────────────────────────────────────────────────────────────────
+/** Current compatible prekey signature payload. Kept for migration. */
+export function xPreKeySignaturePayloadV1(
+    publicKey: Uint8Array,
+    cryptoProfile: CryptoProfile = getCryptoProfile(),
+): Uint8Array {
+    return cryptoProfile === "fips"
+        ? xConcat(new Uint8Array([0xa1]), publicKey)
+        : xEncode(xConstants.CURVE, publicKey);
+}
+
+// ── Signing ────────────────────────────────────────────────────────────────
+
+/** Domain-separated X3DH prekey signature payload. */
+export function xPreKeySignaturePayloadV2(
+    input: PreKeySignaturePayloadV2Input,
+): Uint8Array {
+    if (!Number.isSafeInteger(input.keyIndex) || input.keyIndex < 0) {
+        throw new Error(`Invalid prekey index: ${String(input.keyIndex)}.`);
+    }
+
+    return xConcat(
+        lengthPrefixUtf8("vex:x3dh:prekey:v2"),
+        new Uint8Array([input.cryptoProfile === "fips" ? 2 : 1]),
+        new Uint8Array([input.keyType === "one_time_prekey" ? 2 : 1]),
+        XUtils.numberToUint8Arr(input.keyIndex),
+        lengthPrefixUtf8(input.deviceID),
+        lengthPrefixBytes(input.publicKey),
+    );
+}
 
 /** Cryptographically secure random bytes. */
 export function xRandomBytes(length: number): Uint8Array {
     return provider().randomBytes(length);
 }
+
+// ── Symmetric encryption (XSalsa20-Poly1305) ──────────────────────────────
 
 /** Encrypt with a shared secret key. */
 export function xSecretbox(
@@ -1111,6 +1146,8 @@ export async function xSecretboxAsync(
     );
     return new Uint8Array(ciphertext);
 }
+
+// ── Random ─────────────────────────────────────────────────────────────────
 
 /** Decrypt with a shared secret key. Returns null if authentication fails. */
 export function xSecretboxOpen(
@@ -1332,6 +1369,26 @@ function isEven(value: bigint) {
  */
 function keyLength(curve: "X448" | "X25519"): number {
     return curve === "X25519" ? 32 : 57;
+}
+
+function lengthPrefixBytes(value: Uint8Array): Uint8Array {
+    return xConcat(uint32be(value.length), value);
+}
+
+function lengthPrefixUtf8(value: string): Uint8Array {
+    return lengthPrefixBytes(new TextEncoder().encode(value));
+}
+
+function uint32be(value: number): Uint8Array {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+        throw new Error(`Expected uint32 length, received ${String(value)}.`);
+    }
+    return new Uint8Array([
+        (value >>> 24) & 0xff,
+        (value >>> 16) & 0xff,
+        (value >>> 8) & 0xff,
+        value & 0xff,
+    ]);
 }
 
 /**
