@@ -173,6 +173,7 @@ export class XUtils {
     static decodeUTF8: typeof encode;
     static decryptKeyData: (keyData: Uint8Array, password: string) => string;
     static decryptKeyDataAsync: (keyData: Uint8Array, password: string) => Promise<string>;
+    static deriveLegacyLocalAtRestAesKey(identitySk: Uint8Array, profile: CryptoProfile): null | Uint8Array;
     static deriveLocalAtRestAesKey(identitySk: Uint8Array, profile: CryptoProfile): Uint8Array;
     static emptyHeader(): Uint8Array<ArrayBuffer>;
     // (undocumented)
@@ -186,6 +187,7 @@ export class XUtils {
     static packMessage(msg: unknown, header?: Uint8Array): Uint8Array<ArrayBufferLike>;
     static uint8ArrToNumber(arr: Uint8Array): number;
     static unpackMessage(msg: Buffer | Uint8Array): [Uint8Array, BaseMsg];
+    static wipe(bytes: null | Uint8Array | undefined): void;
 }
 
 // (No @packageDocumentation comment for this package)

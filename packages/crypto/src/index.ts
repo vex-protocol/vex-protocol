@@ -524,29 +524,42 @@ export class XUtils {
     };
 
     /**
+     * Previous local at-rest key derivation, kept only for read-time migration of
+     * existing TweetNaCl stores. New writes should use deriveLocalAtRestAesKey().
+     */
+    public static deriveLegacyLocalAtRestAesKey(
+        identitySk: Uint8Array,
+        profile: CryptoProfile,
+    ): null | Uint8Array {
+        if (profile !== "tweetnacl") {
+            return null;
+        }
+        if (identitySk.length < 32) {
+            throw new Error(
+                "Expected at least 32 bytes of identity secret in tweetnacl mode.",
+            );
+        }
+        return new Uint8Array(identitySk.slice(0, 32));
+    }
+
+    /**
      * 32-byte AES-256 key for local at-rest encryption (e.g. sqlite) derived from
-     * identity `secretKey`. For `tweetnacl` this is the 32-byte X25519 private key.
-     * For `fips` the identity secret is PKCS#8; HKDF is applied so AES keys never
-     * equal the raw private key material.
+     * identity `secretKey` with explicit profile/domain separation.
      */
     public static deriveLocalAtRestAesKey(
         identitySk: Uint8Array,
         profile: CryptoProfile,
     ): Uint8Array {
-        if (profile === "tweetnacl") {
-            if (identitySk.length < 32) {
-                throw new Error(
-                    "Expected at least 32 bytes of identity secret in tweetnacl mode.",
-                );
-            }
-            return identitySk.subarray(0, 32);
-        }
+        const info =
+            profile === "fips"
+                ? "vex:at-rest:2.1.0-fips"
+                : "vex:at-rest:2.2.0-tweetnacl";
         return new Uint8Array(
             hkdf(
                 sha256,
                 identitySk,
                 new Uint8Array(0),
-                new TextEncoder().encode("vex:at-rest:2.1.0-fips"),
+                new TextEncoder().encode(info),
                 32,
             ),
         );
@@ -751,6 +764,17 @@ export class XUtils {
             .parse(raw) as BaseMsg;
 
         return [msgh, msgb];
+    }
+
+    /**
+     * Best-effort overwrite for temporary byte buffers that hold secret material.
+     *
+     * JavaScript runtimes can copy, move, or retain backing memory internally, so
+     * this is not a guaranteed secure zeroize primitive. It still clears the
+     * caller-visible Uint8Array when the buffer is mutable.
+     */
+    public static wipe(bytes: null | Uint8Array | undefined): void {
+        bytes?.fill(0);
     }
 }
 

@@ -19,11 +19,12 @@ import { SqliteStorage } from "./sqlite.js";
 export function createNodeStorage(
     dbPath: string,
     atRestAesKey: Uint8Array,
+    legacyAtRestAesKeys: Uint8Array[] = [],
 ): Storage {
     const db = new Kysely<ClientDatabase>({
         dialect: new SqliteDialect({
             database: new BetterSqlite3(dbPath),
         }),
     });
-    return new SqliteStorage(db, atRestAesKey);
+    return new SqliteStorage(db, atRestAesKey, legacyAtRestAesKeys);
 }
