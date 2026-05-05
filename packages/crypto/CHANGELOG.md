@@ -1,5 +1,11 @@
 # @vex-chat/crypto
 
+## 5.0.1
+
+### Patch Changes
+
+- [#58](https://github.com/vex-protocol/vex-protocol/pull/58) [`eab38c0`](https://github.com/vex-protocol/vex-protocol/commit/eab38c04a21c219af7961741d7b8aa2144639e70) Thanks [@yuki111888](https://github.com/yuki111888)! - Add re-entrant `enterCryptoProfileScope` / `leaveCryptoProfileScope` so overlapping FIPS `readMail` work cannot reset the process-wide profile mid-await. Yield the JS thread while bulk-decrypting SQLite message history. Harden Spire stress integration (WS budgets, CI workflow) and trim integration client count for more reliable Actions runs.
+
 ## 5.0.0
 
 ### Patch Changes
