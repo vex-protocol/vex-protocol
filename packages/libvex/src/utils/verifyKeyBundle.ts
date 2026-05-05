@@ -9,13 +9,11 @@ import type { Device, KeyBundle, KeyBundleEntry } from "@vex-chat/types";
 
 import {
     fipsEcdhRawPublicKeyFromEcdsaSpkiAsync,
-    xConstants,
-    xEncode,
+    xPreKeySignaturePayloadV1,
+    xPreKeySignaturePayloadV2,
     xSignOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
-
-import { fipsP256PreKeySignPayload } from "./fipsMailExtra.js";
 
 export async function verifyKeyBundleSignatures(
     keyBundle: KeyBundle,
@@ -38,6 +36,7 @@ export async function verifyKeyBundleSignatures(
         deviceSignKey,
         cryptoProfile,
         "signed prekey",
+        "signed_prekey",
     );
 
     if (keyBundle.otk) {
@@ -47,6 +46,7 @@ export async function verifyKeyBundleSignatures(
             deviceSignKey,
             cryptoProfile,
             "one-time prekey",
+            "one_time_prekey",
         );
     }
 }
@@ -57,18 +57,39 @@ async function verifyKeyBundleEntrySignature(
     deviceSignKey: Uint8Array,
     cryptoProfile: CryptoProfile,
     label: string,
+    keyType: "one_time_prekey" | "signed_prekey",
 ): Promise<void> {
     if (entry.deviceID !== device.deviceID) {
         throw new Error(`Key bundle ${label} belongs to a different device.`);
     }
 
-    const payload =
-        cryptoProfile === "fips"
-            ? fipsP256PreKeySignPayload(entry.publicKey)
-            : xEncode(xConstants.CURVE, entry.publicKey);
     const opened = await xSignOpenAsync(entry.signature, deviceSignKey);
 
-    if (!opened || !XUtils.bytesEqual(opened, payload)) {
+    if (!opened) {
         throw new Error(`Key bundle ${label} signature is invalid.`);
     }
+
+    if (entry.index !== null) {
+        const v2Payload = xPreKeySignaturePayloadV2({
+            cryptoProfile,
+            deviceID: entry.deviceID,
+            keyIndex: entry.index,
+            keyType,
+            publicKey: entry.publicKey,
+        });
+        if (XUtils.bytesEqual(opened, v2Payload)) {
+            return;
+        }
+    }
+
+    if (
+        XUtils.bytesEqual(
+            opened,
+            xPreKeySignaturePayloadV1(entry.publicKey, cryptoProfile),
+        )
+    ) {
+        return;
+    }
+
+    throw new Error(`Key bundle ${label} signature is invalid.`);
 }

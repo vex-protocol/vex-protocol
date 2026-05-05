@@ -34,6 +34,23 @@ export interface KeyPair {
 // @public
 export function leaveCryptoProfileScope(): void;
 
+// @public (undocumented)
+export type PreKeySignatureKeyType = "one_time_prekey" | "signed_prekey";
+
+// @public (undocumented)
+export interface PreKeySignaturePayloadV2Input {
+    // (undocumented)
+    cryptoProfile: CryptoProfile;
+    // (undocumented)
+    deviceID: string;
+    // (undocumented)
+    keyIndex: number;
+    // (undocumented)
+    keyType: PreKeySignatureKeyType;
+    // (undocumented)
+    publicKey: Uint8Array;
+}
+
 // @public
 export function setCryptoProfile(profile: CryptoProfile): void;
 
@@ -100,6 +117,12 @@ export function xMakeNonce(): Uint8Array;
 
 // @public
 export function xMnemonic(entropy: Uint8Array, wordList?: string[]): string;
+
+// @public
+export function xPreKeySignaturePayloadV1(publicKey: Uint8Array, cryptoProfile?: CryptoProfile): Uint8Array;
+
+// @public
+export function xPreKeySignaturePayloadV2(input: PreKeySignaturePayloadV2Input): Uint8Array;
 
 // @public
 export function xRandomBytes(length: number): Uint8Array;

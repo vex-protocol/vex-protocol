@@ -10,9 +10,9 @@ import type { Device, KeyBundle, KeyBundleEntry } from "@vex-chat/types";
 import {
     setCryptoProfile,
     xBoxKeyPairAsync,
-    xConstants,
     xEcdhKeyPairFromEcdsaKeyPairAsync,
-    xEncode,
+    xPreKeySignaturePayloadV1,
+    xPreKeySignaturePayloadV2,
     xSignAsync,
     xSignKeyPairAsync,
     XUtils,
@@ -20,7 +20,6 @@ import {
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { fipsP256PreKeySignPayload } from "../utils/fipsMailExtra.js";
 import { verifyKeyBundleSignatures } from "../utils/verifyKeyBundle.js";
 
 describe.sequential("verifyKeyBundleSignatures", () => {
@@ -77,6 +76,16 @@ describe.sequential("verifyKeyBundleSignatures", () => {
             verifyKeyBundleSignatures(keyBundle, device, "fips"),
         ).resolves.toBeUndefined();
     });
+
+    it("accepts legacy v1 prekey signatures during migration", async () => {
+        const { device, keyBundle } = await makeBundle("tweetnacl", true, {
+            legacy: true,
+        });
+
+        await expect(
+            verifyKeyBundleSignatures(keyBundle, device, "tweetnacl"),
+        ).resolves.toBeUndefined();
+    });
 });
 
 function cloneBundle(bundle: KeyBundle): KeyBundle {
@@ -109,6 +118,7 @@ function flipFirstByte(value: Uint8Array): Uint8Array {
 async function makeBundle(
     profile: CryptoProfile,
     includeOtk = false,
+    options?: { legacy?: boolean },
 ): Promise<{ device: Device; keyBundle: KeyBundle }> {
     setCryptoProfile(profile);
     const signKeys = await xSignKeyPairAsync();
@@ -126,7 +136,10 @@ async function makeBundle(
     };
 
     const keyBundle: KeyBundle = {
-        preKey: await makeBundleEntry(signKeys, profile, device.deviceID, 1),
+        preKey: await makeBundleEntry(signKeys, profile, device.deviceID, 1, {
+            keyType: "signed_prekey",
+            legacy: options?.legacy,
+        }),
         signKey: identityPublic,
     };
     if (includeOtk) {
@@ -135,6 +148,7 @@ async function makeBundle(
             profile,
             device.deviceID,
             2,
+            { keyType: "one_time_prekey", legacy: options?.legacy },
         );
     }
 
@@ -146,12 +160,21 @@ async function makeBundleEntry(
     profile: CryptoProfile,
     deviceID: string,
     index: number,
+    options: {
+        keyType: "one_time_prekey" | "signed_prekey";
+        legacy?: boolean;
+    },
 ): Promise<KeyBundleEntry> {
     const preKey = await xBoxKeyPairAsync();
-    const payload =
-        profile === "fips"
-            ? fipsP256PreKeySignPayload(preKey.publicKey)
-            : xEncode(xConstants.CURVE, preKey.publicKey);
+    const payload = options.legacy
+        ? xPreKeySignaturePayloadV1(preKey.publicKey, profile)
+        : xPreKeySignaturePayloadV2({
+              cryptoProfile: profile,
+              deviceID,
+              keyIndex: index,
+              keyType: options.keyType,
+              publicKey: preKey.publicKey,
+          });
     return {
         deviceID,
         index,
