@@ -1342,6 +1342,8 @@ export class Client {
     private reading: boolean = false;
     private retentionPurgeDebounce: null | ReturnType<typeof setTimeout> = null;
     private readonly seenMailIDs: Set<string> = new Set();
+    private readonly sessionHealBackoffUntil = new Map<string, number>();
+    private readonly sessionHealInFlight = new Set<string>();
     private sessionRecords: Record<string, SessionCrypto> = {};
 
     // these are created from one set of sign keys
@@ -2799,7 +2801,7 @@ export class Client {
                 continue;
             }
             try {
-                await this.sendMail(
+                await this.sendMailWithRecovery(
                     device,
                     this.getUser(),
                     msgBytes,
@@ -3645,23 +3647,50 @@ export class Client {
 
         try {
             await this.runWithThisCryptoProfile(async () => {
-                const healSession = async () => {
+                const healSession = () => {
                     if (this.manuallyClosing || !this.xKeyRing) {
                         return;
                     }
-                    const deviceEntry = await this.getDeviceByID(mail.sender);
-                    const [user, _err] = await this.fetchUser(mail.authorID);
-                    if (deviceEntry && user) {
-                        void this.createSession(
-                            deviceEntry,
-                            user,
-                            new Uint8Array(),
-                            mail.group,
-                            uuid.v4(),
-                            false,
-                            true,
-                        );
+                    const senderDeviceID = mail.sender;
+                    const now = Date.now();
+                    const blockedUntil =
+                        this.sessionHealBackoffUntil.get(senderDeviceID) ?? 0;
+                    if (now < blockedUntil) {
+                        return;
                     }
+                    if (this.sessionHealInFlight.has(senderDeviceID)) {
+                        return;
+                    }
+                    this.sessionHealInFlight.add(senderDeviceID);
+                    void (async () => {
+                        try {
+                            const deviceEntry =
+                                await this.getDeviceByID(senderDeviceID);
+                            const [user, _err] = await this.fetchUser(
+                                mail.authorID,
+                            );
+                            if (deviceEntry && user) {
+                                await this.createSession(
+                                    deviceEntry,
+                                    user,
+                                    new Uint8Array(),
+                                    mail.group,
+                                    uuid.v4(),
+                                    false,
+                                    true,
+                                );
+                            }
+                        } finally {
+                            // Avoid hammering /keyBundle when a bad/corrupt mail item
+                            // triggers repeated decrypt failures for the same sender.
+                            // Use a conservative backoff to cap load during auth churn.
+                            this.sessionHealBackoffUntil.set(
+                                senderDeviceID,
+                                Date.now() + 30_000,
+                            );
+                            this.sessionHealInFlight.delete(senderDeviceID);
+                        }
+                    })();
                 };
 
                 switch (mail.mailType) {
@@ -4002,7 +4031,7 @@ export class Client {
                         }
 
                         if (!session) {
-                            void healSession();
+                            healSession();
                             return;
                         }
 
@@ -4036,7 +4065,7 @@ export class Client {
                         const HMAC = xHMAC(mail, messageKey);
 
                         if (!XUtils.bytesEqual(HMAC, header)) {
-                            void healSession();
+                            healSession();
                             return;
                         }
 
@@ -4132,7 +4161,7 @@ export class Client {
                             ] = session;
                             this.acknowledgeInboundMail(mail);
                         } else {
-                            void healSession();
+                            healSession();
                             this.emitter.emit("retryRequest", {
                                 mailID: mail.mailID,
                                 source: "decrypt_failure",
@@ -4393,10 +4422,14 @@ export class Client {
         let elapsed = 0;
         let backoff = 50;
         while (this.socket.readyState !== 1) {
+            if (this.isManualCloseInFlight()) {
+                throw new WebSocketNotOpenError(this.socket.readyState);
+            }
+            if (this.socket.readyState === 2 || this.socket.readyState === 3) {
+                throw new WebSocketNotOpenError(this.socket.readyState);
+            }
             if (elapsed >= maxWaitMs) {
-                throw new Error(
-                    "WebSocket did not reach OPEN state within 30 seconds.",
-                );
+                throw new WebSocketNotOpenError(this.socket.readyState);
             }
             await sleep(backoff);
             elapsed += backoff;
@@ -4484,7 +4517,7 @@ export class Client {
                 continue;
             }
             try {
-                await this.sendMail(
+                await this.sendMailWithRecovery(
                     device,
                     ownerRecord,
                     msgBytes,
@@ -4704,6 +4737,32 @@ export class Client {
         }
     }
 
+    private async sendMailWithRecovery(
+        device: Device,
+        user: User,
+        msg: Uint8Array,
+        group: null | Uint8Array,
+        mailID: null | string,
+        forward: boolean,
+    ): Promise<void> {
+        try {
+            await this.sendMail(device, user, msg, group, mailID, forward);
+        } catch (err: unknown) {
+            if (!this.shouldRetryDeliveryWithFreshSession(err)) {
+                throw err;
+            }
+            await this.sendMail(
+                device,
+                user,
+                msg,
+                group,
+                mailID,
+                forward,
+                true,
+            );
+        }
+    }
+
     private async sendMessage(
         userID: string,
         message: string,
@@ -4782,7 +4841,7 @@ export class Client {
                             recipientDevice: device.deviceID,
                         });
                     }
-                    await this.sendMail(
+                    await this.sendMailWithRecovery(
                         device,
                         userEntry,
                         XUtils.decodeUTF8(payload),
@@ -4851,6 +4910,24 @@ export class Client {
         // Fresh identity / token: drop stale 404 negative-cache entries so a
         // prior transient miss (or wrong host) cannot block DM sends for 30m.
         this.notFoundUsers.clear();
+    }
+
+    private shouldRetryDeliveryWithFreshSession(err: unknown): boolean {
+        if (err instanceof WebSocketNotOpenError) {
+            return true;
+        }
+        const message =
+            err instanceof Error
+                ? err.message.toLowerCase()
+                : String(err).toLowerCase();
+        return (
+            message.includes("mail delivery failed") ||
+            message.includes("not authenticated") ||
+            message.includes("unauthorized") ||
+            message.includes("websocket") ||
+            message.includes("network") ||
+            message.includes("timed out")
+        );
     }
 
     /**
