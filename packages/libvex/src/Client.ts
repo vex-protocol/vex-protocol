@@ -526,6 +526,11 @@ export type { Channel } from "@vex-chat/types";
 export type { Server } from "@vex-chat/types";
 
 /**
+ * Combined server + channels payload used for fast UI bootstrap.
+ */
+export type { ServerChannelBootstrap } from "@vex-chat/types";
+
+/**
  * @ignore
  */
 export interface Invites {

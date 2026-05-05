@@ -1019,7 +1019,7 @@ export class Database extends EventEmitter {
             return { channelsByServer: {}, servers: [] };
         }
 
-        const [servers, channels] = await Promise.all([
+        const [serverRows, channels] = await Promise.all([
             this.db
                 .selectFrom("servers")
                 .selectAll()
@@ -1032,6 +1032,7 @@ export class Database extends EventEmitter {
                 .execute(),
         ]);
 
+        const servers = serverRows.map(toServer);
         const channelsByServer: Record<string, Channel[]> = {};
         for (const serverID of serverIDs) {
             channelsByServer[serverID] = [];
@@ -1084,11 +1085,12 @@ export class Database extends EventEmitter {
         if (serverIDs.length === 0) {
             return [];
         }
-        return this.db
+        const rows = await this.db
             .selectFrom("servers")
             .selectAll()
             .where("serverID", "in", serverIDs)
             .execute();
+        return rows.map(toServer);
     }
 
     // The identifier is matched as either a userID (UUID branch) or a
