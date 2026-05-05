@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.4.1
+
+### Patch Changes
+
+- [#64](https://github.com/vex-protocol/vex-protocol/pull/64) [`c30d1f6`](https://github.com/vex-protocol/vex-protocol/commit/c30d1f6aa5f7d6cc8aff646fb422229db81cf6ad) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes slow client startup: OTK negotiation is now fire-and-forget so it no longer blocks login or app hydration by several seconds on mobile. Familiar lookups are now fetched in parallel instead of sequentially.
+
 ## 6.4.0
 
 ### Minor Changes
