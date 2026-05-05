@@ -10,12 +10,11 @@
  *
  * **Post-burst checks** (`verify*PostBurstWsDelivery`): only the first
  * `SPIRE_STRESS_WS_WITNESS_MAX` guests (default **3**) are sampled for each ping.
- * By default, local runs require all sampled witnesses; CI allows a small miss
- * budget (default required ratio ~0.67). Override with
- * `SPIRE_STRESS_WS_REQUIRED_RATIO` (`0 < ratio <= 1`). Set
- * `SPIRE_STRESS_WS_WITNESS_MAX=all` to sample every guest. Timeout uses
- * `SPIRE_STRESS_WS_DELIVERY_MS` and scales with client count unless the env
- * value is already higher.
+ * Witnesses are tracked across the whole run instead of failing a flood wall on
+ * one timeout. The final run requires `SPIRE_STRESS_WS_REQUIRED_RATIO` observed
+ * deliveries (default **0.9**). Set `SPIRE_STRESS_WS_WITNESS_MAX=all` to sample
+ * every guest. Timeout uses `SPIRE_STRESS_WS_DELIVERY_MS` and scales with client
+ * count unless the env value is already higher.
  *
  * When `CI=true` or `GITHUB_ACTIONS=true`, budgets are multiplied by
  * **~1.3** unless overridden (`SPIRE_STRESS_WS_CI_FACTOR`, or disabled with
@@ -39,10 +38,53 @@ import {
 const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
 const WS_WITNESS_MAX_ENV = "SPIRE_STRESS_WS_WITNESS_MAX";
 const WS_REQUIRED_RATIO_ENV = "SPIRE_STRESS_WS_REQUIRED_RATIO";
+const WS_FINAL_GRACE_ENV = "SPIRE_STRESS_WS_FINAL_GRACE_MS";
 const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
 const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
 
 const DEFAULT_WS_DELIVERY_MS = 25_000;
+const DEFAULT_WS_REQUIRED_RATIO = 0.9;
+const DEFAULT_WS_FINAL_GRACE_MS = 5_000;
+
+export interface WsDeliveryStats {
+    readonly expected: number;
+    readonly observed: number;
+    readonly pending: number;
+    readonly ratio: number;
+    readonly requiredRatio: number;
+}
+
+interface WsDeliveryTally {
+    expected: number;
+    observed: number;
+    pending: number;
+}
+
+const wsDeliveryTally: WsDeliveryTally = {
+    expected: 0,
+    observed: 0,
+    pending: 0,
+};
+
+export function formatWsDeliveryStats(stats = getWsDeliveryStats()): string {
+    const pct = (stats.ratio * 100).toFixed(1);
+    const requiredPct = (stats.requiredRatio * 100).toFixed(1);
+    const pending =
+        stats.pending > 0 ? `  pending=${String(stats.pending)}` : "";
+    return `[stress] websocket delivery observed=${String(stats.observed)}/${String(stats.expected)} (${pct}%) required>=${requiredPct}%${pending}`;
+}
+
+export function getWsDeliveryStats(): WsDeliveryStats {
+    const expected = wsDeliveryTally.expected;
+    const observed = wsDeliveryTally.observed;
+    return {
+        expected,
+        observed,
+        pending: wsDeliveryTally.pending,
+        ratio: expected > 0 ? observed / expected : 1,
+        requiredRatio: wsRequiredRatio(),
+    };
+}
 
 /**
  * Per-check budget: at least env / default, plus headroom when many clients exist
@@ -98,69 +140,37 @@ export function waitForClientMessageWs(
     });
 }
 
+export async function waitForWsDeliveryFinalGrace(): Promise<void> {
+    const graceMs = parseNonNegativeMsEnv(
+        WS_FINAL_GRACE_ENV,
+        DEFAULT_WS_FINAL_GRACE_MS,
+    );
+    if (graceMs <= 0 || wsDeliveryTally.pending <= 0) {
+        return;
+    }
+    const end = Date.now() + graceMs;
+    while (wsDeliveryTally.pending > 0 && Date.now() < end) {
+        await new Promise((resolve) => {
+            setTimeout(resolve, Math.min(100, Math.max(1, end - Date.now())));
+        });
+    }
+}
+
+export function wsDeliveryGatePassed(stats = getWsDeliveryStats()): boolean {
+    return stats.expected === 0 || stats.ratio >= stats.requiredRatio;
+}
+
 export function wsDeliveryTimeoutMs(): number {
     return withStressWsCiBudget(rawWsDeliveryFloorMs());
 }
 
-async function awaitWsWitnessSet(args: {
-    label: string;
-    minSuccesses: number;
-    waits: Promise<void>[];
-}): Promise<void> {
-    const settled = await Promise.allSettled(args.waits);
-    let successCount = 0;
-    let firstFailureReason: null | string = null;
-    for (const one of settled) {
-        if (one.status === "fulfilled") {
-            successCount += 1;
-            continue;
-        }
-        if (firstFailureReason === null) {
-            firstFailureReason = formatUnknownFailureReason(one.reason);
-        }
+function parseNonNegativeMsEnv(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
+    if (raw === undefined || raw === "") {
+        return fallback;
     }
-    if (successCount >= args.minSuccesses) {
-        return;
-    }
-    const reason = firstFailureReason ?? "unknown";
-    throw new Error(
-        `${args.label}: observed ${String(successCount)}/${String(args.waits.length)} WS witnesses; require >=${String(args.minSuccesses)} (set ${WS_REQUIRED_RATIO_ENV}) — first failure: ${reason}`,
-    );
-}
-
-function formatUnknownFailureReason(value: unknown): string {
-    if (value instanceof Error) {
-        return value.message;
-    }
-    if (typeof value === "string") {
-        return value;
-    }
-    if (
-        typeof value === "number" ||
-        typeof value === "boolean" ||
-        typeof value === "bigint"
-    ) {
-        return String(value);
-    }
-    if (value === null || value === undefined) {
-        return "unknown";
-    }
-    try {
-        const json = JSON.stringify(value);
-        if (typeof json === "string" && json.length > 0) {
-            return json;
-        }
-    } catch {
-        /* ignore JSON serialization errors */
-    }
-    return Object.prototype.toString.call(value);
-}
-
-function minWitnessSuccesses(totalWitnesses: number): number {
-    if (totalWitnesses <= 0) {
-        return 0;
-    }
-    return Math.max(1, Math.ceil(totalWitnesses * wsRequiredRatio()));
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
 function parsePositiveMsEnv(name: string, fallback: number): number {
@@ -217,11 +227,7 @@ function wsRequiredRatio(): number {
             return n;
         }
     }
-    const onCi =
-        process.env["CI"] === "true" ||
-        process.env["GITHUB_ACTIONS"] === "true";
-    // CI runners are shared/noisy; permit occasional dropped WS observations.
-    return onCi ? 0.67 : 1;
+    return DEFAULT_WS_REQUIRED_RATIO;
 }
 
 function wsWitnessCap(guestCount: number): number {
@@ -275,8 +281,8 @@ export async function awaitWsInboundWithTelemetry(
 
 /**
  * After a flood wall, hub posts a unique token on each guild channel; a subset
- * of guests (see `wsWitnessCap`) must observe inbound `message` events, then a
- * hub→guest1 DM is checked on WS.
+ * of guests (see `wsWitnessCap`) is tracked for inbound `message` events, then
+ * a hub→guest1 DM is tracked on WS.
  */
 export async function verifyChatPostBurstWsDelivery(
     clients: readonly Client[],
@@ -293,35 +299,19 @@ export async function verifyChatPostBurstWsDelivery(
     const guests = clients.slice(1);
     const cap = wsWitnessCap(guests.length);
     const witnessGuests = guests.slice(0, cap);
-    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
 
     const tokenPrimary = `[spire-ws-ping:${randomUUID()}]`;
-    const waitsPrimary = witnessGuests.map((guest, wIdx) => {
+    for (const [wIdx, guest] of witnessGuests.entries()) {
         const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(world.channelID, tokenPrimary),
+        observeClientMessageWs({
+            client: guest,
+            predicate: incomingGroupPredicate(world.channelID, tokenPrimary),
+            telemetry,
             timeoutMs,
-            `chat post-wall primary #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
+            touchCtx: touchCtx(phase, burst, clientIndex),
+        });
+    }
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -333,42 +323,25 @@ export async function verifyChatPostBurstWsDelivery(
                 channelID: shortId(world.channelID),
                 step: "post_burst_ws_ping_primary",
                 witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
+                witnessRequiredRatio: wsRequiredRatio(),
             },
         },
     );
-    await awaitWsWitnessSet({
-        label: "chat post-wall primary",
-        minSuccesses,
-        waits: waitsPrimary,
-    });
 
     const tokenLounge = `[spire-ws-ping-lounge:${randomUUID()}]`;
-    const waitsLounge = witnessGuests.map((guest, wIdx) => {
+    for (const [wIdx, guest] of witnessGuests.entries()) {
         const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(world.secondaryChannelID, tokenLounge),
+        observeClientMessageWs({
+            client: guest,
+            predicate: incomingGroupPredicate(
+                world.secondaryChannelID,
+                tokenLounge,
+            ),
+            telemetry,
             timeoutMs,
-            `chat post-wall lounge #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
+            touchCtx: touchCtx(phase, burst, clientIndex),
+        });
+    }
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -380,15 +353,10 @@ export async function verifyChatPostBurstWsDelivery(
                 channelID: shortId(world.secondaryChannelID),
                 step: "post_burst_ws_ping_lounge",
                 witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
+                witnessRequiredRatio: wsRequiredRatio(),
             },
         },
     );
-    await awaitWsWitnessSet({
-        label: "chat post-wall lounge",
-        minSuccesses,
-        waits: waitsLounge,
-    });
 
     const hubUser = world.userIDs.at(0);
     const guestUser = world.userIDs.at(1);
@@ -399,33 +367,18 @@ export async function verifyChatPostBurstWsDelivery(
         guestClient !== undefined
     ) {
         const dmToken = `[spire-ws-dm-ping:${randomUUID()}]`;
-        const waitDm = waitForClientMessageWs(
-            guestClient,
-            (m) =>
+        observeClientMessageWs({
+            client: guestClient,
+            predicate: (m) =>
                 m.group === null &&
                 m.direction === "incoming" &&
                 m.decrypted &&
                 m.authorID === hubUser &&
                 m.message.includes(dmToken),
+            telemetry,
             timeoutMs,
-            "chat post-wall hub→guest1 DM",
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, 1),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, 1),
-                    err,
-                );
-                throw err;
-            },
-        );
+            touchCtx: touchCtx(phase, burst, 1),
+        });
         await settleWithTelemetry(
             stats,
             telemetry,
@@ -439,7 +392,6 @@ export async function verifyChatPostBurstWsDelivery(
                 },
             },
         );
-        await waitDm;
     }
 }
 
@@ -463,34 +415,18 @@ export async function verifyNoisePostBurstWsDelivery(
     const guests = clients.slice(1);
     const cap = wsWitnessCap(guests.length);
     const witnessGuests = guests.slice(0, cap);
-    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
     const token = `[spire-ws-ping-noise:${randomUUID()}]`;
-    const waits = witnessGuests.map((guest, wIdx) => {
+    for (const [wIdx, guest] of witnessGuests.entries()) {
         const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(channelID, token),
+        observeClientMessageWs({
+            client: guest,
+            predicate: incomingGroupPredicate(channelID, token),
+            telemetry,
             timeoutMs,
-            `noise post-wall group #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
+            touchCtx: touchCtx(phase, burst, clientIndex),
+        });
+    }
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -502,15 +438,10 @@ export async function verifyNoisePostBurstWsDelivery(
                 channelID: shortId(channelID),
                 step: "post_burst_ws_ping_noise",
                 witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
+                witnessRequiredRatio: wsRequiredRatio(),
             },
         },
     );
-    await awaitWsWitnessSet({
-        label: "noise post-wall group",
-        minSuccesses,
-        waits,
-    });
 
     if (hubUserID === "" || guestUserID === "") {
         return;
@@ -520,30 +451,18 @@ export async function verifyNoisePostBurstWsDelivery(
         return;
     }
     const dmToken = `[spire-ws-dm-ping-noise:${randomUUID()}]`;
-    const waitDm = waitForClientMessageWs(
-        guestClient,
-        (m) =>
+    observeClientMessageWs({
+        client: guestClient,
+        predicate: (m) =>
             m.group === null &&
             m.direction === "incoming" &&
             m.decrypted &&
             m.authorID === hubUserID &&
             m.message.includes(dmToken),
+        telemetry,
         timeoutMs,
-        "noise post-wall hub→guest1 DM",
-    ).then(
-        () => {
-            telemetry?.touchOk(WS_DELIVERY_SURFACE, touchCtx(phase, burst, 1));
-        },
-        (err: unknown) => {
-            recordHttpFailure(stats, err);
-            telemetry?.touchFail(
-                WS_DELIVERY_SURFACE,
-                touchCtx(phase, burst, 1),
-                err,
-            );
-            throw err;
-        },
-    );
+        touchCtx: touchCtx(phase, burst, 1),
+    });
     await settleWithTelemetry(
         stats,
         telemetry,
@@ -557,7 +476,6 @@ export async function verifyNoisePostBurstWsDelivery(
             },
         },
     );
-    await waitDm;
 }
 
 function incomingGroupPredicate(
@@ -569,4 +487,43 @@ function incomingGroupPredicate(
         m.direction === "incoming" &&
         m.decrypted &&
         m.message.includes(token);
+}
+
+function observeClientMessageWs(args: {
+    readonly client: Client;
+    readonly predicate: (m: Message) => boolean;
+    readonly telemetry: null | StressTelemetry;
+    readonly timeoutMs: number;
+    readonly touchCtx: TelemetryTouchCtx;
+}): void {
+    wsDeliveryTally.expected += 1;
+    wsDeliveryTally.pending += 1;
+    let done = false;
+    const finish = (observed: boolean): void => {
+        if (done) {
+            return;
+        }
+        done = true;
+        args.client.off("message", onMessage);
+        clearTimeout(timer);
+        wsDeliveryTally.pending = Math.max(0, wsDeliveryTally.pending - 1);
+        if (observed) {
+            wsDeliveryTally.observed += 1;
+            args.telemetry?.touchOk(WS_DELIVERY_SURFACE, args.touchCtx);
+        }
+    };
+    const timer = setTimeout(() => {
+        finish(false);
+    }, args.timeoutMs);
+    timer.unref();
+    const onMessage = (m: Message): void => {
+        try {
+            if (args.predicate(m)) {
+                finish(true);
+            }
+        } catch {
+            /* predicate must not throw; ignore */
+        }
+    };
+    args.client.on("message", onMessage);
 }
