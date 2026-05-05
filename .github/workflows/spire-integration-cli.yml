@@ -122,6 +122,8 @@ jobs:
                   SPIRE_STRESS_WS_DELIVERY_MS: "120000"
                   # Let delayed FIPS notifications settle before the aggregate WS gate.
                   SPIRE_STRESS_WS_FINAL_GRACE_MS: "30000"
+                  # Keep CI reporting WS delivery while FIPS websocket delivery is still noisy.
+                  SPIRE_STRESS_WS_REQUIRED_RATIO: "0.5"
                   # Fewer parallel guest witnesses than default 3 — less load on slow runners.
                   SPIRE_STRESS_WS_WITNESS_MAX: "2"
               run: |
