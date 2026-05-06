@@ -159,7 +159,7 @@ The unit suite is offline. The e2e suite needs a running Spire. Test-only enviro
 
 ## Security Notes
 
-- Current public threat model: <https://github.com/vex-protocol/vex-docs/blob/main/docs/security/threat-model.md>
+- Current threat model: [docs/security/threat-model.md](../../docs/security/threat-model.md)
 - Session fingerprints must be verified out of band for meaningful protection against malicious directory substitution.
 - JavaScript cannot guarantee memory zeroing. The library can minimize key lifetime, but endpoint compromise remains out of scope.
 - Server-side delete-on-receipt does not hide transport metadata.

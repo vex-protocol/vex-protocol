@@ -184,9 +184,9 @@ The integration/stress scripts use environment variables from `.env.example`, in
 - Do not set `DEV_API_KEY` or `SPIRE_DISABLE_RATE_LIMITS` in production.
 - Spire stores ciphertext and metadata. It is not a metadata-hiding transport.
 
-Public runbook: <https://github.com/vex-protocol/vex-docs/blob/main/docs/ops/single-node-runbook.md>
+Runbook: [docs/ops/single-node-runbook.md](../../docs/ops/single-node-runbook.md)
 
-Public threat model: <https://github.com/vex-protocol/vex-docs/blob/main/docs/security/threat-model.md>
+Threat model: [docs/security/threat-model.md](../../docs/security/threat-model.md)
 
 ## License
 
