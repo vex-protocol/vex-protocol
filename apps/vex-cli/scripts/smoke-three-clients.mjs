@@ -19,11 +19,19 @@ const common = [
 
 function run(args, opts = {}) {
     return new Promise((resolve, reject) => {
-        const child = spawn("pnpm", ["--filter", "@vex-chat/cli", "start", "--", ...common, ...args], {
-            cwd: root,
-            env: { ...process.env, DEV_API_KEY: devKey, NODE_ENV: process.env.NODE_ENV ?? "test" },
-            stdio: opts.stdio ?? ["pipe", "pipe", "pipe"],
-        });
+        const child = spawn(
+            "pnpm",
+            ["--filter", "@vex-chat/cli", "start", "--", ...common, ...args],
+            {
+                cwd: root,
+                env: {
+                    ...process.env,
+                    DEV_API_KEY: devKey,
+                    NODE_ENV: process.env.NODE_ENV ?? "test",
+                },
+                stdio: opts.stdio ?? ["pipe", "pipe", "pipe"],
+            },
+        );
         let stdout = "";
         let stderr = "";
         child.stdout?.on("data", (chunk) => {
@@ -36,8 +44,14 @@ function run(args, opts = {}) {
         });
         child.on("exit", (code) => {
             if (code === 0) resolve({ stdout, stderr });
-            else if (opts.allowTerminate && child.signalCode === "SIGTERM") resolve({ stdout, stderr });
-            else reject(new Error(`command failed ${args.join(" ")}\n${stdout}\n${stderr}`));
+            else if (opts.allowTerminate && child.signalCode === "SIGTERM")
+                resolve({ stdout, stderr });
+            else
+                reject(
+                    new Error(
+                        `command failed ${args.join(" ")}\n${stdout}\n${stderr}`,
+                    ),
+                );
         });
         opts.onChild?.(child);
     });
@@ -101,28 +115,50 @@ const caraReady = waitFor((resolve) => {
 await Promise.all([aliceReady, bobReady, caraReady]);
 
 bobChild.stdin.write(`/dm ${users[0]}\n`);
-await waitUntil(() => bobSeen.join("").includes(`@${users[0]}`), "bob dm focus");
+await waitUntil(
+    () => bobSeen.join("").includes(`@${users[0]}`),
+    "bob dm focus",
+);
 aliceChild.stdin.write(`/dm ${users[1]} hello-bob\n`);
 await waitUntil(() => bobSeen.join("").includes("hello-bob"), "bob dm");
 bobChild.stdin.write("/dms\n");
-await waitUntil(() => bobSeen.join("").includes(`@${users[0]}`), "bob dms list");
+await waitUntil(
+    () => bobSeen.join("").includes(`@${users[0]}`),
+    "bob dms list",
+);
 await waitUntil(() => bobSeen.join("").includes("DM number"), "bob dms prompt");
 bobChild.stdin.write("\n");
 
 aliceChild.stdin.write("/create server smoke\n");
-await waitUntil(() => aliceSeen.join("").includes("created server smoke"), "server create");
+await waitUntil(
+    () => aliceSeen.join("").includes("created server smoke"),
+    "server create",
+);
 const createdOutput = aliceSeen.join("");
-if (!createdOutput.includes("created server smoke")) throw new Error(`Could not confirm server creation:\n${createdOutput}`);
+if (!createdOutput.includes("created server smoke"))
+    throw new Error(`Could not confirm server creation:\n${createdOutput}`);
 
 aliceChild.stdin.write("/invite 1h\n");
-await waitUntil(() => aliceSeen.join("").includes("vex://invite/"), "invite create");
-const inviteID = aliceSeen.join("").match(/vex:\/\/invite\/([0-9a-f-]{36})/)?.[1];
-if (!inviteID) throw new Error(`Could not parse invite:\n${aliceSeen.join("")}`);
+await waitUntil(
+    () => aliceSeen.join("").includes("vex://invite/"),
+    "invite create",
+);
+const inviteID = aliceSeen
+    .join("")
+    .match(/vex:\/\/invite\/([0-9a-f-]{36})/)?.[1];
+if (!inviteID)
+    throw new Error(`Could not parse invite:\n${aliceSeen.join("")}`);
 
 bobChild.stdin.write(`redeem vex://invite/${inviteID}\n`);
 caraChild.stdin.write(`redeem vex://invite/${inviteID}\n`);
-await waitUntil(() => bobSeen.join("").includes("join this server"), "bob join prompt");
-await waitUntil(() => caraSeen.join("").includes("join this server"), "cara join prompt");
+await waitUntil(
+    () => bobSeen.join("").includes("join this server"),
+    "bob join prompt",
+);
+await waitUntil(
+    () => caraSeen.join("").includes("join this server"),
+    "cara join prompt",
+);
 bobChild.stdin.write("y\n");
 caraChild.stdin.write("y\n");
 await waitUntil(() => bobSeen.join("").includes("joined smoke"), "bob join");
@@ -130,15 +166,27 @@ await waitUntil(() => caraSeen.join("").includes("joined smoke"), "cara join");
 
 aliceChild.stdin.write("hello-channel\n");
 await waitUntil(() => bobSeen.join("").includes("hello-channel"), "bob group");
-await waitUntil(() => caraSeen.join("").includes("hello-channel"), "cara group");
+await waitUntil(
+    () => caraSeen.join("").includes("hello-channel"),
+    "cara group",
+);
 
 bobChild.stdin.write("/servers\n");
-await waitUntil(() => bobSeen.join("").includes("server number"), "bob server picker");
+await waitUntil(
+    () => bobSeen.join("").includes("server number"),
+    "bob server picker",
+);
 bobChild.stdin.write("\n");
-await waitUntil(() => bobSeen.join("").includes("channel number"), "bob server channel picker");
+await waitUntil(
+    () => bobSeen.join("").includes("channel number"),
+    "bob server channel picker",
+);
 bobChild.stdin.write("\n");
 aliceChild.stdin.write(`/dm ${users[1]} server-dm-inline\n`);
-await waitUntil(() => bobSeen.join("").includes("server-dm-inline"), "bob server-scoped dm notice");
+await waitUntil(
+    () => bobSeen.join("").includes("server-dm-inline"),
+    "bob server-scoped dm notice",
+);
 
 aliceChild?.stdin?.write("/quit\n");
 bobChild?.stdin?.write("/quit\n");

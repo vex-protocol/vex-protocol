@@ -37,16 +37,20 @@ function append(name, stream, chunk) {
 
 function run(args, opts = {}) {
     return new Promise((resolve, reject) => {
-        const child = spawn("pnpm", ["--filter", "@vex-chat/cli", "start", "--", ...common, ...args], {
-            cwd: root,
-            env: {
-                ...process.env,
-                DEV_API_KEY: devKey,
-                LIBVEX_DEBUG_DM: process.env.LIBVEX_DEBUG_DM ?? "1",
-                NODE_ENV: process.env.NODE_ENV ?? "test",
+        const child = spawn(
+            "pnpm",
+            ["--filter", "@vex-chat/cli", "start", "--", ...common, ...args],
+            {
+                cwd: root,
+                env: {
+                    ...process.env,
+                    DEV_API_KEY: devKey,
+                    LIBVEX_DEBUG_DM: process.env.LIBVEX_DEBUG_DM ?? "1",
+                    NODE_ENV: process.env.NODE_ENV ?? "test",
+                },
+                stdio: ["pipe", "pipe", "pipe"],
             },
-            stdio: ["pipe", "pipe", "pipe"],
-        });
+        );
         let stdout = "";
         let stderr = "";
         const name = opts.name ?? args.join("-");
@@ -62,8 +66,14 @@ function run(args, opts = {}) {
         });
         child.on("exit", (code, signal) => {
             if (code === 0) resolve({ stdout, stderr });
-            else if (opts.allowTerminate && signal === "SIGTERM") resolve({ stdout, stderr });
-            else reject(new Error(`command failed ${args.join(" ")}\n${stdout}\n${stderr}`));
+            else if (opts.allowTerminate && signal === "SIGTERM")
+                resolve({ stdout, stderr });
+            else
+                reject(
+                    new Error(
+                        `command failed ${args.join(" ")}\n${stdout}\n${stderr}`,
+                    ),
+                );
         });
         opts.onChild?.(child);
     });
@@ -93,24 +103,36 @@ for (const user of users) {
 
 const [alice, bob, cara] = users;
 children.get(alice).stdin.write("/create server diag\n");
-await waitUntil(() => seen(alice).includes("created server diag"), "server create");
+await waitUntil(
+    () => seen(alice).includes("created server diag"),
+    "server create",
+);
 children.get(alice).stdin.write("/invite 1h\n");
 await waitUntil(() => seen(alice).includes("vex://invite/"), "invite create");
 const inviteID = seen(alice).match(/vex:\/\/invite\/([0-9a-f-]{36})/)?.[1];
-if (!inviteID) throw new Error(`Could not parse invite from ${path.join(logDir, `${alice}.stdout.log`)}`);
+if (!inviteID)
+    throw new Error(
+        `Could not parse invite from ${path.join(logDir, `${alice}.stdout.log`)}`,
+    );
 
 for (const user of [bob, cara]) {
     children.get(user).stdin.write(`redeem vex://invite/${inviteID}\n`);
 }
 for (const user of [bob, cara]) {
-    await waitUntil(() => seen(user).includes("join this server"), `${user} join prompt`);
+    await waitUntil(
+        () => seen(user).includes("join this server"),
+        `${user} join prompt`,
+    );
     children.get(user).stdin.write("y\n");
     await waitUntil(() => seen(user).includes("joined diag"), `${user} joined`);
 }
 
 for (const user of users) {
     children.get(user).stdin.write("/join diag\n");
-    await waitUntil(() => seen(user).includes("channel number"), `${user} channel picker`);
+    await waitUntil(
+        () => seen(user).includes("channel number"),
+        `${user} channel picker`,
+    );
     children.get(user).stdin.write("\n");
     await sleep(250);
 }
@@ -161,7 +183,10 @@ function seen(user) {
 
 function waitFor(setup, label) {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`timed out: ${label}`)), 30_000);
+        const timer = setTimeout(
+            () => reject(new Error(`timed out: ${label}`)),
+            30_000,
+        );
         setup(() => {
             clearTimeout(timer);
             resolve();

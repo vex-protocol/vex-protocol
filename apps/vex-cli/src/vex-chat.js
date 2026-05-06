@@ -52,7 +52,9 @@ async function main() {
                 const identifier = requireArg(args, 0, "user identifier");
                 const [user, err] = await client.users.retrieve(identifier);
                 if (!user) {
-                    throw new Error(err?.message ?? `User not found: ${identifier}`);
+                    throw new Error(
+                        err?.message ?? `User not found: ${identifier}`,
+                    );
                 }
                 printUser(user);
             });
@@ -146,15 +148,26 @@ function parseArgs(argv) {
 }
 
 async function createContext(flags) {
-    const debugLevel = normalizeDebugLevel(flags["debug-level"] ?? process.env.VEX_CHAT_DEBUG_LEVEL ?? process.env.VEX_CHAT_DEBUG);
+    const debugLevel = normalizeDebugLevel(
+        flags["debug-level"] ??
+            process.env.VEX_CHAT_DEBUG_LEVEL ??
+            process.env.VEX_CHAT_DEBUG,
+    );
     const debug = Boolean(flags.debug) || debugLevel !== "off";
     if (debug && !process.env.LIBVEX_DEBUG_DM) {
         process.env.LIBVEX_DEBUG_DM = "1";
     }
     if (debug && !process.env.LIBVEX_DEBUG_LEVEL) {
-        process.env.LIBVEX_DEBUG_LEVEL = debugLevel === "off" ? "debug" : debugLevel;
+        process.env.LIBVEX_DEBUG_LEVEL =
+            debugLevel === "off" ? "debug" : debugLevel;
     }
-    const host = String(flags.host ?? process.env.VEX_CHAT_HOST ?? process.env.API_HOST ?? hostFromApiUrl(process.env.API_URL) ?? DEFAULT_HOST);
+    const host = String(
+        flags.host ??
+            process.env.VEX_CHAT_HOST ??
+            process.env.API_HOST ??
+            hostFromApiUrl(process.env.API_URL) ??
+            DEFAULT_HOST,
+    );
     const unsafeHttp =
         Boolean(flags.http) ||
         process.env.VEX_CHAT_HTTP === "1" ||
@@ -164,7 +177,11 @@ async function createContext(flags) {
         process.env.NODE_ENV = "development";
     }
     const dataDir = path.resolve(
-        String(flags["data-dir"] ?? process.env.VEX_CHAT_DATA_DIR ?? path.join(os.homedir(), ".vex-chat-cli")),
+        String(
+            flags["data-dir"] ??
+                process.env.VEX_CHAT_DATA_DIR ??
+                path.join(os.homedir(), ".vex-chat-cli"),
+        ),
     );
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(dataDir, "db"), { recursive: true, mode: 0o700 });
@@ -178,20 +195,35 @@ async function createContext(flags) {
             host,
             unsafeHttp,
             ...(flags["dev-key"] || process.env.DEV_API_KEY
-                ? { devApiKey: String(flags["dev-key"] ?? process.env.DEV_API_KEY) }
+                ? {
+                      devApiKey: String(
+                          flags["dev-key"] ?? process.env.DEV_API_KEY,
+                      ),
+                  }
                 : {}),
         },
-        username: flags.username || flags.user ? String(flags.username ?? flags.user).toLowerCase() : undefined,
+        username:
+            flags.username || flags.user
+                ? String(flags.username ?? flags.user).toLowerCase()
+                : undefined,
         noHome: Boolean(flags["no-home"]),
         password: flags.password ? String(flags.password) : undefined,
         debug,
-        debugLevel: debug ? (debugLevel === "off" ? "debug" : debugLevel) : "off",
-        sound: normalizeSound(flags.sound ?? process.env.VEX_CHAT_SOUND ?? "Glass"),
+        debugLevel: debug
+            ? debugLevel === "off"
+                ? "debug"
+                : debugLevel
+            : "off",
+        sound: normalizeSound(
+            flags.sound ?? process.env.VEX_CHAT_SOUND ?? "Glass",
+        ),
     };
 }
 
 function normalizeDebugLevel(value) {
-    const raw = String(value ?? "").trim().toLowerCase();
+    const raw = String(value ?? "")
+        .trim()
+        .toLowerCase();
     if (!raw || ["0", "false", "off", "none"].includes(raw)) return "off";
     if (["1", "true", "debug", "verbose"].includes(raw)) return "debug";
     if (["2", "trace", "silly"].includes(raw)) return "trace";
@@ -237,7 +269,9 @@ async function register(ctx, args) {
     }
     const config = await readConfig(ctx.configPath);
     if (config.accounts[username]) {
-        throw new Error(`Local account already exists for ${username}. Use login or remove it from ${ctx.configPath}.`);
+        throw new Error(
+            `Local account already exists for ${username}. Use login or remove it from ${ctx.configPath}.`,
+        );
     }
     const privateKey = Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
@@ -254,7 +288,9 @@ async function register(ctx, args) {
         };
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
-        console.log(`${color("green", "registered")} ${color("green", username)}`);
+        console.log(
+            `${color("green", "registered")} ${color("green", username)}`,
+        );
         printWhoami(client);
     } finally {
         await client.close().catch(() => {});
@@ -271,7 +307,8 @@ async function login(ctx, args) {
     attachDebugClientEvents(ctx, client, `login:${username}`);
     try {
         const loginResult = await client.login(username, password);
-        if (!loginResult.ok) throw new Error(loginResult.error ?? "Login failed.");
+        if (!loginResult.ok)
+            throw new Error(loginResult.error ?? "Login failed.");
         await connectAndWait(client, ctx, `login:${username}`);
         config.accounts[username] = {
             deviceID: client.me.device().deviceID,
@@ -281,7 +318,9 @@ async function login(ctx, args) {
         };
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
-        console.log(`${color("green", "logged in")} ${color("green", username)}`);
+        console.log(
+            `${color("green", "logged in")} ${color("green", username)}`,
+        );
         printWhoami(client);
     } finally {
         await client.close().catch(() => {});
@@ -314,15 +353,21 @@ async function authCommand(ctx, args) {
             await useAccount(ctx, args);
             return;
         default:
-            throw new Error("Usage: vex auth register <username> | login <username> [password] | use <username> | accounts | status");
+            throw new Error(
+                "Usage: vex auth register <username> | login <username> [password] | use <username> | accounts | status",
+            );
     }
 }
 
 async function whoami(ctx, args) {
     const username = args[0];
-    await withReadyClient({ ...ctx, username: username ?? ctx.username }, [], async (client) => {
-        printWhoami(client);
-    });
+    await withReadyClient(
+        { ...ctx, username: username ?? ctx.username },
+        [],
+        async (client) => {
+            printWhoami(client);
+        },
+    );
 }
 
 async function listAccounts(ctx) {
@@ -335,7 +380,9 @@ async function listAccounts(ctx) {
     for (const name of names) {
         const marker = name === config.lastUsername ? "*" : " ";
         const account = config.accounts[name];
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("green", name)} ${color("dim", `user=${account.userID}`)} ${color("dim", `device=${account.deviceID}`)}`);
+        console.log(
+            `${color(marker === "*" ? "yellow" : "dim", marker)} ${color("green", name)} ${color("dim", `user=${account.userID}`)} ${color("dim", `device=${account.deviceID}`)}`,
+        );
     }
 }
 
@@ -343,7 +390,9 @@ async function useAccount(ctx, args) {
     const username = requireArg(args, 0, "username").toLowerCase();
     const config = await readConfig(ctx.configPath);
     if (!config.accounts[username]) {
-        throw new Error(`No local account for ${username}. Run vex auth register ${username} first.`);
+        throw new Error(
+            `No local account for ${username}. Run vex auth register ${username} first.`,
+        );
     }
     config.lastUsername = username;
     await writeConfig(ctx.configPath, config);
@@ -370,7 +419,9 @@ async function dmCommand(ctx, args) {
         if (!message) throw new Error("Message text is required.");
         const user = await resolveUser(client, identifier);
         await client.messages.send(user.userID, message);
-        console.log(`${color("green", "sent dm to")} ${color("green", user.username)}`);
+        console.log(
+            `${color("green", "sent dm to")} ${color("green", user.username)}`,
+        );
     });
 }
 
@@ -385,7 +436,9 @@ async function serverCommand(ctx, args) {
             const name = rest.join(" ").trim();
             if (!name) throw new Error("Usage: vex-chat server create <name>");
             const server = await client.servers.create(name);
-            console.log(`${color("green", "created server")} ${color("blue", server.name)} ${color("dim", server.serverID)}`);
+            console.log(
+                `${color("green", "created server")} ${color("blue", server.name)} ${color("dim", server.serverID)}`,
+            );
             printChannels(await client.channels.retrieve(server.serverID));
             return;
         }
@@ -394,7 +447,9 @@ async function serverCommand(ctx, args) {
             console.log(color("green", "server deleted"));
             return;
         }
-        throw new Error("Usage: vex server list | create <name> | delete <server-id>");
+        throw new Error(
+            "Usage: vex server list | create <name> | delete <server-id>",
+        );
     });
 }
 
@@ -411,8 +466,12 @@ async function channelCommand(ctx, args) {
             return;
         }
         if (sub === "history") {
-            const channelID = rest[0] ?? (await readConfig(ctx.configPath)).lastChannel;
-            if (!channelID) throw new Error("Missing channel id. Use vex channel use <channel-id> or pass one.");
+            const channelID =
+                rest[0] ?? (await readConfig(ctx.configPath)).lastChannel;
+            if (!channelID)
+                throw new Error(
+                    "Missing channel id. Use vex channel use <channel-id> or pass one.",
+                );
             printMessages(await client.messages.retrieveGroup(channelID));
             return;
         }
@@ -421,10 +480,14 @@ async function channelCommand(ctx, args) {
             const name = rest.slice(1).join(" ").trim();
             if (!name) throw new Error("Channel name is required.");
             const channel = await client.channels.create(name, serverID);
-            console.log(`${color("green", "created channel")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`);
+            console.log(
+                `${color("green", "created channel")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`,
+            );
             return;
         }
-        throw new Error("Usage: vex channel list <server-id> | create <server-id> <name> | use <channel-id> | history [channel-id]");
+        throw new Error(
+            "Usage: vex channel list <server-id> | create <server-id> <name> | use <channel-id> | history [channel-id]",
+        );
     });
 }
 
@@ -435,11 +498,13 @@ async function inviteCommand(ctx, args) {
             const serverID = requireArg(rest, 0, "server id");
             const invites = await client.invites.retrieve(serverID);
             if (invites.length === 0) {
-            console.log(color("dim", "no invites"));
+                console.log(color("dim", "no invites"));
                 return;
             }
             for (const invite of invites) {
-                console.log(`${color("yellow", inviteLink(invite.inviteID))} ${color("dim", `server=${invite.serverID}`)} ${color("dim", `expires=${invite.expires}`)}`);
+                console.log(
+                    `${color("yellow", inviteLink(invite.inviteID))} ${color("dim", `server=${invite.serverID}`)} ${color("dim", `expires=${invite.expires}`)}`,
+                );
             }
             return;
         }
@@ -453,10 +518,14 @@ async function inviteCommand(ctx, args) {
         if (sub === "redeem") {
             const inviteID = parseInviteID(requireArg(rest, 0, "invite id"));
             const permission = await client.invites.redeem(inviteID);
-            console.log(`${color("green", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`);
+            console.log(
+                `${color("green", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`,
+            );
             return;
         }
-        throw new Error("Usage: vex invite list <server-id> | create <server-id> [duration] | redeem <invite-id>");
+        throw new Error(
+            "Usage: vex invite list <server-id> | create <server-id> [duration] | redeem <invite-id>",
+        );
     });
 }
 
@@ -477,11 +546,16 @@ async function sendCommand(ctx, args) {
             channelID = config.lastChannel;
             messageParts = rest;
         }
-        if (!channelID) throw new Error("Missing channel id. Use vex channel use <channel-id> first, or pass one.");
+        if (!channelID)
+            throw new Error(
+                "Missing channel id. Use vex channel use <channel-id> first, or pass one.",
+            );
         const message = messageParts.join(" ").trim();
         if (!message) throw new Error("Message text is required.");
         await client.messages.group(channelID, message);
-        console.log(`${color("green", "sent group message to")} ${color("cyan", channelID)}`);
+        console.log(
+            `${color("green", "sent group message to")} ${color("cyan", channelID)}`,
+        );
     });
 }
 
@@ -494,7 +568,9 @@ async function useChannel(ctx, args) {
         config.lastChannel = channel.channelID;
         config.lastServer = channel.serverID;
         await writeConfig(ctx.configPath, config);
-        console.log(`${color("green", "using")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`);
+        console.log(
+            `${color("green", "using")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`,
+        );
     });
 }
 
@@ -513,7 +589,9 @@ async function createServerInChat(ctx, client, state, name, rl) {
     const config = await readConfig(ctx.configPath);
     config.lastServer = server.serverID;
     await writeConfig(ctx.configPath, config);
-    console.log(`${color("green", "created server")} ${color("blue", server.name)}`);
+    console.log(
+        `${color("green", "created server")} ${color("blue", server.name)}`,
+    );
     await refreshBuffers(client, state);
     if (channel) {
         await enterChannel(ctx, client, state, channel);
@@ -535,15 +613,31 @@ async function createInviteInteractive(ctx, client, state, args, rl) {
     if (first && !looksLikeDuration(first)) {
         const user = await resolveUser(client, first);
         const duration = second ?? "1h";
-        debugLog(ctx, "invite.dm.start", { duration, serverID, targetUserID: user.userID, targetUsername: user.username });
+        debugLog(ctx, "invite.dm.start", {
+            duration,
+            serverID,
+            targetUserID: user.userID,
+            targetUsername: user.username,
+        });
         const invite = await client.invites.create(serverID, duration);
-        await client.messages.send(user.userID, `Join ${state.target?.serverName ?? "my server"}: ${inviteLink(invite.inviteID)}`);
-        debugLog(ctx, "invite.dm.ok", { inviteID: invite.inviteID, targetUserID: user.userID });
-        console.log(`${color("green", "sent invite to")} ${color("magenta", user.username)}`);
+        await client.messages.send(
+            user.userID,
+            `Join ${state.target?.serverName ?? "my server"}: ${inviteLink(invite.inviteID)}`,
+        );
+        debugLog(ctx, "invite.dm.ok", {
+            inviteID: invite.inviteID,
+            targetUserID: user.userID,
+        });
+        console.log(
+            `${color("green", "sent invite to")} ${color("magenta", user.username)}`,
+        );
         return;
     }
     const duration = first ?? (await askText(rl, "duration", "1h"));
-    debugLog(ctx, "invite.create.start", { duration: duration || "1h", serverID });
+    debugLog(ctx, "invite.create.start", {
+        duration: duration || "1h",
+        serverID,
+    });
     const invite = await client.invites.create(serverID, duration || "1h");
     debugLog(ctx, "invite.create.ok", { inviteID: invite.inviteID, serverID });
     printInvite(invite);
@@ -561,7 +655,9 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
         serverName: preview.server?.name,
     });
     printInvitePreview(preview);
-    const answer = (await askText(rl, "join this server?", "Y")).trim().toLowerCase();
+    const answer = (await askText(rl, "join this server?", "Y"))
+        .trim()
+        .toLowerCase();
     if (answer && answer !== "y" && answer !== "yes") {
         console.log(color("dim", "cancelled"));
         return;
@@ -569,12 +665,18 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
 
     debugLog(ctx, "invite.redeem.start", { inviteID });
     const permission = await client.invites.redeem(inviteID);
-    const server = preview.server ?? (await client.servers.retrieveByID(permission.resourceID));
+    const server =
+        preview.server ??
+        (await client.servers.retrieveByID(permission.resourceID));
     const channels =
         preview.channels.length > 0
             ? preview.channels
-            : await client.channels.retrieve(permission.resourceID).catch(() => []);
-    console.log(`${color("green", "joined")} ${color("blue", server?.name ?? "server")}`);
+            : await client.channels
+                  .retrieve(permission.resourceID)
+                  .catch(() => []);
+    console.log(
+        `${color("green", "joined")} ${color("blue", server?.name ?? "server")}`,
+    );
     debugLog(ctx, "invite.redeem.ok", {
         channelIDs: channels.map((item) => item.channelID),
         permissionResourceID: permission.resourceID,
@@ -585,32 +687,44 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
     await refreshBuffers(client, state);
 
     const channel =
-        channels.find((candidate) => candidate.name.toLowerCase() === "general") ??
+        channels.find(
+            (candidate) => candidate.name.toLowerCase() === "general",
+        ) ??
         channels[0] ??
         null;
     if (channel) {
         await enterChannel(ctx, client, state, channel, server);
     } else {
-        console.log(color("dim", "No channels in this server yet. Use /nav when one is available."));
+        console.log(
+            color(
+                "dim",
+                "No channels in this server yet. Use /nav when one is available.",
+            ),
+        );
     }
 }
 
 async function fetchInvitePreview(client, inviteID) {
     try {
-        const res = await client.http.get(`${client.getHost()}/invite/${inviteID}/preview`);
+        const res = await client.http.get(
+            `${client.getHost()}/invite/${inviteID}/preview`,
+        );
         return unpack(new Uint8Array(res.data));
     } catch (err) {
         if (err?.response?.status !== 404) {
             throw err;
         }
-        const res = await client.http.get(`${client.getHost()}/invite/${inviteID}`);
+        const res = await client.http.get(
+            `${client.getHost()}/invite/${inviteID}`,
+        );
         const invite = unpack(new Uint8Array(res.data));
         return { channels: [], invite, server: null };
     }
 }
 
 async function selectDmInChat(ctx, client, state, names, identifier, rl) {
-    const resolvedIdentifier = identifier || (await askText(rl, "username or user id"));
+    const resolvedIdentifier =
+        identifier || (await askText(rl, "username or user id"));
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
     markDmRead(state, user.userID);
@@ -624,7 +738,12 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
 async function enterDm(client, state, user) {
     clearScreen();
     renderHeader(state, client.me.user(), `@${user.username}`);
-    console.log(color("dim", "/user open DM  /dms list  /dm send  /join server  /channels open  /window switch  /help"));
+    console.log(
+        color(
+            "dim",
+            "/user open DM  /dms list  /dm send  /join server  /channels open  /window switch  /help",
+        ),
+    );
     console.log("");
     const history = await client.messages.retrieve(user.userID);
     if (history.length === 0) {
@@ -639,7 +758,9 @@ async function enterDm(client, state, user) {
 async function openDmSelector(ctx, client, state, names, rl) {
     const rows = await listDmRows(client, state, names);
     if (rows.length === 0) {
-        console.log(color("dim", "No DMs yet. Use /user <username> to open one."));
+        console.log(
+            color("dim", "No DMs yet. Use /user <username> to open one."),
+        );
         return null;
     }
     const selected = await chooseItem(
@@ -659,7 +780,10 @@ async function listDmRows(client, state, names) {
     const byUser = new Map();
     for (const user of await client.users.familiars().catch(() => [])) {
         names.set(user.userID, user.username);
-        byUser.set(user.userID, { userID: user.userID, username: user.username });
+        byUser.set(user.userID, {
+            userID: user.userID,
+            username: user.username,
+        });
     }
     for (const buffer of state.buffers ?? []) {
         if (buffer.type !== "dm") continue;
@@ -678,7 +802,8 @@ async function listDmRows(client, state, names) {
     }
     const rows = [];
     for (const row of byUser.values()) {
-        const username = row.username ?? await cachedUsername(client, names, row.userID);
+        const username =
+            row.username ?? (await cachedUsername(client, names, row.userID));
         rows.push({ ...row, username });
     }
     return rows.sort((a, b) => {
@@ -689,9 +814,16 @@ async function listDmRows(client, state, names) {
 }
 
 function renderDmChoice(row) {
-    const unread = row.unread > 0 ? color("yellow", `${row.unread} unread`) : color("dim", "read");
-    const when = row.lastAt ? color("dim", formatMessageTime(row.lastAt)) : color("dim", "no recent messages");
-    const preview = row.lastMessage ? ` ${color("dim", truncateInline(row.lastMessage, 64))}` : "";
+    const unread =
+        row.unread > 0
+            ? color("yellow", `${row.unread} unread`)
+            : color("dim", "read");
+    const when = row.lastAt
+        ? color("dim", formatMessageTime(row.lastAt))
+        : color("dim", "no recent messages");
+    const preview = row.lastMessage
+        ? ` ${color("dim", truncateInline(row.lastMessage, 64))}`
+        : "";
     return `${color("magenta", `@${row.username}`)} ${unread} ${when}${preview}`;
 }
 
@@ -700,11 +832,23 @@ function defaultDmIndex(rows) {
     return unreadIndex >= 0 ? unreadIndex : 0;
 }
 
-async function sendDmInChat(ctx, client, state, names, identifier, messageParts, rl) {
-    const resolvedIdentifier = identifier || (await askText(rl, "username or user id"));
+async function sendDmInChat(
+    ctx,
+    client,
+    state,
+    names,
+    identifier,
+    messageParts,
+    rl,
+) {
+    const resolvedIdentifier =
+        identifier || (await askText(rl, "username or user id"));
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
-    const message = messageParts.length > 0 ? messageParts.join(" ") : await askText(rl, `message to ${user.username}`);
+    const message =
+        messageParts.length > 0
+            ? messageParts.join(" ")
+            : await askText(rl, `message to ${user.username}`);
     if (!message) {
         console.log(color("dim", "cancelled"));
         return;
@@ -745,11 +889,23 @@ async function selectChannelInChat(ctx, client, state, rl) {
 async function selectChannelByName(ctx, client, state, query, rl) {
     const channels = await listAllChannels(client);
     if (channels.length === 0) {
-        console.log(color("dim", "No channels. Use redeem <code> to accept an invite, or /create."));
+        console.log(
+            color(
+                "dim",
+                "No channels. Use redeem <code> to accept an invite, or /create.",
+            ),
+        );
         return null;
     }
     const channel = query
-        ? await chooseBestMatch(rl, "channel", channels, query, channelSearchText, renderChannelChoice)
+        ? await chooseBestMatch(
+              rl,
+              "channel",
+              channels,
+              query,
+              channelSearchText,
+              renderChannelChoice,
+          )
         : await chooseItem(rl, "channel", channels, renderChannelChoice);
     if (!channel) return null;
     await enterChannel(ctx, client, state, channel, {
@@ -762,12 +918,26 @@ async function selectChannelByName(ctx, client, state, query, rl) {
 async function selectServerByName(ctx, client, state, query, rl) {
     const servers = await client.servers.retrieve();
     if (servers.length === 0) {
-        console.log(color("dim", "No servers. Use redeem <code> to accept an invite, or /create."));
+        console.log(
+            color(
+                "dim",
+                "No servers. Use redeem <code> to accept an invite, or /create.",
+            ),
+        );
         return null;
     }
     const server = query
-        ? await chooseBestMatch(rl, "server", servers, query, (item) => item.name, (item) => color("blue", item.name))
-        : await chooseItem(rl, "server", servers, (item) => color("blue", item.name));
+        ? await chooseBestMatch(
+              rl,
+              "server",
+              servers,
+              query,
+              (item) => item.name,
+              (item) => color("blue", item.name),
+          )
+        : await chooseItem(rl, "server", servers, (item) =>
+              color("blue", item.name),
+          );
     if (!server) return null;
     const channel = await chooseChannelFromServer(client, server, rl);
     if (channel) {
@@ -778,11 +948,17 @@ async function selectServerByName(ctx, client, state, query, rl) {
 
 async function navigateInChat(ctx, client, state, names, rl) {
     console.log(`${color("yellow", "1")}. ${color("cyan", "channel")}`);
-    console.log(`${color("yellow", "2")}. ${color("magenta", "direct message")}`);
+    console.log(
+        `${color("yellow", "2")}. ${color("magenta", "direct message")}`,
+    );
     const answer = await askText(rl, "open");
     if (answer === "1" || answer.toLowerCase() === "channel") {
         await selectChannelInChat(ctx, client, state, rl);
-    } else if (answer === "2" || answer.toLowerCase() === "dm" || answer.toLowerCase() === "direct message") {
+    } else if (
+        answer === "2" ||
+        answer.toLowerCase() === "dm" ||
+        answer.toLowerCase() === "direct message"
+    ) {
         await selectDmInChat(ctx, client, state, names, "", rl);
     } else {
         console.log(color("dim", "cancelled"));
@@ -792,14 +968,16 @@ async function navigateInChat(ctx, client, state, names, rl) {
 async function chooseServer(client, rl) {
     const servers = await client.servers.retrieve();
     if (servers.length === 0) {
-        console.log(color("dim", "No servers yet. Use redeem <code> to accept an invite, or /create to make one."));
+        console.log(
+            color(
+                "dim",
+                "No servers yet. Use redeem <code> to accept an invite, or /create to make one.",
+            ),
+        );
         return null;
     }
-    return chooseItem(
-        rl,
-        "server",
-        servers,
-        (server) => color("blue", server.name),
+    return chooseItem(rl, "server", servers, (server) =>
+        color("blue", server.name),
     );
 }
 
@@ -830,11 +1008,19 @@ async function chooseChannelFromServer(client, server, rl) {
         "channel",
         detailRows,
         ({ channel, members }) => {
-            const memberText = members === null ? "" : color("dim", ` - ${members} member${members === 1 ? "" : "s"}`);
+            const memberText =
+                members === null
+                    ? ""
+                    : color(
+                          "dim",
+                          ` - ${members} member${members === 1 ? "" : "s"}`,
+                      );
             return `${color("cyan", `#${channel.name}`)}${memberText}`;
         },
         {
-            defaultIndex: defaultChannelIndex(detailRows.map((row) => row.channel)),
+            defaultIndex: defaultChannelIndex(
+                detailRows.map((row) => row.channel),
+            ),
         },
     );
     return row ? { ...row.channel, serverName: server.name } : null;
@@ -844,7 +1030,9 @@ async function listAllChannels(client) {
     const channels = [];
     const servers = await client.servers.retrieve();
     for (const server of servers) {
-        const serverChannels = await client.channels.retrieve(server.serverID).catch(() => []);
+        const serverChannels = await client.channels
+            .retrieve(server.serverID)
+            .catch(() => []);
         for (const channel of serverChannels) {
             channels.push({ ...channel, serverName: server.name });
         }
@@ -854,16 +1042,22 @@ async function listAllChannels(client) {
 
 async function chooseBestMatch(rl, label, items, query, searchText, render) {
     const needle = normalizeSearch(query);
-    const matches = items.filter((item) => normalizeSearch(searchText(item)).includes(needle));
+    const matches = items.filter((item) =>
+        normalizeSearch(searchText(item)).includes(needle),
+    );
     if (matches.length === 1) {
         return matches[0];
     }
     if (matches.length > 1) {
         console.log(color("dim", `Multiple ${label}s matched "${query}".`));
-        return chooseItem(rl, label, matches, render, { defaultIndex: defaultMatchIndex(label, matches) });
+        return chooseItem(rl, label, matches, render, {
+            defaultIndex: defaultMatchIndex(label, matches),
+        });
     }
     console.log(color("dim", `No ${label} matched "${query}".`));
-    return chooseItem(rl, label, items, render, { defaultIndex: defaultMatchIndex(label, items) });
+    return chooseItem(rl, label, items, render, {
+        defaultIndex: defaultMatchIndex(label, items),
+    });
 }
 
 function channelSearchText(channel) {
@@ -880,12 +1074,20 @@ function normalizeSearch(value) {
 }
 
 async function chooseItem(rl, label, items, render, options = {}) {
-    const defaultIndex = Number.isInteger(options.defaultIndex) ? options.defaultIndex : 0;
+    const defaultIndex = Number.isInteger(options.defaultIndex)
+        ? options.defaultIndex
+        : 0;
     for (let i = 0; i < items.length; i++) {
         const marker = i === defaultIndex ? "*" : " ";
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${render(items[i])}`);
+        console.log(
+            `${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${render(items[i])}`,
+        );
     }
-    const answer = await askText(rl, `${label} number`, String(defaultIndex + 1));
+    const answer = await askText(
+        rl,
+        `${label} number`,
+        String(defaultIndex + 1),
+    );
     const index = answer ? Number.parseInt(answer, 10) - 1 : defaultIndex;
     const item = items[index];
     if (!item) {
@@ -901,7 +1103,9 @@ function defaultMatchIndex(label, items) {
 }
 
 function defaultChannelIndex(channels) {
-    const index = channels.findIndex((channel) => channel.name?.toLowerCase() === "general");
+    const index = channels.findIndex(
+        (channel) => channel.name?.toLowerCase() === "general",
+    );
     return index >= 0 ? index : 0;
 }
 
@@ -940,14 +1144,18 @@ function addWindow(state, target) {
 
 function printWindows(state) {
     if (!state.buffers || state.buffers.length === 0) {
-        console.log(color("dim", "No open chats. Use /join, /channels, or /user."));
+        console.log(
+            color("dim", "No open chats. Use /join, /channels, or /user."),
+        );
         return;
     }
     console.log(color("bold", "Windows"));
     for (let i = 0; i < state.buffers.length; i++) {
         const buffer = state.buffers[i];
         const marker = buffer.id === state.target?.id ? "*" : " ";
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color(buffer.type === "dm" ? "magenta" : "cyan", targetLabel(buffer))}`);
+        console.log(
+            `${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color(buffer.type === "dm" ? "magenta" : "cyan", targetLabel(buffer))}`,
+        );
     }
 }
 
@@ -967,7 +1175,14 @@ async function switchBuffer(ctx, client, state, number) {
     }
     if (buffer.type === "dm") {
         const user = await resolveUser(client, buffer.id);
-        await selectDmInChat(ctx, client, state, new Map([[user.userID, user.username]]), user.username, null);
+        await selectDmInChat(
+            ctx,
+            client,
+            state,
+            new Map([[user.userID, user.username]]),
+            user.username,
+            null,
+        );
     } else if (buffer.type === "channel") {
         const channel = await client.channels.retrieveByID(buffer.id);
         if (!channel) throw new Error(`Channel not found: ${buffer.id}`);
@@ -988,21 +1203,32 @@ async function printMembers(client, state) {
         console.log(color("dim", "No visible members."));
         return;
     }
-    console.log(`${color("bold", "Members in")} ${color("cyan", targetLabel(state.target))}`);
+    console.log(
+        `${color("bold", "Members in")} ${color("cyan", targetLabel(state.target))}`,
+    );
     for (const user of users) {
-        console.log(`  ${color("green", user.username)} ${color("dim", `(${shortID(user.userID)})`)}`);
+        console.log(
+            `  ${color("green", user.username)} ${color("dim", `(${shortID(user.userID)})`)}`,
+        );
     }
 }
 
 async function openServerSelector(ctx, client, state, rl) {
     const servers = await client.servers.retrieve();
     if (servers.length === 0) {
-        console.log(color("dim", "No servers. Use redeem <code> to accept an invite, or /create."));
+        console.log(
+            color(
+                "dim",
+                "No servers. Use redeem <code> to accept an invite, or /create.",
+            ),
+        );
         return;
     }
     const rows = await Promise.all(
         servers.map(async (server) => ({
-            channels: await client.channels.retrieve(server.serverID).catch(() => []),
+            channels: await client.channels
+                .retrieve(server.serverID)
+                .catch(() => []),
             server,
         })),
     );
@@ -1011,8 +1237,12 @@ async function openServerSelector(ctx, client, state, rl) {
         "server",
         rows,
         ({ channels, server }) => {
-            const marker = server.serverID === state.target?.serverID ? "* " : "";
-            const channelText = channels.length === 1 ? "1 channel" : `${channels.length} channels`;
+            const marker =
+                server.serverID === state.target?.serverID ? "* " : "";
+            const channelText =
+                channels.length === 1
+                    ? "1 channel"
+                    : `${channels.length} channels`;
             return `${color(server.serverID === state.target?.serverID ? "yellow" : "blue", `${marker}${server.name}`)} ${color("dim", channelText)}`;
         },
     );
@@ -1040,7 +1270,12 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     });
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
-    console.log(color("dim", "/join server  /servers browse  /channels open  /window switch  /user open DM  /dms list  /dm send"));
+    console.log(
+        color(
+            "dim",
+            "/join server  /servers browse  /channels open  /window switch  /user open DM  /dms list  /dm send",
+        ),
+    );
     console.log("");
     const history = await client.messages.retrieveGroup(channel.channelID);
     if (history.length === 0) {
@@ -1053,8 +1288,14 @@ async function enterChannel(ctx, client, state, channel, server = null) {
 }
 
 async function chat(ctx, args) {
-    const username = (args[0] ?? ctx.username) ? String(args[0] ?? ctx.username).toLowerCase() : undefined;
-    const { account, client, config } = await authenticateOrRegister(ctx, username);
+    const username =
+        (args[0] ?? ctx.username)
+            ? String(args[0] ?? ctx.username).toLowerCase()
+            : undefined;
+    const { account, client, config } = await authenticateOrRegister(
+        ctx,
+        username,
+    );
     attachDebugClientEvents(ctx, client, `chat:${account.username}`);
     const state = {
         account,
@@ -1080,7 +1321,11 @@ async function chat(ctx, args) {
         bumpActivity(state, message.direction === "incoming" ? "recv" : "send");
         debugLog(ctx, "message.event", messageDebugPayload(message));
         if (shouldSkipRenderedMessage(state, message)) {
-            debugLog(ctx, "message.event.skip.rendered", messageDebugPayload(message));
+            debugLog(
+                ctx,
+                "message.event.skip.rendered",
+                messageDebugPayload(message),
+            );
             refreshPrompt(rl, state);
             return;
         }
@@ -1096,13 +1341,20 @@ async function chat(ctx, args) {
         if (!route.render) {
             if (message.direction === "incoming" && route.isDm) {
                 playIncomingSound(ctx.sound);
-                notifyIncomingDm(await cachedUsername(client, names, message.authorID), message.message);
+                notifyIncomingDm(
+                    await cachedUsername(client, names, message.authorID),
+                    message.message,
+                );
             }
             refreshPrompt(rl, state);
             return;
         }
         if (!message.decrypted) {
-            debugLog(ctx, "message.render.undecrypted", messageDebugPayload(message));
+            debugLog(
+                ctx,
+                "message.render.undecrypted",
+                messageDebugPayload(message),
+            );
             renderChatLine(rl, state, `[undecrypted] ${message.mailID}`);
             return;
         }
@@ -1130,7 +1382,10 @@ async function chat(ctx, args) {
                 notifyIncomingDm(author, message.message);
             }
         }
-        const inviteID = message.direction === "incoming" ? extractInviteID(message.message) : null;
+        const inviteID =
+            message.direction === "incoming"
+                ? extractInviteID(message.message)
+                : null;
         if (inviteID) {
             try {
                 const preview = await fetchInvitePreview(client, inviteID);
@@ -1140,7 +1395,11 @@ async function chat(ctx, args) {
                     `${color("yellow", "invite")} ${color("blue", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)} ${color("dim", `- type redeem ${inviteID}`)}`,
                 );
             } catch {
-                renderChatLine(rl, state, `${color("yellow", "invite")} ${color("dim", `type redeem ${inviteID} to inspect it`)}`);
+                renderChatLine(
+                    rl,
+                    state,
+                    `${color("yellow", "invite")} ${color("dim", `type redeem ${inviteID} to inspect it`)}`,
+                );
             }
         }
         refreshPrompt(rl, state);
@@ -1161,11 +1420,22 @@ async function chat(ctx, args) {
     await refreshBuffers(client, state);
 
     rl = createInterface({ input, output, prompt: promptFor(state) });
-    renderHeader(state, account, state.target ? targetLabel(state.target) : "Chat");
+    renderHeader(
+        state,
+        account,
+        state.target ? targetLabel(state.target) : "Chat",
+    );
     if (state.target) {
-        console.log(`${color("dim", state.target.type === "dm" ? "current DM" : "current channel")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`);
+        console.log(
+            `${color("dim", state.target.type === "dm" ? "current DM" : "current channel")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`,
+        );
     } else {
-        console.log(color("yellow", "No chat open yet. Use /join, /channels, /user, or /nav."));
+        console.log(
+            color(
+                "yellow",
+                "No chat open yet. Use /join, /channels, /user, or /nav.",
+            ),
+        );
     }
     safeSetPrompt(rl, promptFor(state));
     safePrompt(rl);
@@ -1190,26 +1460,57 @@ async function chat(ctx, args) {
             } else if (trimmed === "/server" || trimmed === "/join") {
                 await selectServerByName(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("/server ")) {
-                await selectServerByName(ctx, client, state, trimmed.slice(8).trim(), rl);
+                await selectServerByName(
+                    ctx,
+                    client,
+                    state,
+                    trimmed.slice(8).trim(),
+                    rl,
+                );
             } else if (trimmed.startsWith("/join ")) {
-                await selectServerByName(ctx, client, state, trimmed.slice(6).trim(), rl);
+                await selectServerByName(
+                    ctx,
+                    client,
+                    state,
+                    trimmed.slice(6).trim(),
+                    rl,
+                );
             } else if (trimmed === "/channels") {
                 if (state.target?.type === "channel" && state.target.serverID) {
-                    const server = { name: state.target.serverName ?? "server", serverID: state.target.serverID };
-                    const channel = await chooseChannelFromServer(client, server, rl);
-                    if (channel) await enterChannel(ctx, client, state, channel, server);
+                    const server = {
+                        name: state.target.serverName ?? "server",
+                        serverID: state.target.serverID,
+                    };
+                    const channel = await chooseChannelFromServer(
+                        client,
+                        server,
+                        rl,
+                    );
+                    if (channel)
+                        await enterChannel(ctx, client, state, channel, server);
                 } else {
                     await selectChannelByName(ctx, client, state, "", rl);
                 }
             } else if (trimmed.startsWith("/channels ")) {
-                console.log(color("dim", "Use /channels, then choose a channel by number."));
+                console.log(
+                    color(
+                        "dim",
+                        "Use /channels, then choose a channel by number.",
+                    ),
+                );
             } else if (trimmed === "/window") {
                 await refreshBuffers(client, state);
                 printWindows(state);
             } else if (trimmed.startsWith("/window ")) {
-                const number = Number.parseInt(splitWords(trimmed)[1] ?? "", 10);
+                const number = Number.parseInt(
+                    splitWords(trimmed)[1] ?? "",
+                    10,
+                );
                 await switchBuffer(ctx, client, state, number);
-            } else if (trimmed === "/channel" || trimmed.startsWith("/channel ")) {
+            } else if (
+                trimmed === "/channel" ||
+                trimmed.startsWith("/channel ")
+            ) {
                 console.log(color("dim", "Use /channels to choose a channel."));
             } else if (trimmed === "/create" || trimmed === "/create server") {
                 await createServerInChat(ctx, client, state, "", rl);
@@ -1217,52 +1518,140 @@ async function chat(ctx, args) {
                 const name = trimmed.slice(15).trim();
                 await createServerInChat(ctx, client, state, name, rl);
             } else if (trimmed === "/dm") {
-                console.log(color("dim", "Use /user <username> to open a DM, or /dm <username> <message> to send."));
+                console.log(
+                    color(
+                        "dim",
+                        "Use /user <username> to open a DM, or /dm <username> <message> to send.",
+                    ),
+                );
             } else if (trimmed.startsWith("/dm ")) {
-                const [identifier, ...messageParts] = splitWords(trimmed.slice(4));
+                const [identifier, ...messageParts] = splitWords(
+                    trimmed.slice(4),
+                );
                 if (messageParts.length === 0) {
-                    await selectDmInChat(ctx, client, state, names, identifier, rl);
+                    await selectDmInChat(
+                        ctx,
+                        client,
+                        state,
+                        names,
+                        identifier,
+                        rl,
+                    );
                 } else {
-                    await sendDmInChat(ctx, client, state, names, identifier, messageParts, rl);
+                    await sendDmInChat(
+                        ctx,
+                        client,
+                        state,
+                        names,
+                        identifier,
+                        messageParts,
+                        rl,
+                    );
                 }
             } else if (trimmed.startsWith("dm ")) {
-                const [identifier, ...messageParts] = splitWords(trimmed.slice(3));
+                const [identifier, ...messageParts] = splitWords(
+                    trimmed.slice(3),
+                );
                 if (messageParts.length === 0) {
-                    await selectDmInChat(ctx, client, state, names, identifier, rl);
+                    await selectDmInChat(
+                        ctx,
+                        client,
+                        state,
+                        names,
+                        identifier,
+                        rl,
+                    );
                 } else {
-                    await sendDmInChat(ctx, client, state, names, identifier, messageParts, rl);
+                    await sendDmInChat(
+                        ctx,
+                        client,
+                        state,
+                        names,
+                        identifier,
+                        messageParts,
+                        rl,
+                    );
                 }
             } else if (trimmed === "/to") {
                 await selectDmInChat(ctx, client, state, names, "", rl);
             } else if (trimmed.startsWith("/to ")) {
-                await selectDmInChat(ctx, client, state, names, trimmed.slice(4).trim(), rl);
+                await selectDmInChat(
+                    ctx,
+                    client,
+                    state,
+                    names,
+                    trimmed.slice(4).trim(),
+                    rl,
+                );
             } else if (trimmed === "/user") {
                 await selectDmInChat(ctx, client, state, names, "", rl);
             } else if (trimmed.startsWith("/user ")) {
-                await selectDmInChat(ctx, client, state, names, trimmed.slice(6).trim(), rl);
+                await selectDmInChat(
+                    ctx,
+                    client,
+                    state,
+                    names,
+                    trimmed.slice(6).trim(),
+                    rl,
+                );
             } else if (trimmed === "/nav") {
                 await navigateInChat(ctx, client, state, names, rl);
             } else if (trimmed.startsWith("/nav ")) {
-                console.log(color("dim", "Use /nav, then choose a channel or DM."));
+                console.log(
+                    color("dim", "Use /nav, then choose a channel or DM."),
+                );
             } else if (trimmed === "/dms") {
                 await openDmSelector(ctx, client, state, names, rl);
             } else if (trimmed === "redeem" || trimmed === "/redeem") {
                 await joinInviteInChat(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("redeem ")) {
-                await joinInviteInChat(ctx, client, state, trimmed.slice(7).trim(), rl);
+                await joinInviteInChat(
+                    ctx,
+                    client,
+                    state,
+                    trimmed.slice(7).trim(),
+                    rl,
+                );
             } else if (trimmed.startsWith("/redeem ")) {
-                await joinInviteInChat(ctx, client, state, trimmed.slice(8).trim(), rl);
-            } else if (trimmed === "/invite redeem" || trimmed.startsWith("/invite redeem ")) {
-                console.log(color("dim", "Use redeem <invite-code-or-link> to accept a server invite."));
-            } else if (trimmed === "/invite" || trimmed.startsWith("/invite ")) {
+                await joinInviteInChat(
+                    ctx,
+                    client,
+                    state,
+                    trimmed.slice(8).trim(),
+                    rl,
+                );
+            } else if (
+                trimmed === "/invite redeem" ||
+                trimmed.startsWith("/invite redeem ")
+            ) {
+                console.log(
+                    color(
+                        "dim",
+                        "Use redeem <invite-code-or-link> to accept a server invite.",
+                    ),
+                );
+            } else if (
+                trimmed === "/invite" ||
+                trimmed.startsWith("/invite ")
+            ) {
                 const rest = splitWords(trimmed.slice(7));
                 await createInviteInteractive(ctx, client, state, rest, rl);
             } else if (trimmed === "/members") {
                 await printMembers(client, state);
             } else if (trimmed === "/names") {
-                console.log(color("dim", "Use /members to list people in the current channel."));
+                console.log(
+                    color(
+                        "dim",
+                        "Use /members to list people in the current channel.",
+                    ),
+                );
             } else if (trimmed === "/history") {
-                console.log(color("dim", "Recent history is shown when you open a chat."));
+                console.log(
+                    color(
+                        "dim",
+                        "Recent history is shown when you open a chat.",
+                    ),
+                );
             } else if (state.target?.type === "dm") {
                 bumpActivity(state, "send");
                 refreshPrompt(rl, state);
@@ -1294,7 +1683,12 @@ async function chat(ctx, args) {
                     target: targetLabel(state.target),
                 });
             } else {
-                console.log(color("yellow", "No chat open. Use /join, /channels, /user, or /nav."));
+                console.log(
+                    color(
+                        "yellow",
+                        "No chat open. Use /join, /channels, /user, or /nav.",
+                    ),
+                );
             }
         } catch (err) {
             debugLog(ctx, "command.error", {
@@ -1327,20 +1721,29 @@ async function authenticate(ctx, explicitUsername) {
     const config = await readConfig(ctx.configPath);
     const username = (explicitUsername ?? config.lastUsername)?.toLowerCase();
     if (!username) {
-        throw new Error("No local account selected. Use --username or run register/login first.");
+        throw new Error(
+            "No local account selected. Use --username or run register/login first.",
+        );
     }
     const account = config.accounts[username];
     if (!account) {
-        throw new Error(`No local account for ${username}. Run register/login first.`);
+        throw new Error(
+            `No local account for ${username}. Run register/login first.`,
+        );
     }
     const client = await Client.create(account.privateKey, ctx.clientOptions);
     attachDebugClientEvents(ctx, client, `auth:${username}`);
-    const deviceErr = account.deviceID ? await client.loginWithDeviceKey(account.deviceID) : new Error("missing device id");
+    const deviceErr = account.deviceID
+        ? await client.loginWithDeviceKey(account.deviceID)
+        : new Error("missing device id");
     if (deviceErr && ctx.password) {
         const loginResult = await client.login(username, ctx.password);
-        if (!loginResult.ok) throw new Error(loginResult.error ?? "Login failed.");
+        if (!loginResult.ok)
+            throw new Error(loginResult.error ?? "Login failed.");
     } else if (deviceErr) {
-        throw new Error(`Device-key login failed for ${username}: ${deviceErr.message}. Retry with --password.`);
+        throw new Error(
+            `Device-key login failed for ${username}: ${deviceErr.message}. Retry with --password.`,
+        );
     }
     return { account, client, config };
 }
@@ -1355,12 +1758,16 @@ async function authenticateOrRegister(ctx, explicitUsername) {
     const rl = createInterface({ input, output });
     try {
         console.log("Welcome to vex.");
-        const entered = (username ?? (await rl.question("username: "))).trim().toLowerCase();
+        const entered = (username ?? (await rl.question("username: ")))
+            .trim()
+            .toLowerCase();
         if (!entered) throw new Error("username is required");
         if (config.accounts[entered]) {
             return authenticate(ctx, entered);
         }
-        const answer = (await rl.question(`register ${entered}? [Y/n] `)).trim().toLowerCase();
+        const answer = (await rl.question(`register ${entered}? [Y/n] `))
+            .trim()
+            .toLowerCase();
         if (answer && answer !== "y" && answer !== "yes") {
             throw new Error("No local account selected.");
         }
@@ -1428,33 +1835,48 @@ function attachDebugClientEvents(ctx, client, label) {
             return { label };
         }
     };
-    for (const event of ["connected", "disconnect", "decryptingMail", "ready"]) {
+    for (const event of [
+        "connected",
+        "disconnect",
+        "decryptingMail",
+        "ready",
+    ]) {
         client.on(event, () => debugLog(ctx, `client.${event}`, base()));
     }
-    client.on("session", (session, user) => debugLog(ctx, "client.session", {
-        ...base(),
-        peerDeviceID: session.deviceID,
-        peerUserID: session.userID,
-        peerUsername: user?.username,
-        sessionID: session.sessionID,
-    }));
-    client.on("retryRequest", (request) => debugLog(ctx, "client.retryRequest", {
-        ...base(),
-        mailID: request?.mailID,
-        source: request?.source,
-    }));
+    client.on("session", (session, user) =>
+        debugLog(ctx, "client.session", {
+            ...base(),
+            peerDeviceID: session.deviceID,
+            peerUserID: session.userID,
+            peerUsername: user?.username,
+            sessionID: session.sessionID,
+        }),
+    );
+    client.on("retryRequest", (request) =>
+        debugLog(ctx, "client.retryRequest", {
+            ...base(),
+            mailID: request?.mailID,
+            source: request?.source,
+        }),
+    );
 }
 
 function debugLog(ctx, event, data = {}, level = "debug") {
     if (!ctx?.debug) return;
     if (!shouldDebugAtLevel(ctx.debugLevel, level)) return;
-    if (isHeartbeatDebugEvent(event, data) && !shouldDebugAtLevel(ctx.debugLevel, "trace")) return;
+    if (
+        isHeartbeatDebugEvent(event, data) &&
+        !shouldDebugAtLevel(ctx.debugLevel, "trace")
+    )
+        return;
     const payload = {
         data,
         event,
         time: new Date().toISOString(),
     };
-    process.stderr.write(`[vex-cli:debug] ${JSON.stringify(payload, jsonReplacer)}\n`);
+    process.stderr.write(
+        `[vex-cli:debug] ${JSON.stringify(payload, jsonReplacer)}\n`,
+    );
 }
 
 function shouldDebugAtLevel(current, needed) {
@@ -1465,8 +1887,14 @@ function shouldDebugAtLevel(current, needed) {
 function isHeartbeatDebugEvent(event, data) {
     if (/\b(?:ping|pong)\b/i.test(event)) return true;
     const type = typeof data?.type === "string" ? data.type : "";
-    const messageType = typeof data?.message?.type === "string" ? data.message.type : "";
-    return type === "ping" || type === "pong" || messageType === "ping" || messageType === "pong";
+    const messageType =
+        typeof data?.message?.type === "string" ? data.message.type : "";
+    return (
+        type === "ping" ||
+        type === "pong" ||
+        messageType === "ping" ||
+        messageType === "pong"
+    );
 }
 
 function jsonReplacer(_key, value) {
@@ -1516,11 +1944,23 @@ async function readConfig(configPath) {
         const parsed = JSON.parse(raw);
         return {
             ...parsed,
-            accounts: parsed.accounts && typeof parsed.accounts === "object" ? parsed.accounts : {},
-            lastChannel: typeof parsed.lastChannel === "string" ? parsed.lastChannel : undefined,
-            lastServer: typeof parsed.lastServer === "string" ? parsed.lastServer : undefined,
+            accounts:
+                parsed.accounts && typeof parsed.accounts === "object"
+                    ? parsed.accounts
+                    : {},
+            lastChannel:
+                typeof parsed.lastChannel === "string"
+                    ? parsed.lastChannel
+                    : undefined,
+            lastServer:
+                typeof parsed.lastServer === "string"
+                    ? parsed.lastServer
+                    : undefined,
             lastTarget: isTarget(parsed.lastTarget) ? parsed.lastTarget : null,
-            lastUsername: typeof parsed.lastUsername === "string" ? parsed.lastUsername : undefined,
+            lastUsername:
+                typeof parsed.lastUsername === "string"
+                    ? parsed.lastUsername
+                    : undefined,
         };
     } catch {
         return { accounts: {}, lastTarget: null };
@@ -1528,7 +1968,9 @@ async function readConfig(configPath) {
 }
 
 async function writeConfig(configPath, config) {
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", {
+        mode: 0o600,
+    });
 }
 
 function requireArg(args, index, name) {
@@ -1547,7 +1989,10 @@ async function askText(rl, label, fallback = "") {
     try {
         answer = await rl.question(`${label}${suffix}: `);
     } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes("readline was closed")) {
+        if (
+            !(err instanceof Error) ||
+            !err.message.includes("readline was closed")
+        ) {
             throw err;
         }
         return fallback;
@@ -1556,23 +2001,34 @@ async function askText(rl, label, fallback = "") {
 }
 
 function looksLikeUUID(value) {
-    return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+    return (
+        typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            value,
+        )
+    );
 }
 
 function looksLikeDuration(value) {
-    return typeof value === "string" && /^\d+(?:ms|s|m|h|d|w|mo|y)?$/i.test(value);
+    return (
+        typeof value === "string" && /^\d+(?:ms|s|m|h|d|w|mo|y)?$/i.test(value)
+    );
 }
 
 function parseInviteID(value) {
     const trimmed = value.trim();
     if (looksLikeUUID(trimmed)) return trimmed;
-    const match = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    const match = trimmed.match(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+    );
     if (!match) throw new Error(`Invalid invite: ${value}`);
     return match[0];
 }
 
 function extractInviteID(value) {
-    const match = value.match(/vex:\/\/invite\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    const match = value.match(
+        /vex:\/\/invite\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    );
     return match?.[1] ?? null;
 }
 
@@ -1599,18 +2055,23 @@ function clearSubmittedPrompt() {
 async function messageRoute(client, state, message) {
     const isDm = !message.group;
     if (!isDm) {
-        const isActiveChannel = state.target?.type === "channel" && state.target.id === message.group;
+        const isActiveChannel =
+            state.target?.type === "channel" &&
+            state.target.id === message.group;
         return {
             isActiveDm: false,
             isDm: false,
             reason: isActiveChannel ? "active-channel" : "other-channel",
             render: isActiveChannel,
-            target: isActiveChannel ? targetLabel(state.target) : `#${shortID(message.group)}`,
+            target: isActiveChannel
+                ? targetLabel(state.target)
+                : `#${shortID(message.group)}`,
         };
     }
 
     const peerID = dmPeerID(state, message);
-    const isActiveDm = state.target?.type === "dm" && state.target.id === peerID;
+    const isActiveDm =
+        state.target?.type === "dm" && state.target.id === peerID;
     if (isActiveDm) {
         return {
             isActiveDm: true,
@@ -1625,7 +2086,7 @@ async function messageRoute(client, state, message) {
         state.target?.type === "channel" &&
         state.target.serverID &&
         peerID &&
-        await userSharesServer(client, state, state.target.serverID, peerID);
+        (await userSharesServer(client, state, state.target.serverID, peerID));
 
     return {
         isActiveDm: false,
@@ -1638,7 +2099,9 @@ async function messageRoute(client, state, message) {
 
 function dmPeerID(state, message) {
     if (message.direction === "outgoing") {
-        return message.readerID === state.account?.userID ? message.authorID : message.readerID;
+        return message.readerID === state.account?.userID
+            ? message.authorID
+            : message.readerID;
     }
     return message.authorID;
 }
@@ -1652,7 +2115,9 @@ async function recordDmActivity(client, state, names, message, route = null) {
         userID,
         username,
     };
-    const isUnread = message.direction === "incoming" && !(route?.isActiveDm ?? isActiveDm(state, userID));
+    const isUnread =
+        message.direction === "incoming" &&
+        !(route?.isActiveDm ?? isActiveDm(state, userID));
     state.dms.set(userID, {
         ...existing,
         direction: message.direction,
@@ -1680,7 +2145,9 @@ async function userSharesServer(client, state, serverID, userID) {
     if (cached && cached.expiresAt > Date.now()) {
         return cached.value;
     }
-    const value = await serverHasUser(client, serverID, userID).catch(() => false);
+    const value = await serverHasUser(client, serverID, userID).catch(
+        () => false,
+    );
     state.serverMemberCache.set(key, { expiresAt: Date.now() + 30_000, value });
     return value;
 }
@@ -1688,7 +2155,9 @@ async function userSharesServer(client, state, serverID, userID) {
 async function serverHasUser(client, serverID, userID) {
     const channels = await client.channels.retrieve(serverID);
     for (const channel of channels) {
-        const users = await client.channels.userList(channel.channelID).catch(() => []);
+        const users = await client.channels
+            .userList(channel.channelID)
+            .catch(() => []);
         if (users.some((user) => user.userID === userID)) {
             return true;
         }
@@ -1769,7 +2238,10 @@ function safePrompt(rl, preserveCursor = false) {
     try {
         rl.prompt(preserveCursor);
     } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes("readline was closed")) {
+        if (
+            !(err instanceof Error) ||
+            !err.message.includes("readline was closed")
+        ) {
             throw err;
         }
     }
@@ -1779,7 +2251,10 @@ function safeSetPrompt(rl, prompt) {
     try {
         rl.setPrompt(prompt);
     } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes("readline was closed")) {
+        if (
+            !(err instanceof Error) ||
+            !err.message.includes("readline was closed")
+        ) {
             throw err;
         }
     }
@@ -1803,9 +2278,13 @@ function promptFor(state) {
 function statusBar(state) {
     const status = state.status ?? {};
     const active = Date.now() - (status.lastActivityAt ?? 0) < 2_500;
-    const spinner = active ? STATUS_SPINNER[status.spinnerIndex % STATUS_SPINNER.length] : " ";
+    const spinner = active
+        ? STATUS_SPINNER[status.spinnerIndex % STATUS_SPINNER.length]
+        : " ";
     const unread = totalUnreadDms(state);
-    const parts = [`${spinner} ${active ? status.activity ?? "net" : "idle"}`];
+    const parts = [
+        `${spinner} ${active ? (status.activity ?? "net") : "idle"}`,
+    ];
     if (unread > 0) {
         parts.push(`dm ${unread}`);
     }
@@ -1818,7 +2297,8 @@ function bumpActivity(state, activity = "net") {
     }
     state.status.activity = activity;
     state.status.lastActivityAt = Date.now();
-    state.status.spinnerIndex = (state.status.spinnerIndex + 1) % STATUS_SPINNER.length;
+    state.status.spinnerIndex =
+        (state.status.spinnerIndex + 1) % STATUS_SPINNER.length;
 }
 
 function totalUnreadDms(state) {
@@ -1831,7 +2311,9 @@ function totalUnreadDms(state) {
 
 function targetLabel(target) {
     if (target.type === "channel") {
-        return target.serverName ? `${target.serverName}/${target.label}` : target.label;
+        return target.serverName
+            ? `${target.serverName}/${target.label}`
+            : target.label;
     }
     return `@${target.label}`;
 }
@@ -1843,10 +2325,19 @@ function shortID(id) {
 function renderHeader(state, user, title) {
     const username = user?.username ?? state.account?.username ?? "unknown";
     const host = state.host ?? "unknown-host";
-    const target = state.target ? targetLabel(state.target) : "no chat selected";
+    const target = state.target
+        ? targetLabel(state.target)
+        : "no chat selected";
     console.log(color("reverse", " vex chat "));
-    console.log(`${color("bold", title)} ${color("dim", "|")} ${color("green", username)} ${color("dim", "on")} ${color("blue", host)} ${color("dim", "|")} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`);
-    console.log(color("dim", "/nav /join /servers /channels /window /user /dms /dm /invite redeem /members /help"));
+    console.log(
+        `${color("bold", title)} ${color("dim", "|")} ${color("green", username)} ${color("dim", "on")} ${color("blue", host)} ${color("dim", "|")} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`,
+    );
+    console.log(
+        color(
+            "dim",
+            "/nav /join /servers /channels /window /user /dms /dm /invite redeem /members /help",
+        ),
+    );
 }
 
 function printWhoami(client) {
@@ -1860,7 +2351,9 @@ function printWhoami(client) {
 }
 
 function printUser(user) {
-    console.log(`${color("green", user.username)} ${color("dim", "user=")}${user.userID} ${color("dim", "signKey=")}${user.signKey}`);
+    console.log(
+        `${color("green", user.username)} ${color("dim", "user=")}${user.userID} ${color("dim", "signKey=")}${user.signKey}`,
+    );
 }
 
 function printServers(servers) {
@@ -1879,29 +2372,44 @@ function printChannels(channels) {
         return;
     }
     for (const channel of channels) {
-        console.log(`${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)} ${color("dim", `server=${channel.serverID}`)}`);
+        console.log(
+            `${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)} ${color("dim", `server=${channel.serverID}`)}`,
+        );
     }
 }
 
 function printInvite(invite) {
     const link = inviteLink(invite.inviteID);
     console.log(`${color("green", "invite")} ${color("yellow", link)}`);
-    console.log(`${color("dim", "expires")} ${invite.expiration ?? invite.expires}`);
-    console.log(`${color("dim", "share this link to invite someone to the server")}`);
+    console.log(
+        `${color("dim", "expires")} ${invite.expiration ?? invite.expires}`,
+    );
+    console.log(
+        `${color("dim", "share this link to invite someone to the server")}`,
+    );
 }
 
 function printInvitePreview(preview) {
     console.log(color("bold", "Server invite"));
-    const serverName = preview.server?.name ?? "Server details unavailable until Spire is updated";
-    console.log(`${color("blue", serverName)} ${formatInviteChannelSummary(preview.channels)}`);
-    console.log(`${color("dim", "expires")} ${formatMessageTime(preview.invite.expiration)}`);
+    const serverName =
+        preview.server?.name ??
+        "Server details unavailable until Spire is updated";
+    console.log(
+        `${color("blue", serverName)} ${formatInviteChannelSummary(preview.channels)}`,
+    );
+    console.log(
+        `${color("dim", "expires")} ${formatMessageTime(preview.invite.expiration)}`,
+    );
 }
 
 function formatInviteChannelSummary(channels) {
     if (!channels || channels.length === 0) {
         return color("dim", "- no channels");
     }
-    const names = channels.slice(0, 3).map((channel) => `#${channel.name}`).join(", ");
+    const names = channels
+        .slice(0, 3)
+        .map((channel) => `#${channel.name}`)
+        .join(", ");
     const extra = channels.length > 3 ? ` +${channels.length - 3} more` : "";
     return color("cyan", `- ${names}${extra}`);
 }
@@ -1935,7 +2443,10 @@ function notifyIncomingDm(author, message) {
     const body = truncateNotification(message);
     execFile(
         "osascript",
-        ["-e", `display notification ${appleScriptString(body)} with title ${appleScriptString(title)}`],
+        [
+            "-e",
+            `display notification ${appleScriptString(body)} with title ${appleScriptString(title)}`,
+        ],
         { timeout: 1_000 },
         () => {},
     );
@@ -1948,7 +2459,9 @@ function truncateNotification(value) {
 
 function truncateInline(value, maxLength) {
     const clean = String(value).replace(/\s+/g, " ").trim();
-    return clean.length > maxLength ? `${clean.slice(0, Math.max(0, maxLength - 3))}...` : clean;
+    return clean.length > maxLength
+        ? `${clean.slice(0, Math.max(0, maxLength - 3))}...`
+        : clean;
 }
 
 function appleScriptString(value) {
@@ -1962,19 +2475,31 @@ function printMessages(messages) {
     }
     for (const message of messages) {
         const target = message.group ? `#${shortID(message.group)}` : "DM";
-        const who = message.direction === "outgoing" ? "you" : shortID(message.authorID);
-        console.log(formatMessageLine({
-            direction: message.direction,
-            isDm: !message.group,
-            message: message.message,
-            target,
-            timestamp: message.timestamp,
-            who,
-        }));
+        const who =
+            message.direction === "outgoing"
+                ? "you"
+                : shortID(message.authorID);
+        console.log(
+            formatMessageLine({
+                direction: message.direction,
+                isDm: !message.group,
+                message: message.message,
+                target,
+                timestamp: message.timestamp,
+                who,
+            }),
+        );
     }
 }
 
-function formatMessageLine({ direction, isDm = false, message, target, timestamp, who }) {
+function formatMessageLine({
+    direction,
+    isDm = false,
+    message,
+    target,
+    timestamp,
+    who,
+}) {
     const whoColor = direction === "outgoing" ? "green" : "yellow";
     const targetColor = isDm ? "magenta" : "cyan";
     return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${color(whoColor, who)}${color("dim", ":")} ${message}`;
@@ -2048,6 +2573,8 @@ main()
         process.exit(0);
     })
     .catch((err) => {
-        console.error(color("red", err instanceof Error ? err.message : String(err)));
+        console.error(
+            color("red", err instanceof Error ? err.message : String(err)),
+        );
         process.exit(1);
     });
