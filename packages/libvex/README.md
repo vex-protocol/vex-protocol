@@ -1,27 +1,25 @@
 # @vex-chat/libvex
 
-[![npm](https://img.shields.io/npm/v/@vex-chat/libvex?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@vex-chat/libvex)
-[![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
-[![Released](https://img.shields.io/github/release-date/vex-protocol/vex-protocol?style=flat-square&label=released)](https://github.com/vex-protocol/vex-protocol/releases)
-[![License](https://img.shields.io/npm/l/@vex-chat/libvex?style=flat-square&color=blue)](./LICENSE)
-[![Types](https://img.shields.io/npm/types/@vex-chat/libvex?style=flat-square&logo=typescript&color=3178c6)](./dist/index.d.ts)
-[![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/packages/libvex/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
-[![Node](https://img.shields.io/node/v/@vex-chat/libvex?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
-[![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/libvex)](https://socket.dev/npm/package/@vex-chat/libvex)
+TypeScript client library for the Vex protocol.
 
-Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/vex-protocol/tree/master/apps/spire) server.
+`libvex` is the client-side half of the stack. It talks to a Spire server, manages device keys and sessions, encrypts/decrypts messages and files, and stores local client state.
 
-[Documentation](https://lib.vex.wtf/)
+## Stack Role
 
-## What's in the box
+- `@vex-chat/spire`: server-side account/device directory, key-bundle publication, mail relay, WebSocket transport, file ciphertext storage, auth, invites, groups, and passkeys.
+- `@vex-chat/libvex`: client-side registration/login, device enrollment, X3DH session setup, Double Ratchet messaging, file encryption helpers, local storage, and out-of-band verification state.
+- `@vex-chat/crypto`: crypto provider layer used by both.
+- `@vex-chat/types`: shared wire schemas.
 
-The client implements an X3DH-style handshake (X25519 DH + KDF), XSalsa20-Poly1305 (xSecretbox) for payloads, and HMAC over mail objects for integrity on the wire. Message payloads are intended to be end-to-end encrypted; the server still sees ciphertext, routing metadata, timing, and who talks to whom, and controls key-bundle distribution—so a malicious or compromised Spire can mount impersonation unless users verify sessions out-of-band.
+Spire does not receive message plaintext when callers use the normal `libvex` APIs. It still sees routing metadata, device/user IDs, ciphertext sizes, timestamps, file metadata, and online/delivery behavior. A malicious Spire can lie about the device directory unless users verify peer fingerprints out of band and the client treats unverified sessions appropriately.
 
-- **End-to-end encrypted messaging** with X3DH key agreement — sessions, prekeys, and one-time keys handled internally.
-- **Tree-shakable subpath exports** for platform-specific code: `./preset/node`, `./preset/test`, `./storage/node`, `./storage/sqlite`, `./storage/schema`, `./keystore/node`, `./keystore/memory`. Browser bundles never pull in `better-sqlite3` or other native modules.
-- **Pluggable storage backend** via Kysely so node consumers can use SQLite and browser/tauri/expo consumers can wire their own.
-- **Pluggable key store** so secrets can live in memory (tests), passphrase-encrypted files on disk (`./keystore/node`), or wherever the embedding app keeps them.
+## Runtime Requirements
+
+- Node.js `>=24.0.0`.
+- A running Spire server.
+- Matching crypto profile between client, peers, and Spire:
+    - `tweetnacl`: default profile.
+    - `fips`: P-256/Web Crypto compatibility path. This is not a FIPS 140 validation claim.
 
 ## Install
 
@@ -29,87 +27,143 @@ The client implements an X3DH-style handshake (X25519 DH + KDF), XSalsa20-Poly13
 npm install @vex-chat/libvex
 ```
 
-`@vex-chat/types`, `@vex-chat/crypto`, `axios`, `eventemitter3`, `kysely`, `msgpackr`, `uuid`, and `zod` are required runtime dependencies and install automatically.
-
-`better-sqlite3` is an **optional peer dependency** — install it explicitly only if you plan to use the SQLite storage backend on Node:
+Install `better-sqlite3` only if you use the Node SQLite storage backend:
 
 ```sh
 npm install @vex-chat/libvex better-sqlite3
 ```
 
-Browser, Tauri, and Expo consumers should leave `better-sqlite3` out and supply their own storage adapter via `./storage/schema`.
+Browser, Tauri, React Native, and Expo hosts should provide their own storage adapter instead of bundling `better-sqlite3`.
 
-## Quickstart
+## Minimal Client
 
 ```ts
 import { Client } from "@vex-chat/libvex";
 
-// Generate or load a long-lived secret key.
 const secretKey = Client.generateSecretKey();
 
-const client = await Client.create(secretKey);
+const client = await Client.create(secretKey, {
+    host: "127.0.0.1:16777",
+    unsafeHttp: true,
+});
 
-// First-time devices must register before logging in.
-await client.register("myUsername", "myPassword");
-await client.login("myUsername", "myPassword");
-
-// connect() authenticates the WebSocket and fires "ready" when done.
+await client.register("alice", "correct horse battery staple");
+await client.login("alice", "correct horse battery staple");
 await client.connect();
 
-client.on("ready", async () => {
-    const me = client.me.user();
-    await client.messages.send(me.userID, "Hello world!");
+client.on("message", (message) => {
+    console.log(message);
 });
 
-client.on("message", (message) => {
-    console.log("message:", message);
-});
+await client.messages.send("recipient-user-id", "hello");
 ```
 
-## Platform presets
+Use `unsafeHttp: true` only for local development or test. In production, Spire should be behind HTTPS/WSS and clients should omit `unsafeHttp`.
 
-libvex ships per-platform "presets" that wire together the appropriate storage and keystore:
+## Client Options
+
+Common `ClientOptions`:
+
+- `host`: API host without protocol. Defaults to `api.vex.wtf`.
+- `unsafeHttp`: use `http://` and `ws://` instead of `https://` and `wss://`. Only allowed in `development` or `test`.
+- `cryptoProfile`: `tweetnacl` or `fips`. Must match the deployment.
+- `deviceName`: label used during device registration.
+- `devApiKey`: sent as `x-dev-api-key`; only for local stress/dev runs where Spire has matching `DEV_API_KEY`.
+- `dbFolder`: folder for the default SQLite database.
+- `inMemoryDb`: use SQLite `:memory:`.
+- `saveHistory`: persist local message history when using default storage.
+- `localMessageRetentionDays`: local history retention, clamped to the library/server retention rules.
+
+`libvex` does not read `.env`. Applications pass configuration through `ClientOptions`.
+
+## Storage And Presets
+
+Node preset:
 
 ```ts
-// Node — sqlite storage + encrypted file keystore
 import { nodePreset } from "@vex-chat/libvex/preset/node";
+```
 
-// Tests / ephemeral — in-memory storage, no persistence
+Test preset:
+
+```ts
 import { testPreset } from "@vex-chat/libvex/preset/test";
 ```
 
-Presets return a `PlatformPreset` with a `createStorage()` factory and a `deviceName`. For a custom platform (browser, tauri, expo), import `Client` from `@vex-chat/libvex` directly and supply your own `Storage` (implementing the schema in `@vex-chat/libvex/storage/schema`) and `KeyStore` to `Client.create`.
+For other platforms, import `Client` directly and pass a custom `Storage` implementation from `@vex-chat/libvex/storage/schema` plus an appropriate keystore.
+
+Available subpaths:
+
+- `@vex-chat/libvex/preset/node`
+- `@vex-chat/libvex/preset/test`
+- `@vex-chat/libvex/storage/node`
+- `@vex-chat/libvex/storage/sqlite`
+- `@vex-chat/libvex/storage/schema`
+- `@vex-chat/libvex/keystore/node`
+- `@vex-chat/libvex/keystore/memory`
+
+## Running Against Local Spire
+
+From the monorepo root:
+
+```sh
+pnpm install
+pnpm --filter @vex-chat/spire gen-spk
+```
+
+Put the generated `SPK` and `JWT_SECRET` in `apps/spire/.env`, then start Spire:
+
+```sh
+cd apps/spire
+docker compose up --build
+```
+
+Create clients with:
+
+```ts
+const client = await Client.create(secretKey, {
+    host: "127.0.0.1:16777",
+    unsafeHttp: true,
+});
+```
+
+For the FIPS-compatible profile, generate the server key with:
+
+```sh
+pnpm --filter @vex-chat/spire gen-spk-fips
+```
+
+Set `SPIRE_FIPS=true` in Spire and create clients with `cryptoProfile: "fips"`.
 
 ## Development
 
 From the monorepo root:
 
 ```sh
-pnpm install                                    # install workspace deps
-pnpm --filter @vex-chat/libvex build            # rimraf dist && tsc -p tsconfig.build.json
-pnpm --filter @vex-chat/libvex lint             # eslint
-pnpm --filter @vex-chat/libvex lint:fix         # eslint --fix
-pnpm --filter @vex-chat/libvex test             # vitest unit suite (browser-safe, no spire required)
-pnpm --filter @vex-chat/libvex test:e2e         # vitest node + browser e2e — needs a running spire
-pnpm --filter @vex-chat/libvex lint:pkg         # publint --strict
-pnpm --filter @vex-chat/libvex lint:types       # @arethetypeswrong/cli
-pnpm --filter @vex-chat/libvex lint:api         # api-extractor — regenerates api/libvex.api.md
-pnpm --filter @vex-chat/libvex license:check    # license allowlist gate
-pnpm --filter @vex-chat/libvex docs             # typedoc — writes ./docs
+pnpm install
+pnpm --filter @vex-chat/libvex build
+pnpm --filter @vex-chat/libvex test
+pnpm --filter @vex-chat/libvex test:e2e
+pnpm --filter @vex-chat/libvex lint
+pnpm --filter @vex-chat/libvex lint:pkg
+pnpm --filter @vex-chat/libvex lint:types
+pnpm --filter @vex-chat/libvex lint:api
+pnpm --filter @vex-chat/libvex license:check
 ```
 
-Or run from this directory directly with `pnpm <script>`.
+The unit suite is offline. The e2e suite needs a running Spire. Test-only environment variables include:
 
-The unit suite runs browser-safe and offline. The e2e suite needs a running Spire when you point tests at it.
+- `API_URL`: Spire URL, for example `http://127.0.0.1:16777`.
+- `DEV_API_KEY`: dev rate-limit bypass key, only if the server also has it.
+- `LIBVEX_E2E_SKIP_STATUS_CHECK=1`: skip the Spire `/status` crypto-profile preflight.
 
-**Local Spire (dev):** `pnpm --filter @vex-chat/libvex test:local-spire` runs the e2e suite against an instance of `apps/spire/` brought up locally; see `scripts/test-local-spire.mjs`. Bring spire up via `pnpm --filter @vex-chat/spire start` (or `docker compose up` in `apps/spire/`) before running.
+## Security Notes
 
-**Applications** using `@vex-chat/libvex` configure the client with **`ClientOptions`** only (e.g. `host`, `unsafeHttp`, `devApiKey`, `cryptoProfile`)—the library does not read `.env` or any environment variables. **This repository's e2e tests** (not the published API) can use `API_URL` / `DEV_API_KEY` in your shell or CI when you run `vitest`. When `API_URL` points at Spire, the suite **reads** `GET …/status` to pick the same `cryptoProfile` (tweetnacl vs fips) as the server, so you usually do not set `LIBVEX_E2E_CRYPTO` by hand. There is no separate `.env` contract for the npm package.
-
-See the root [AGENTS.md](../../AGENTS.md) and this package's [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish via OIDC) and the rules for writing changesets.
-
-Outside contributors should follow the root [CONTRIBUTING.md](../../CONTRIBUTING.md) (including the [CLA](../../CLA.md)).
+- Current threat model: [docs/security/threat-model.md](../../docs/security/threat-model.md)
+- Session fingerprints must be verified out of band for meaningful protection against malicious directory substitution.
+- JavaScript cannot guarantee memory zeroing. The library can minimize key lifetime, but endpoint compromise remains out of scope.
+- Server-side delete-on-receipt does not hide transport metadata.
 
 ## License
 
-Default public license: **[AGPL-3.0](./LICENSE)** (see `package.json` for SPDX). Commercial licenses from **Vex Heavy Industries LLC**: [**LICENSE-COMMERCIAL**](./LICENSE-COMMERCIAL), [**LICENSING.md**](./LICENSING.md).
+Default public license: AGPL-3.0-or-later. Commercial licenses are available from Vex Heavy Industries LLC.
