@@ -11,6 +11,7 @@ SPIRE_DIR="${PROTOCOL_ROOT}/apps/spire"
 STATUS_URL="${SPIRE_STRESS_STATUS_URL:-http://127.0.0.1:16777/status}"
 STACK_WAIT_SEC="${SPIRE_STRESS_STACK_WAIT_SEC:-120}"
 DOCKER_WAIT_SEC="${SPIRE_STRESS_DOCKER_WAIT_SEC:-180}"
+REBUILD_STACK="${SPIRE_STRESS_REBUILD:-0}"
 
 for a in "$@"; do
     if [[ "$a" == "--help" || "$a" == "-h" ]]; then
@@ -125,7 +126,27 @@ set -- "${def[@]}" "$@"
 
 cd "$SPIRE_DIR"
 
-if curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
+# The compose file is production-safe by default, but the local stress stack
+# normally uses DEV_API_KEY from apps/spire/.env. Keep that bypass out of
+# production while allowing the integration harness to exercise the container.
+export SPIRE_DOCKER_NODE_ENV="${SPIRE_DOCKER_NODE_ENV:-development}"
+
+if [[ "$REBUILD_STACK" == "1" || "$REBUILD_STACK" == "true" ]]; then
+    echo "[integration-cli] Rebuilding stack (SPIRE_STRESS_REBUILD=${REBUILD_STACK}) …" >&2
+    docker compose up -d --build --force-recreate
+    echo "[integration-cli] Waiting for ${STATUS_URL} (up to ${STACK_WAIT_SEC}s)…" >&2
+    deadline=$((SECONDS + STACK_WAIT_SEC))
+    while ((SECONDS < deadline)); do
+        if curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if ! curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
+        echo "[integration-cli] Stack did not become ready. Try: cd apps/spire && docker compose ps && docker compose logs" >&2
+        exit 1
+    fi
+elif curl -fsS "$STATUS_URL" >/dev/null 2>&1; then
     echo "[integration-cli] Stack already healthy (${STATUS_URL})" >&2
 else
     echo "[integration-cli] Stack not ready — docker compose up -d --build …" >&2
