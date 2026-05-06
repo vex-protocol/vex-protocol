@@ -9,12 +9,12 @@ const logDir = path.join(dataDir, "logs");
 await fs.mkdir(logDir, { recursive: true });
 
 const devKey = process.env.DEV_API_KEY ?? "vex-cli-diagnose";
-const host = process.env.VEX_CHAT_HOST ?? "127.0.0.1:16777";
 const count = Number.parseInt(process.env.VEX_DIAG_COUNT ?? "8", 10);
+const targetArgs = process.env.VEX_CHAT_HOST
+    ? ["--host", process.env.VEX_CHAT_HOST, "--http"]
+    : ["--local"];
 const common = [
-    "--host",
-    host,
-    "--http",
+    ...targetArgs,
     "--no-home",
     "--dev-key",
     devKey,

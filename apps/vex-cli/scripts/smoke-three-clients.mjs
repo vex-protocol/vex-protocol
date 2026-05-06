@@ -6,10 +6,11 @@ import * as path from "node:path";
 const root = path.resolve(import.meta.dirname, "../../..");
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "vex-cli-smoke-"));
 const devKey = process.env.DEV_API_KEY ?? "vex-cli-smoke";
+const targetArgs = process.env.VEX_CHAT_HOST
+    ? ["--host", process.env.VEX_CHAT_HOST, "--http"]
+    : ["--local"];
 const common = [
-    "--host",
-    process.env.VEX_CHAT_HOST ?? "127.0.0.1:16777",
-    "--http",
+    ...targetArgs,
     "--no-home",
     "--dev-key",
     devKey,

@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { unpack } from "msgpackr";
 
 const DEFAULT_HOST = "api.vex.wtf";
+const LOCAL_HOST = "127.0.0.1:16777";
 const COLOR = process.env.NO_COLOR === undefined;
 const ANSI = {
     blue: "\x1b[34m",
@@ -136,7 +137,7 @@ function parseArgs(argv) {
             continue;
         }
         const key = arg.slice(2);
-        if (["debug", "http", "help", "no-home"].includes(key)) {
+        if (["debug", "http", "help", "local", "no-home"].includes(key)) {
             flags[key] = true;
             continue;
         }
@@ -161,14 +162,18 @@ async function createContext(flags) {
         process.env.LIBVEX_DEBUG_LEVEL =
             debugLevel === "off" ? "debug" : debugLevel;
     }
+    const local = Boolean(flags.local) || process.env.VEX_CHAT_LOCAL === "1";
     const host = String(
-        flags.host ??
-            process.env.VEX_CHAT_HOST ??
-            process.env.API_HOST ??
-            hostFromApiUrl(process.env.API_URL) ??
-            DEFAULT_HOST,
+        local
+            ? LOCAL_HOST
+            : (flags.host ??
+                  process.env.VEX_CHAT_HOST ??
+                  process.env.API_HOST ??
+                  hostFromApiUrl(process.env.API_URL) ??
+                  DEFAULT_HOST),
     );
     const unsafeHttp =
+        local ||
         Boolean(flags.http) ||
         process.env.VEX_CHAT_HTTP === "1" ||
         httpFromApiUrl(process.env.API_URL) ||
@@ -2531,6 +2536,7 @@ Flags:
   --user <name>          alias for --username
   --password <password>  fallback password for login
   --host <host:port>     API host, default api.vex.wtf
+  --local                connect to local Spire at 127.0.0.1:16777 over http/ws
   --http                 use http/ws
   --dev-key <key>        send x-dev-api-key
   --debug                print send/receive/connect diagnostics to stderr

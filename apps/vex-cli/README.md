@@ -9,7 +9,7 @@ pnpm vex
 On first run, `vex` prompts for a username and registers a local device key.
 After that it opens straight into a live chat session.
 
-By default the CLI connects to production at `api.vex.wtf`. For local Spire development, pass `--host 127.0.0.1:16777 --http` or set `VEX_CHAT_HOST=127.0.0.1:16777 VEX_CHAT_HTTP=1`.
+By default the CLI connects to production at `api.vex.wtf`. For local Spire development, pass `--local` to use `127.0.0.1:16777` over http/ws. Custom local targets can still use `--host <host:port> --http`.
 
 Inside the app:
 
