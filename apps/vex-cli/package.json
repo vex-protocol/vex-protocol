@@ -12,7 +12,8 @@
         "smoke": "node scripts/smoke-three-clients.mjs"
     },
     "dependencies": {
-        "@vex-chat/libvex": "workspace:^"
+        "@vex-chat/libvex": "workspace:^",
+        "msgpackr": "catalog:"
     },
     "devDependencies": {
         "@types/node": "catalog:"

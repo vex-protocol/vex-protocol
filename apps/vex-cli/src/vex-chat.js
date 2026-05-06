@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { Client } from "@vex-chat/libvex";
+import { execFile } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { unpack } from "msgpackr";
 
 const DEFAULT_HOST = "127.0.0.1:16777";
 const COLOR = process.env.NO_COLOR === undefined;
@@ -173,12 +175,21 @@ async function createContext(flags) {
         username: flags.username || flags.user ? String(flags.username ?? flags.user).toLowerCase() : undefined,
         noHome: Boolean(flags["no-home"]),
         password: flags.password ? String(flags.password) : undefined,
+        sound: normalizeSound(flags.sound ?? process.env.VEX_CHAT_SOUND ?? "Glass"),
     };
 }
 
 function isLocalHost(host) {
     const h = host.split(":")[0];
     return h === "127.0.0.1" || h === "localhost" || h === "::1";
+}
+
+function normalizeSound(value) {
+    const sound = String(value ?? "").trim();
+    if (!sound || ["0", "false", "none", "off"].includes(sound.toLowerCase())) {
+        return null;
+    }
+    return sound;
 }
 
 function hostFromApiUrl(raw) {
@@ -476,48 +487,80 @@ async function createServerInChat(ctx, client, state, name, rl) {
     config.lastServer = server.serverID;
     await writeConfig(ctx.configPath, config);
     console.log(`${color("green", "created server")} ${color("blue", server.name)}`);
-    console.log(`${color("dim", "server")} ${server.serverID}`);
     await refreshBuffers(client, state);
     if (channel) {
         await enterChannel(ctx, client, state, channel);
     }
 }
 
-async function createInviteInChat(ctx, client, state, args) {
-    const config = await readConfig(ctx.configPath);
-    const first = args[0];
-    const serverID =
-        first && looksLikeUUID(first)
-            ? first
-            : state.target?.type === "channel" && state.target.serverID
-              ? state.target.serverID
-              : config.lastServer;
-    const duration = first && looksLikeUUID(first) ? (args[1] ?? "1h") : (args[0] ?? "1h");
-    if (!serverID) {
-        throw new Error("No server selected. Use /create server <name> first, or /invite <server-id> [duration].");
-    }
-    const invite = await client.invites.create(serverID, duration);
-    printInvite(invite);
-}
-
 async function createInviteInteractive(ctx, client, state, args, rl) {
     const config = await readConfig(ctx.configPath);
-    let serverID = args.find((arg) => looksLikeUUID(arg));
-    if (!serverID) {
-        serverID =
-            state.target?.type === "channel" && state.target.serverID
-                ? state.target.serverID
-                : config.lastServer;
-    }
+    let serverID =
+        state.target?.type === "channel" && state.target.serverID
+            ? state.target.serverID
+            : config.lastServer;
     if (!serverID) {
         const server = await chooseServer(client, rl);
         if (!server) return;
         serverID = server.serverID;
     }
-    const durationArg = args.find((arg) => !looksLikeUUID(arg));
-    const duration = durationArg ?? (await askText(rl, "duration", "1h"));
+    const [first, second] = args;
+    if (first && !looksLikeDuration(first)) {
+        const user = await resolveUser(client, first);
+        const duration = second ?? "1h";
+        const invite = await client.invites.create(serverID, duration);
+        await client.messages.send(user.userID, `Join ${state.target?.serverName ?? "my server"}: ${inviteLink(invite.inviteID)}`);
+        console.log(`${color("green", "sent invite to")} ${color("magenta", user.username)}`);
+        return;
+    }
+    const duration = first ?? (await askText(rl, "duration", "1h"));
     const invite = await client.invites.create(serverID, duration || "1h");
     printInvite(invite);
+}
+
+async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
+    const value = rawInvite || (await askText(rl, "invite code or link"));
+    const inviteID = parseInviteID(value);
+    const preview = await fetchInvitePreview(client, inviteID);
+    printInvitePreview(preview);
+    const answer = (await askText(rl, "join this server?", "Y")).trim().toLowerCase();
+    if (answer && answer !== "y" && answer !== "yes") {
+        console.log(color("dim", "cancelled"));
+        return;
+    }
+
+    const permission = await client.invites.redeem(inviteID);
+    const server = preview.server ?? (await client.servers.retrieveByID(permission.resourceID));
+    const channels =
+        preview.channels.length > 0
+            ? preview.channels
+            : await client.channels.retrieve(permission.resourceID).catch(() => []);
+    console.log(`${color("green", "joined")} ${color("blue", server?.name ?? "server")}`);
+    await refreshBuffers(client, state);
+
+    const channel =
+        channels.find((candidate) => candidate.name.toLowerCase() === "general") ??
+        channels[0] ??
+        null;
+    if (channel) {
+        await enterChannel(ctx, client, state, channel, server);
+    } else {
+        console.log(color("dim", "No channels in this server yet. Use /nav when one is available."));
+    }
+}
+
+async function fetchInvitePreview(client, inviteID) {
+    try {
+        const res = await client.http.get(`${client.getHost()}/invite/${inviteID}/preview`);
+        return unpack(new Uint8Array(res.data));
+    } catch (err) {
+        if (err?.response?.status !== 404) {
+            throw err;
+        }
+        const res = await client.http.get(`${client.getHost()}/invite/${inviteID}`);
+        const invite = unpack(new Uint8Array(res.data));
+        return { channels: [], invite, server: null };
+    }
 }
 
 async function selectDmInChat(ctx, client, state, names, identifier, rl) {
@@ -525,24 +568,46 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
     state.target = { id: user.userID, label: user.username, type: "dm" };
+    addWindow(state, state.target);
     await saveTarget(ctx, state.target);
-    console.log(`${color("magenta", "dm")} ${color("green", user.username)}`);
+    await enterDm(client, state, user);
     return user;
 }
 
-async function selectChannelInChat(ctx, client, state, channelID, rl) {
-    let channel = null;
-    if (channelID) {
-        channel = await client.channels.retrieveByID(channelID);
-        if (!channel) throw new Error(`Channel not found: ${channelID}`);
-        const server = await client.servers.retrieveByID(channel.serverID).catch(() => null);
-        if (server) {
-            channel = { ...channel, serverName: server.name };
-        }
+async function enterDm(client, state, user) {
+    clearScreen();
+    renderHeader(state, client.me.user(), `@${user.username}`);
+    console.log(color("dim", "/user open DM  /dm send  /join server  /channels open  /window switch  /help"));
+    console.log("");
+    const history = await client.messages.retrieve(user.userID);
+    if (history.length === 0) {
+        console.log(color("dim", "No local history yet."));
     } else {
-        channel = await chooseChannel(client, rl);
-        if (!channel) return null;
+        console.log(color("bold", "Recent history"));
+        printMessages(history.slice(-30));
     }
+    console.log("");
+}
+
+async function sendDmInChat(ctx, client, state, names, identifier, messageParts, rl) {
+    const resolvedIdentifier = identifier || (await askText(rl, "username or user id"));
+    const user = await resolveUser(client, resolvedIdentifier);
+    names.set(user.userID, user.username);
+    const message = messageParts.length > 0 ? messageParts.join(" ") : await askText(rl, `message to ${user.username}`);
+    if (!message) {
+        console.log(color("dim", "cancelled"));
+        return;
+    }
+    await client.messages.send(user.userID, message);
+    state.target = { id: user.userID, label: user.username, type: "dm" };
+    addWindow(state, state.target);
+    await saveTarget(ctx, state.target);
+    await enterDm(client, state, user);
+}
+
+async function selectChannelInChat(ctx, client, state, rl) {
+    const channel = await chooseChannel(client, rl);
+    if (!channel) return null;
     await enterChannel(
         ctx,
         client,
@@ -553,43 +618,151 @@ async function selectChannelInChat(ctx, client, state, channelID, rl) {
     return channel;
 }
 
+async function selectChannelByName(ctx, client, state, query, rl) {
+    const channels = await listAllChannels(client);
+    if (channels.length === 0) {
+        console.log(color("dim", "No channels. Use redeem <code> to accept an invite, or /create."));
+        return null;
+    }
+    const channel = query
+        ? await chooseBestMatch(rl, "channel", channels, query, channelSearchText, renderChannelChoice)
+        : await chooseItem(rl, "channel", channels, renderChannelChoice);
+    if (!channel) return null;
+    await enterChannel(ctx, client, state, channel, {
+        name: channel.serverName,
+        serverID: channel.serverID,
+    });
+    return channel;
+}
+
+async function selectServerByName(ctx, client, state, query, rl) {
+    const servers = await client.servers.retrieve();
+    if (servers.length === 0) {
+        console.log(color("dim", "No servers. Use redeem <code> to accept an invite, or /create."));
+        return null;
+    }
+    const server = query
+        ? await chooseBestMatch(rl, "server", servers, query, (item) => item.name, (item) => color("blue", item.name))
+        : await chooseItem(rl, "server", servers, (item) => color("blue", item.name));
+    if (!server) return null;
+    const channel = await chooseChannelFromServer(client, server, rl);
+    if (channel) {
+        await enterChannel(ctx, client, state, channel, server);
+    }
+    return server;
+}
+
+async function navigateInChat(ctx, client, state, names, rl) {
+    console.log(`${color("yellow", "1")}. ${color("cyan", "channel")}`);
+    console.log(`${color("yellow", "2")}. ${color("magenta", "direct message")}`);
+    const answer = await askText(rl, "open");
+    if (answer === "1" || answer.toLowerCase() === "channel") {
+        await selectChannelInChat(ctx, client, state, rl);
+    } else if (answer === "2" || answer.toLowerCase() === "dm" || answer.toLowerCase() === "direct message") {
+        await selectDmInChat(ctx, client, state, names, "", rl);
+    } else {
+        console.log(color("dim", "cancelled"));
+    }
+}
+
 async function chooseServer(client, rl) {
     const servers = await client.servers.retrieve();
     if (servers.length === 0) {
-        console.log(color("dim", "no servers yet"));
+        console.log(color("dim", "No servers yet. Use redeem <code> to accept an invite, or /create to make one."));
         return null;
     }
     return chooseItem(
         rl,
         "server",
         servers,
-        (server) => `${server.name} (${shortID(server.serverID)})`,
+        (server) => color("blue", server.name),
     );
 }
 
 async function chooseChannel(client, rl) {
     const server = await chooseServer(client, rl);
     if (!server) return null;
+    return chooseChannelFromServer(client, server, rl);
+}
+
+async function chooseChannelFromServer(client, server, rl) {
     const channels = await client.channels.retrieve(server.serverID);
     if (channels.length === 0) {
         console.log(color("dim", "no channels"));
         return null;
     }
-    const channel = await chooseItem(
+    const detailRows = await Promise.all(
+        channels.map(async (channel) => {
+            try {
+                const users = await client.channels.userList(channel.channelID);
+                return { channel, members: users.length };
+            } catch {
+                return { channel, members: null };
+            }
+        }),
+    );
+    const row = await chooseItem(
         rl,
         "channel",
-        channels,
-        (channel) => `#${channel.name} (${shortID(channel.channelID)})`,
+        detailRows,
+        ({ channel, members }) => {
+            const memberText = members === null ? "" : color("dim", ` - ${members} member${members === 1 ? "" : "s"}`);
+            return `${color("cyan", `#${channel.name}`)}${memberText}`;
+        },
+        {
+            defaultIndex: defaultChannelIndex(detailRows.map((row) => row.channel)),
+        },
     );
-    return channel ? { ...channel, serverName: server.name } : null;
+    return row ? { ...row.channel, serverName: server.name } : null;
 }
 
-async function chooseItem(rl, label, items, render) {
-    for (let i = 0; i < items.length; i++) {
-        console.log(`${color("yellow", i + 1)}. ${render(items[i])}`);
+async function listAllChannels(client) {
+    const channels = [];
+    const servers = await client.servers.retrieve();
+    for (const server of servers) {
+        const serverChannels = await client.channels.retrieve(server.serverID).catch(() => []);
+        for (const channel of serverChannels) {
+            channels.push({ ...channel, serverName: server.name });
+        }
     }
-    const answer = await askText(rl, `${label} number`);
-    const index = Number.parseInt(answer, 10) - 1;
+    return channels;
+}
+
+async function chooseBestMatch(rl, label, items, query, searchText, render) {
+    const needle = normalizeSearch(query);
+    const matches = items.filter((item) => normalizeSearch(searchText(item)).includes(needle));
+    if (matches.length === 1) {
+        return matches[0];
+    }
+    if (matches.length > 1) {
+        console.log(color("dim", `Multiple ${label}s matched "${query}".`));
+        return chooseItem(rl, label, matches, render, { defaultIndex: defaultMatchIndex(label, matches) });
+    }
+    console.log(color("dim", `No ${label} matched "${query}".`));
+    return chooseItem(rl, label, items, render, { defaultIndex: defaultMatchIndex(label, items) });
+}
+
+function channelSearchText(channel) {
+    return `${channel.serverName ?? ""} ${channel.name} ${channel.serverName ?? ""}/${channel.name}`;
+}
+
+function renderChannelChoice(channel) {
+    const server = channel.serverName ? `${channel.serverName}/` : "";
+    return color("cyan", `${server}#${channel.name}`);
+}
+
+function normalizeSearch(value) {
+    return String(value).trim().toLowerCase().replace(/^#/, "");
+}
+
+async function chooseItem(rl, label, items, render, options = {}) {
+    const defaultIndex = Number.isInteger(options.defaultIndex) ? options.defaultIndex : 0;
+    for (let i = 0; i < items.length; i++) {
+        const marker = i === defaultIndex ? "*" : " ";
+        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${render(items[i])}`);
+    }
+    const answer = await askText(rl, `${label} number`, String(defaultIndex + 1));
+    const index = answer ? Number.parseInt(answer, 10) - 1 : defaultIndex;
     const item = items[index];
     if (!item) {
         console.log(color("dim", "cancelled"));
@@ -598,61 +771,21 @@ async function chooseItem(rl, label, items, render) {
     return item;
 }
 
-async function interactiveMenu(ctx, client, state, names, rl) {
-    console.log(`1. DM someone
-2. Join a channel
-3. Create server
-4. Create invite link
-5. Redeem invite link
-6. List servers
-7. History
-8. Who am I`);
-    const choice = await askText(rl, "choose");
-    switch (choice) {
-        case "1":
-            await selectDmInChat(ctx, client, state, names, "", rl);
-            return;
-        case "2":
-            await selectChannelInChat(ctx, client, state, "", rl);
-            return;
-        case "3":
-            await createServerInChat(ctx, client, state, "", rl);
-            return;
-        case "4":
-            await createInviteInteractive(ctx, client, state, [], rl);
-            return;
-        case "5": {
-            const invite = await askText(rl, "invite link or id");
-            const permission = await client.invites.redeem(parseInviteID(invite));
-            console.log(`${color("green", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`);
-            return;
-        }
-        case "6":
-            printServers(await client.servers.retrieve());
-            return;
-        case "7":
-            await printCurrentHistory(client, state);
-            return;
-        case "8":
-            printWhoami(client);
-            return;
-        default:
-            console.log(color("dim", "cancelled"));
-    }
+function defaultMatchIndex(label, items) {
+    if (label !== "channel") return 0;
+    return defaultChannelIndex(items);
 }
 
-async function printCurrentHistory(client, state) {
-    if (!state.target) {
-        console.log(color("yellow", "no target selected"));
-    } else if (state.target.type === "dm") {
-        printMessages(await client.messages.retrieve(state.target.id));
-    } else {
-        printMessages(await client.messages.retrieveGroup(state.target.id));
-    }
+function defaultChannelIndex(channels) {
+    const index = channels.findIndex((channel) => channel.name?.toLowerCase() === "general");
+    return index >= 0 ? index : 0;
 }
 
 async function refreshBuffers(client, state) {
-    const buffers = [];
+    const existingDms = Array.isArray(state.buffers)
+        ? state.buffers.filter((buffer) => buffer.type === "dm")
+        : [];
+    const buffers = [...existingDms];
     const servers = await client.servers.retrieve();
     for (const server of servers) {
         const channels = await client.channels.retrieve(server.serverID);
@@ -669,22 +802,34 @@ async function refreshBuffers(client, state) {
     state.buffers = buffers;
 }
 
-function printBuffers(state) {
-    if (!state.buffers || state.buffers.length === 0) {
-        console.log(color("dim", "No channel buffers. Use /create or /invite redeem."));
+function addWindow(state, target) {
+    if (!Array.isArray(state.buffers)) {
+        state.buffers = [];
+    }
+    const index = state.buffers.findIndex((buffer) => buffer.id === target.id);
+    if (index >= 0) {
+        state.buffers[index] = { ...state.buffers[index], ...target };
         return;
     }
-    console.log(color("bold", "Buffers"));
+    state.buffers.unshift({ ...target });
+}
+
+function printWindows(state) {
+    if (!state.buffers || state.buffers.length === 0) {
+        console.log(color("dim", "No open chats. Use /join, /channels, or /user."));
+        return;
+    }
+    console.log(color("bold", "Windows"));
     for (let i = 0; i < state.buffers.length; i++) {
         const buffer = state.buffers[i];
         const marker = buffer.id === state.target?.id ? "*" : " ";
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color("cyan", targetLabel(buffer))} ${color("dim", `(${shortID(buffer.id)})`)}`);
+        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color(buffer.type === "dm" ? "magenta" : "cyan", targetLabel(buffer))}`);
     }
 }
 
 async function switchBuffer(ctx, client, state, number) {
     if (!Number.isFinite(number)) {
-        printBuffers(state);
+        printWindows(state);
         return;
     }
     if (!state.buffers || state.buffers.length === 0) {
@@ -692,11 +837,14 @@ async function switchBuffer(ctx, client, state, number) {
     }
     const buffer = state.buffers[number - 1];
     if (!buffer) {
-        console.log(color("red", `No buffer ${number}.`));
-        printBuffers(state);
+        console.log(color("red", `No window ${number}.`));
+        printWindows(state);
         return;
     }
-    if (buffer.type === "channel") {
+    if (buffer.type === "dm") {
+        const user = await resolveUser(client, buffer.id);
+        await selectDmInChat(ctx, client, state, new Map([[user.userID, user.username]]), user.username, null);
+    } else if (buffer.type === "channel") {
         const channel = await client.channels.retrieveByID(buffer.id);
         if (!channel) throw new Error(`Channel not found: ${buffer.id}`);
         await enterChannel(ctx, client, state, channel, {
@@ -706,9 +854,9 @@ async function switchBuffer(ctx, client, state, number) {
     }
 }
 
-async function printNames(client, state) {
+async function printMembers(client, state) {
     if (state.target?.type !== "channel") {
-        console.log(color("dim", "/names is available in channel buffers."));
+        console.log(color("dim", "/members is available in channels."));
         return;
     }
     const users = await client.channels.userList(state.target.id);
@@ -722,89 +870,33 @@ async function printNames(client, state) {
     }
 }
 
-async function showHome(ctx, client, state, account, rl) {
-    clearScreen();
-    renderHeader(state, account, "Home");
-    console.log("");
-
+async function openServerSelector(ctx, client, state, rl) {
     const servers = await client.servers.retrieve();
     if (servers.length === 0) {
-        console.log(color("yellow", "No servers yet"));
-        console.log("");
-        console.log(color("bold", "Start here:"));
-        console.log(`  ${color("cyan", "/create")}          create a server`);
-        console.log(`  ${color("cyan", "/invite redeem")}   join a server from an invite link`);
-        console.log(`  ${color("cyan", "/dm")}              start a direct message`);
+        console.log(color("dim", "No servers. Use redeem <code> to accept an invite, or /create."));
         return;
     }
-
-    console.log(color("bold", "Servers"));
-    for (let i = 0; i < servers.length; i++) {
-        const server = servers[i];
-        const marker = server.serverID === state.target?.serverID ? "*" : " ";
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color("blue", server.name)} ${color("dim", `(${shortID(server.serverID)})`)}`);
-    }
-    console.log("");
-    console.log(color("dim", "Tip: /dm starts a direct message, /create makes a server, /quit exits."));
-    const answer = await askText(rl, "select server number, or Enter to stay here", "");
-    if (!answer) {
-        return;
-    }
-    const index = Number.parseInt(answer, 10) - 1;
-    const server = servers[index];
-    if (!server) {
-        console.log(color("dim", "No server selected."));
-        return;
-    }
-    await showServer(ctx, client, state, server, rl);
-}
-
-async function showServer(ctx, client, state, server, rl) {
-    clearScreen();
-    const channels = await client.channels.retrieve(server.serverID);
-    renderHeader(state, client.me.user(), server.name);
-    console.log(`${color("dim", "server")} ${server.serverID}`);
-    console.log("");
-
-    if (channels.length === 0) {
-        console.log(color("dim", "No channels."));
-        return;
-    }
-
-    console.log(color("bold", "Channels"));
-    const detailRows = await Promise.all(
-        channels.map(async (channel) => {
-            try {
-                const users = await client.channels.userList(channel.channelID);
-                return { channel, members: users.length };
-            } catch {
-                return { channel, members: null };
-            }
-        }),
+    const rows = await Promise.all(
+        servers.map(async (server) => ({
+            channels: await client.channels.retrieve(server.serverID).catch(() => []),
+            server,
+        })),
     );
-    for (let i = 0; i < detailRows.length; i++) {
-        const { channel, members } = detailRows[i];
-        const marker = channel.channelID === state.target?.id ? "*" : " ";
-        const memberText = members === null ? "" : ` - ${members} member${members === 1 ? "" : "s"}`;
-        console.log(`${color(marker === "*" ? "yellow" : "dim", marker)} ${color("yellow", i + 1)}. ${color("cyan", `#${channel.name}`)} ${color("dim", `(${shortID(channel.channelID)})`)}${color("dim", memberText)}`);
+    const selected = await chooseItem(
+        rl,
+        "server",
+        rows,
+        ({ channels, server }) => {
+            const marker = server.serverID === state.target?.serverID ? "* " : "";
+            const channelText = channels.length === 1 ? "1 channel" : `${channels.length} channels`;
+            return `${color(server.serverID === state.target?.serverID ? "yellow" : "blue", `${marker}${server.name}`)} ${color("dim", channelText)}`;
+        },
+    );
+    if (!selected) return;
+    const channel = await chooseChannelFromServer(client, selected.server, rl);
+    if (channel) {
+        await enterChannel(ctx, client, state, channel, selected.server);
     }
-    console.log("");
-    console.log(color("dim", "Tip: choose a channel to enter chat, b goes back."));
-    const answer = await askText(rl, "select channel number, b for back, or Enter to stay here", "");
-    if (!answer) {
-        return;
-    }
-    if (answer.toLowerCase() === "b") {
-        await showHome(ctx, client, state, client.me.user(), rl);
-        return;
-    }
-    const index = Number.parseInt(answer, 10) - 1;
-    const row = detailRows[index];
-    if (!row) {
-        console.log(color("dim", "No channel selected."));
-        return;
-    }
-    await enterChannel(ctx, client, state, row.channel, server);
 }
 
 async function enterChannel(ctx, client, state, channel, server = null) {
@@ -818,9 +910,7 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     await saveTarget(ctx, state.target);
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
-    console.log(`${color("dim", "channel")} ${channel.channelID}`);
-    console.log(color("green", "You are in chat. Type a message and press Enter."));
-    console.log(color("dim", "Commands: /home switch channel  /dm direct message  /invite invite link  /menu actions  /quit exit"));
+    console.log(color("dim", "/join server  /channels open  /window switch  /user open DM  /dm send  /invite create  redeem invite"));
     console.log("");
     const history = await client.messages.retrieveGroup(channel.channelID);
     if (history.length === 0) {
@@ -840,8 +930,12 @@ async function chat(ctx, args) {
         buffers: [],
         host: ctx.clientOptions.host,
         renderedMessageKeys: new Map(),
+        serverMemberCache: new Map(),
         target: config.lastTarget ?? null,
     };
+    if (state.target?.type === "dm") {
+        addWindow(state, state.target);
+    }
     const names = new Map([[account.userID, account.username]]);
     let rl = null;
 
@@ -849,44 +943,61 @@ async function chat(ctx, args) {
         if (shouldSkipRenderedMessage(state, message)) {
             return;
         }
+        const route = await messageRoute(client, state, message);
+        if (!route.render) {
+            if (message.direction === "incoming" && route.isDm) {
+                playIncomingSound(ctx.sound);
+                notifyIncomingDm(await cachedUsername(client, names, message.authorID), message.message);
+            }
+            return;
+        }
         if (!message.decrypted) {
             renderChatLine(rl, state, `[undecrypted] ${message.mailID}`);
             return;
         }
         const author = await cachedUsername(client, names, message.authorID);
-        const target =
-            message.group && message.group === state.target?.id
-                ? targetLabel(state.target)
-                : message.group
-                  ? `#${shortID(message.group)}`
-                  : "dm";
         renderChatLine(
             rl,
             state,
             formatMessageLine({
                 direction: message.direction,
+                isDm: route.isDm,
                 message: message.message,
-                target,
+                target: route.target,
                 timestamp: message.timestamp,
                 who: author,
             }),
         );
+        if (message.direction === "incoming") {
+            playIncomingSound(ctx.sound);
+            if (route.isDm && !route.isActiveDm) {
+                notifyIncomingDm(author, message.message);
+            }
+        }
+        const inviteID = message.direction === "incoming" ? extractInviteID(message.message) : null;
+        if (inviteID) {
+            try {
+                const preview = await fetchInvitePreview(client, inviteID);
+                renderChatLine(
+                    rl,
+                    state,
+                    `${color("yellow", "invite")} ${color("blue", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)} ${color("dim", `- type redeem ${inviteID}`)}`,
+                );
+            } catch {
+                renderChatLine(rl, state, `${color("yellow", "invite")} ${color("dim", `type redeem ${inviteID} to inspect it`)}`);
+            }
+        }
     });
 
     await connectAndWait(client);
     await refreshBuffers(client, state);
 
     rl = createInterface({ input, output, prompt: promptFor(state) });
-    if (!ctx.noHome) {
-        await showHome(ctx, client, state, account, rl);
+    renderHeader(state, account, state.target ? targetLabel(state.target) : "Chat");
+    if (state.target) {
+        console.log(`${color("dim", state.target.type === "dm" ? "current DM" : "current channel")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`);
     } else {
-        renderHeader(state, account, "Chat");
-        console.log(color("dim", "Type /home to pick a server/channel, /dm for DMs, /menu for actions."));
-        if (state.target) {
-            console.log(`${color("dim", "current target")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`);
-        } else {
-            console.log(color("yellow", "no target selected yet"));
-        }
+        console.log(color("yellow", "No chat open yet. Use /join, /channels, /user, or /nav."));
     }
     safeSetPrompt(rl, promptFor(state));
     safePrompt(rl);
@@ -895,156 +1006,104 @@ async function chat(ctx, args) {
         const trimmed = line.trim();
         try {
             if (!trimmed) {
+                clearActivePrompt();
                 safePrompt(rl);
                 continue;
             }
             if (trimmed === "/quit" || trimmed === "/exit") break;
             if (trimmed === "/help") {
                 printInteractiveHelp();
-            } else if (trimmed === "/home" || trimmed === "/servers") {
-                await showHome(ctx, client, state, account, rl);
-            } else if (trimmed === "/menu") {
-                await interactiveMenu(ctx, client, state, names, rl);
             } else if (trimmed === "/whoami") {
                 printWhoami(client);
-            } else if (trimmed === "/me") {
-                printWhoami(client);
-            } else if (trimmed === "/clear") {
-                clearScreen();
-                renderHeader(state, account, state.target ? targetLabel(state.target) : "Chat");
-            } else if (trimmed === "/accounts" || trimmed === "/users") {
+            } else if (trimmed === "/accounts") {
                 await listAccounts(ctx);
-            } else if (trimmed === "/target") {
-                console.log(state.target ? color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target)) : color("yellow", "no target selected"));
-            } else if (trimmed === "/buffers" || trimmed === "/windows" || trimmed === "/window") {
+            } else if (trimmed === "/servers") {
+                printServers(await client.servers.retrieve());
+            } else if (trimmed === "/server" || trimmed === "/join") {
+                await selectServerByName(ctx, client, state, "", rl);
+            } else if (trimmed.startsWith("/server ")) {
+                await selectServerByName(ctx, client, state, trimmed.slice(8).trim(), rl);
+            } else if (trimmed.startsWith("/join ")) {
+                await selectServerByName(ctx, client, state, trimmed.slice(6).trim(), rl);
+            } else if (trimmed === "/channels") {
+                if (state.target?.type === "channel" && state.target.serverID) {
+                    const server = { name: state.target.serverName ?? "server", serverID: state.target.serverID };
+                    const channel = await chooseChannelFromServer(client, server, rl);
+                    if (channel) await enterChannel(ctx, client, state, channel, server);
+                } else {
+                    await selectChannelByName(ctx, client, state, "", rl);
+                }
+            } else if (trimmed.startsWith("/channels ")) {
+                console.log(color("dim", "Use /channels, then choose a channel by number."));
+            } else if (trimmed === "/window") {
                 await refreshBuffers(client, state);
-                printBuffers(state);
-            } else if (trimmed.startsWith("/buffer ") || trimmed.startsWith("/window ")) {
+                printWindows(state);
+            } else if (trimmed.startsWith("/window ")) {
                 const number = Number.parseInt(splitWords(trimmed)[1] ?? "", 10);
                 await switchBuffer(ctx, client, state, number);
-            } else if (trimmed === "/server list") {
-                printServers(await client.servers.retrieve());
-            } else if (trimmed === "/channels") {
-                const server = await chooseServer(client, rl);
-                if (server) printChannels(await client.channels.retrieve(server.serverID));
-            } else if (trimmed.startsWith("/channels ")) {
-                printChannels(await client.channels.retrieve(trimmed.slice(10).trim()));
-            } else if (trimmed === "/create" || trimmed === "/new" || trimmed === "/create server") {
+            } else if (trimmed === "/channel" || trimmed.startsWith("/channel ")) {
+                console.log(color("dim", "Use /channels to choose a channel."));
+            } else if (trimmed === "/create" || trimmed === "/create server") {
                 await createServerInChat(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("/create server ")) {
                 const name = trimmed.slice(15).trim();
                 await createServerInChat(ctx, client, state, name, rl);
-            } else if (trimmed.startsWith("/create invite")) {
-                const rest = splitWords(trimmed.slice(14));
-                await createInviteInteractive(ctx, client, state, rest, rl);
-            } else if (trimmed === "/to" || trimmed === "/dm") {
+            } else if (trimmed === "/dm") {
+                await sendDmInChat(ctx, client, state, names, "", [], rl);
+            } else if (trimmed.startsWith("/dm ")) {
+                const [identifier, ...messageParts] = splitWords(trimmed.slice(4));
+                if (messageParts.length === 0) {
+                    await selectDmInChat(ctx, client, state, names, identifier, rl);
+                } else {
+                    await sendDmInChat(ctx, client, state, names, identifier, messageParts, rl);
+                }
+            } else if (trimmed.startsWith("dm ")) {
+                const [identifier, ...messageParts] = splitWords(trimmed.slice(3));
+                if (messageParts.length === 0) {
+                    await selectDmInChat(ctx, client, state, names, identifier, rl);
+                } else {
+                    await sendDmInChat(ctx, client, state, names, identifier, messageParts, rl);
+                }
+            } else if (trimmed === "/to") {
                 await selectDmInChat(ctx, client, state, names, "", rl);
             } else if (trimmed.startsWith("/to ")) {
-                const [identifier, ...messageParts] = splitWords(trimmed.slice(4));
-                const user = await selectDmInChat(ctx, client, state, names, identifier, rl);
-                if (messageParts.length > 0) {
-                    const message = messageParts.join(" ");
-                    await client.messages.send(user.userID, message);
-                    console.log(color("green", `[sent] ${message}`));
-                }
-            } else if (trimmed.startsWith("/query ")) {
-                const identifier = trimmed.slice(7).trim();
-                await selectDmInChat(ctx, client, state, names, identifier, rl);
-            } else if (trimmed.startsWith("/msg ")) {
-                const [identifier, ...messageParts] = splitWords(trimmed.slice(5));
-                const user = await resolveUser(client, identifier);
-                names.set(user.userID, user.username);
-                const message = messageParts.join(" ").trim();
-                if (!message) {
-                    state.target = { id: user.userID, label: user.username, type: "dm" };
-                    await saveTarget(ctx, state.target);
-                    console.log(`${color("magenta", "query")} ${color("green", user.username)}`);
-                } else {
-                    await client.messages.send(user.userID, message);
-                    console.log(`${color("green", `[msg -> ${user.username}]`)} ${message}`);
-                }
-            } else if (trimmed === "/join" || trimmed === "/channel" || trimmed === "/channel use") {
-                await selectChannelInChat(ctx, client, state, "", rl);
-            } else if (trimmed.startsWith("/join ")) {
-                const channelID = trimmed.slice(6).trim();
-                await selectChannelInChat(ctx, client, state, channelID, rl);
-            } else if (trimmed === "/channel create") {
-                const server = await chooseServer(client, rl);
-                if (server) {
-                    const name = await askText(rl, "channel name");
-                    if (!name) throw new Error("Channel name is required.");
-                    const channel = await client.channels.create(name, server.serverID);
-                    await refreshBuffers(client, state);
-                    console.log(`${color("green", "created channel")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`);
-                }
-            } else if (trimmed.startsWith("/channel create ")) {
-                const [serverID, ...nameParts] = splitWords(trimmed.slice(16));
-                const channel = await client.channels.create(nameParts.join(" "), serverID);
-                await refreshBuffers(client, state);
-                console.log(`${color("green", "created channel")} ${color("cyan", `#${channel.name}`)} ${color("dim", channel.channelID)}`);
-            } else if (trimmed.startsWith("/channel use ")) {
-                const channelID = trimmed.slice(13).trim();
-                await selectChannelInChat(ctx, client, state, channelID, rl);
-            } else if (trimmed === "/server" || trimmed === "/server create") {
-                await createServerInChat(ctx, client, state, "", rl);
-            } else if (trimmed.startsWith("/server create ")) {
-                const name = trimmed.slice(15).trim();
-                await createServerInChat(ctx, client, state, name, rl);
-            } else if (trimmed === "/invite redeem") {
-                const invite = await askText(rl, "invite link or id");
-                const permission = await client.invites.redeem(parseInviteID(invite));
-                console.log(`${color("green", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`);
-            } else if (trimmed.startsWith("/invite create ")) {
-                const [serverID, duration = "1h"] = splitWords(trimmed.slice(15));
-                const invite = await client.invites.create(serverID, duration);
-                printInvite(invite);
-            } else if (trimmed.startsWith("/invite redeem ")) {
-                const permission = await client.invites.redeem(parseInviteID(trimmed.slice(15).trim()));
-                console.log(`${color("green", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`);
+                await selectDmInChat(ctx, client, state, names, trimmed.slice(4).trim(), rl);
+            } else if (trimmed === "/user") {
+                await selectDmInChat(ctx, client, state, names, "", rl);
+            } else if (trimmed.startsWith("/user ")) {
+                await selectDmInChat(ctx, client, state, names, trimmed.slice(6).trim(), rl);
+            } else if (trimmed === "/nav") {
+                await navigateInChat(ctx, client, state, names, rl);
+            } else if (trimmed.startsWith("/nav ")) {
+                console.log(color("dim", "Use /nav, then choose a channel or DM."));
+            } else if (trimmed === "redeem" || trimmed === "/redeem") {
+                await joinInviteInChat(ctx, client, state, "", rl);
+            } else if (trimmed.startsWith("redeem ")) {
+                await joinInviteInChat(ctx, client, state, trimmed.slice(7).trim(), rl);
+            } else if (trimmed.startsWith("/redeem ")) {
+                await joinInviteInChat(ctx, client, state, trimmed.slice(8).trim(), rl);
+            } else if (trimmed === "/invite redeem" || trimmed.startsWith("/invite redeem ")) {
+                console.log(color("dim", "Use redeem <invite-code-or-link> to accept a server invite."));
             } else if (trimmed === "/invite" || trimmed.startsWith("/invite ")) {
                 const rest = splitWords(trimmed.slice(7));
                 await createInviteInteractive(ctx, client, state, rest, rl);
-            } else if (trimmed.startsWith("/dm ")) {
-                const [identifier, ...messageParts] = splitWords(trimmed.slice(4));
-                const user = await selectDmInChat(ctx, client, state, names, identifier, rl);
-                if (messageParts.length > 0) {
-                    const message = messageParts.join(" ");
-                    await client.messages.send(user.userID, message);
-                    console.log(color("green", `[sent] ${message}`));
-                } else {
-                    console.log(`${color("magenta", "dm")} ${color("green", user.username)}`);
-                }
-            } else if (trimmed.startsWith("/group ")) {
-                const [channelID, ...messageParts] = splitWords(trimmed.slice(7));
-                const channel = await client.channels.retrieveByID(channelID);
-                state.target = {
-                    id: channelID,
-                    label: channel ? `#${channel.name}` : `#${shortID(channelID)}`,
-                    serverID: channel?.serverID,
-                    type: "channel",
-                };
-                await saveTarget(ctx, state.target);
-                if (messageParts.length > 0) {
-                    const message = messageParts.join(" ");
-                    await client.messages.group(channelID, message);
-                    console.log(color("green", `[sent] ${message}`));
-                } else {
-                    console.log(`${color("green", "joined")} ${color("cyan", state.target.label)}`);
-                }
+            } else if (trimmed === "/members") {
+                await printMembers(client, state);
             } else if (trimmed === "/names") {
-                await printNames(client, state);
+                console.log(color("dim", "Use /members to list people in the current channel."));
             } else if (trimmed === "/history") {
-                await printCurrentHistory(client, state);
+                console.log(color("dim", "Recent history is shown when you open a chat."));
             } else if (state.target?.type === "dm") {
                 await client.messages.send(state.target.id, trimmed);
             } else if (state.target?.type === "channel") {
                 await client.messages.group(state.target.id, trimmed);
             } else {
-                console.log(color("yellow", "No buffer selected. Use /home, /window, /join, or /query <user>."));
+                console.log(color("yellow", "No chat open. Use /join, /channels, /user, or /nav."));
             }
         } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
         }
+        clearActivePrompt();
         safeSetPrompt(rl, promptFor(state));
         safePrompt(rl);
     }
@@ -1209,12 +1268,21 @@ function looksLikeUUID(value) {
     return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
+function looksLikeDuration(value) {
+    return typeof value === "string" && /^\d+(?:ms|s|m|h|d|w|mo|y)?$/i.test(value);
+}
+
 function parseInviteID(value) {
     const trimmed = value.trim();
     if (looksLikeUUID(trimmed)) return trimmed;
     const match = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     if (!match) throw new Error(`Invalid invite: ${value}`);
     return match[0];
+}
+
+function extractInviteID(value) {
+    const match = value.match(/vex:\/\/invite\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    return match?.[1] ?? null;
 }
 
 function inviteLink(inviteID) {
@@ -1233,8 +1301,74 @@ function clearActivePrompt() {
 
 function clearSubmittedPrompt() {
     if (input.isTTY && output.isTTY) {
-        output.write("\x1b[1A\r\x1b[2K");
+        output.write("\r\x1b[2K\x1b[1A\r\x1b[2K");
     }
+}
+
+async function messageRoute(client, state, message) {
+    const isDm = !message.group;
+    if (!isDm) {
+        const isActiveChannel = state.target?.type === "channel" && state.target.id === message.group;
+        return {
+            isActiveDm: false,
+            isDm: false,
+            render: isActiveChannel,
+            target: isActiveChannel ? targetLabel(state.target) : `#${shortID(message.group)}`,
+        };
+    }
+
+    const peerID = dmPeerID(state, message);
+    const isActiveDm = state.target?.type === "dm" && state.target.id === peerID;
+    if (isActiveDm) {
+        return {
+            isActiveDm: true,
+            isDm: true,
+            render: true,
+            target: targetLabel(state.target),
+        };
+    }
+
+    const canInlineInServer =
+        state.target?.type === "channel" &&
+        state.target.serverID &&
+        peerID &&
+        await userSharesServer(client, state, state.target.serverID, peerID);
+
+    return {
+        isActiveDm: false,
+        isDm: true,
+        render: Boolean(canInlineInServer),
+        target: "DM",
+    };
+}
+
+function dmPeerID(state, message) {
+    if (message.direction === "outgoing") {
+        return message.readerID === state.account?.userID ? message.authorID : message.readerID;
+    }
+    return message.authorID;
+}
+
+async function userSharesServer(client, state, serverID, userID) {
+    const key = `${serverID}:${userID}`;
+    const cached = state.serverMemberCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+    }
+    const value = await serverHasUser(client, serverID, userID).catch(() => false);
+    state.serverMemberCache.set(key, { expiresAt: Date.now() + 30_000, value });
+    return value;
+}
+
+async function serverHasUser(client, serverID, userID) {
+    const channels = await client.channels.retrieve(serverID);
+    for (const channel of channels) {
+        const users = await client.channels.userList(channel.channelID).catch(() => []);
+        if (users.some((user) => user.userID === userID)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function color(name, value) {
@@ -1262,9 +1396,48 @@ function isTarget(value) {
     );
 }
 
-function renderChatLine(rl, line) {
+function renderChatLine(rl, state, line) {
+    const activeLine = rl?.line ?? "";
+    const activeCursor = rl?.cursor ?? activeLine.length;
     clearActivePrompt();
     output.write(`${line}\n`);
+    restoreActivePrompt(rl, state, activeLine, activeCursor);
+}
+
+function restoreActivePrompt(rl, state, line, cursor) {
+    if (!rl || !input.isTTY || !output.isTTY) return;
+    output.write(`${promptFor(state)}${line}`);
+    const offset = line.length - cursor;
+    if (offset > 0) {
+        output.write(`\x1b[${offset}D`);
+    }
+}
+
+function shouldSkipRenderedMessage(state, message) {
+    const key = renderMessageKey(message);
+    const now = Date.now();
+    for (const [cachedKey, expiresAt] of state.renderedMessageKeys) {
+        if (expiresAt <= now) {
+            state.renderedMessageKeys.delete(cachedKey);
+        }
+    }
+    if (state.renderedMessageKeys.has(key)) {
+        return true;
+    }
+    state.renderedMessageKeys.set(key, now + 1_000);
+    return false;
+}
+
+function renderMessageKey(message) {
+    if (message.direction === "outgoing") {
+        const target = message.group ?? message.readerID ?? "unknown";
+        return `out:${message.authorID}:${target}:${message.message}`;
+    }
+    if (message.mailID) {
+        return `mail:${message.mailID}`;
+    }
+    const target = message.group ?? message.readerID ?? "unknown";
+    return `in:${message.authorID}:${target}:${message.timestamp}:${message.message}`;
 }
 
 function safePrompt(rl, preserveCursor = false) {
@@ -1289,9 +1462,8 @@ function safeSetPrompt(rl, prompt) {
 
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
-    const bufferNumber = bufferIndex(state);
-    const buffer = state.target ? targetLabel(state.target) : "no-buffer";
-    return `${color("green", user)}${color("dim", "[")}${color("yellow", bufferNumber ?? "-")}${color("dim", ":")}${color(state.target?.type === "dm" ? "magenta" : "cyan", buffer)}${color("dim", "]")}> `;
+    const target = state.target ? targetLabel(state.target) : "no-channel";
+    return `${color("green", user)} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}${color("dim", " >")} `;
 }
 
 function bufferIndex(state) {
@@ -1323,13 +1495,8 @@ function renderHeader(state, user, title) {
     const host = state.host ?? "unknown-host";
     const target = state.target ? targetLabel(state.target) : "no chat selected";
     console.log(color("reverse", " vex chat "));
-    console.log(color("dim", "=".repeat(72)));
-    const bufferNumber = bufferIndex(state);
-    const bufferText = bufferNumber ? `buffer ${bufferNumber}` : "no buffer";
-    console.log(`${color("bold", title)}  ${color("yellow", `(${bufferText})`)}`);
-    console.log(`signed in as ${color("green", username)}  ${color("dim", "|")}  server ${color("blue", host)}  ${color("dim", "|")}  target ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`);
-    console.log(color("dim", "commands /window /join /query /msg /names /history /clear /help"));
-    console.log(color("dim", "=".repeat(72)));
+    console.log(`${color("bold", title)} ${color("dim", "|")} ${color("green", username)} ${color("dim", "on")} ${color("blue", host)} ${color("dim", "|")} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`);
+    console.log(color("dim", "/nav /join /channels /window /user /dm /invite redeem /members /help"));
 }
 
 function printWhoami(client) {
@@ -1352,7 +1519,7 @@ function printServers(servers) {
         return;
     }
     for (const server of servers) {
-        console.log(`${color("blue", server.name)} ${color("dim", server.serverID)}`);
+        console.log(color("blue", server.name));
     }
 }
 
@@ -1369,10 +1536,68 @@ function printChannels(channels) {
 function printInvite(invite) {
     const link = inviteLink(invite.inviteID);
     console.log(`${color("green", "invite")} ${color("yellow", link)}`);
-    console.log(`${color("dim", "id")} ${invite.inviteID}`);
-    console.log(`${color("dim", "server")} ${invite.serverID}`);
-    console.log(`${color("dim", "expires")} ${invite.expires}`);
-    console.log(`${color("dim", "redeem:")} /invite redeem ${link}`);
+    console.log(`${color("dim", "expires")} ${invite.expiration ?? invite.expires}`);
+    console.log(`${color("dim", "share this link to invite someone to the server")}`);
+}
+
+function printInvitePreview(preview) {
+    console.log(color("bold", "Server invite"));
+    const serverName = preview.server?.name ?? "Server details unavailable until Spire is updated";
+    console.log(`${color("blue", serverName)} ${formatInviteChannelSummary(preview.channels)}`);
+    console.log(`${color("dim", "expires")} ${formatMessageTime(preview.invite.expiration)}`);
+}
+
+function formatInviteChannelSummary(channels) {
+    if (!channels || channels.length === 0) {
+        return color("dim", "- no channels");
+    }
+    const names = channels.slice(0, 3).map((channel) => `#${channel.name}`).join(", ");
+    const extra = channels.length > 3 ? ` +${channels.length - 3} more` : "";
+    return color("cyan", `- ${names}${extra}`);
+}
+
+function playIncomingSound(sound) {
+    if (!sound) return;
+    if (output.isTTY) {
+        output.write("\x07");
+    }
+    const audioFile = resolveSoundFile(sound);
+    if (!audioFile) return;
+    const player = process.platform === "darwin" ? "afplay" : "paplay";
+    execFile(player, [audioFile], { timeout: 2_000 }, () => {});
+}
+
+function resolveSoundFile(sound) {
+    if (sound.includes("/") || sound.includes(".")) {
+        return path.resolve(sound.replace(/^~/, os.homedir()));
+    }
+    if (process.platform === "darwin") {
+        return `/System/Library/Sounds/${sound}.aiff`;
+    }
+    return null;
+}
+
+function notifyIncomingDm(author, message) {
+    if (process.platform !== "darwin") {
+        return;
+    }
+    const title = `DM from ${author}`;
+    const body = truncateNotification(message);
+    execFile(
+        "osascript",
+        ["-e", `display notification ${appleScriptString(body)} with title ${appleScriptString(title)}`],
+        { timeout: 1_000 },
+        () => {},
+    );
+}
+
+function truncateNotification(value) {
+    const clean = String(value).replace(/\s+/g, " ").trim();
+    return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
+}
+
+function appleScriptString(value) {
+    return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function printMessages(messages) {
@@ -1381,10 +1606,11 @@ function printMessages(messages) {
         return;
     }
     for (const message of messages) {
-        const target = message.group ? `#${shortID(message.group)}` : "dm";
+        const target = message.group ? `#${shortID(message.group)}` : "DM";
         const who = message.direction === "outgoing" ? "you" : shortID(message.authorID);
         console.log(formatMessageLine({
             direction: message.direction,
+            isDm: !message.group,
             message: message.message,
             target,
             timestamp: message.timestamp,
@@ -1393,20 +1619,18 @@ function printMessages(messages) {
     }
 }
 
-function formatMessageLine({ direction, message, target, timestamp, who }) {
-    const dirColor = direction === "outgoing" ? "green" : "magenta";
-    const targetColor = target === "dm" ? "magenta" : "cyan";
-    return `${color("dim", `[${formatMessageTime(timestamp)}]`)} ${color(dirColor, direction.padEnd(8))} ${color(targetColor, target)} ${color("yellow", who)}${color("dim", ":")} ${message}`;
+function formatMessageLine({ direction, isDm = false, message, target, timestamp, who }) {
+    const whoColor = direction === "outgoing" ? "green" : "yellow";
+    const targetColor = isDm ? "magenta" : "cyan";
+    return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${color(whoColor, who)}${color("dim", ":")} ${message}`;
 }
 
 function formatMessageTime(timestamp) {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return timestamp;
-    return date.toLocaleString([], {
-        day: "2-digit",
+    return date.toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
-        month: "short",
     });
 }
 
@@ -1420,14 +1644,7 @@ Commands:
   vex auth register <username>
   vex auth accounts
   vex auth use <username>
-  vex dm send <user> <message>
-  vex server list
-  vex server create <name>
-  vex channel list <server-id>
-  vex channel use <channel-id>
-  vex send [channel-id] <message>
-  vex invite create <server-id> [duration]
-  vex invite redeem <invite-id-or-link>
+  vex whoami
 
 Flags:
   --username <name>      local account to use
@@ -1437,54 +1654,35 @@ Flags:
   --http                 use http/ws
   --dev-key <key>        send x-dev-api-key
   --data-dir <dir>       local CLI account and sqlite storage
-  --no-home              skip startup server picker
+  --sound <name-or-path> incoming message sound, default Glass; use off to disable
+
+Once chat is open, type /help for chat commands.
 `);
 }
 
 function printInteractiveHelp() {
-    console.log(`IRC-ish basics
+    console.log(`${color("bold", "Chat commands")}
 
-/window                      list channel buffers
-/window <n>                  switch to buffer n
-/buffer <n>                  same as /window <n>
-/join                        choose a channel
-/join <channel-id>           join channel by id
-/query <user>                open a DM buffer
-/msg <user> <message>        send a DM without switching
-/names                       list visible members in current channel
-/clear                       redraw current header
-/home                        server and channel picker
-/history                     recent local history
+${color("cyan", "/nav")}                   open a channel or DM
+${color("cyan", "/join [server]")}         choose a server, then a channel
+${color("cyan", "/servers")}               list your servers
+${color("cyan", "/channels")}              choose a channel
+${color("cyan", "/window")}                list open chats
+${color("cyan", "/window <number>")}       switch to an open chat
+${color("cyan", "/user <user>")}           open a DM conversation
+${color("cyan", "/dm <user>")}             open a DM conversation
+${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
+${color("cyan", "/to <user>")}             open a DM conversation
+${color("cyan", "/invite")}                create an invite for the current server
+${color("cyan", "/invite <user>")}         send an invite link by DM
+${color("cyan", "redeem <code>")}          preview and accept a server invite
+${color("cyan", "/create")}                create a server and enter #general
+${color("cyan", "/members")}               list people in the current channel
+${color("cyan", "/accounts")}              list local users
+${color("cyan", "/whoami")}                show your login
+${color("cyan", "/quit")}                  leave chat
 
-Plain text sends to the selected buffer.
-
-/menu                         guided menu
-/home                         server and channel picker
-/accounts                     list local users
-/dm                           choose a DM
-/to                           choose a DM
-/join                         choose a channel
-/channels                     choose a server, then list channels
-/create                       create a server and join #general
-/invite                       create invite link for current server
-/invite redeem                paste an invite link
-
-/to <user> [message]          select a DM, optionally send
-/join <channel-id>            select a channel by id
-/create server <name>         create a server and join #general
-/invite <server-id> [duration] create invite link for server
-/servers
-/channels <server-id>
-/server create <name>
-/channel create <server-id> <name>
-/channel use <channel-id>
-/invite create <server-id> [duration]
-/invite redeem <invite-id-or-link>
-/history
-/target
-/me
-/whoami
-/quit`);
+Plain text sends to the current channel or DM.`);
 }
 
 main()

@@ -64,7 +64,7 @@ const aliceReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             aliceSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/menu")) resolve();
+            if (chunk.toLowerCase().includes("/nav")) resolve();
         },
     }).catch((err) => {
         throw err;
@@ -78,7 +78,7 @@ const bobReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             bobSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/menu")) resolve();
+            if (chunk.toLowerCase().includes("/nav")) resolve();
         },
     }).catch((err) => {
         throw err;
@@ -92,7 +92,7 @@ const caraReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             caraSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/menu")) resolve();
+            if (chunk.toLowerCase().includes("/nav")) resolve();
         },
     }).catch((err) => {
         throw err;
@@ -100,33 +100,39 @@ const caraReady = waitFor((resolve) => {
 });
 await Promise.all([aliceReady, bobReady, caraReady]);
 
-aliceChild.stdin.write(`/to ${users[1]}\n`);
-aliceChild.stdin.write("hello-bob\n");
+bobChild.stdin.write(`/dm ${users[0]}\n`);
+await waitUntil(() => bobSeen.join("").includes(`@${users[0]}`), "bob dm focus");
+aliceChild.stdin.write(`/dm ${users[1]} hello-bob\n`);
 await waitUntil(() => bobSeen.join("").includes("hello-bob"), "bob dm");
 
 aliceChild.stdin.write("/create server smoke\n");
 await waitUntil(() => aliceSeen.join("").includes("created server smoke"), "server create");
 const createdOutput = aliceSeen.join("");
-const serverID = createdOutput.match(/server ([0-9a-f-]{36})/)?.[1];
-const channelID =
-    createdOutput.match(/joined #\S+ ([0-9a-f-]{36})/)?.[1] ??
-    createdOutput.match(/channel ([0-9a-f-]{36})/)?.[1];
-if (!serverID || !channelID) throw new Error(`Could not parse server/channel:\n${createdOutput}`);
+if (!createdOutput.includes("created server smoke")) throw new Error(`Could not confirm server creation:\n${createdOutput}`);
 
 aliceChild.stdin.write("/invite 1h\n");
 await waitUntil(() => aliceSeen.join("").includes("vex://invite/"), "invite create");
 const inviteID = aliceSeen.join("").match(/vex:\/\/invite\/([0-9a-f-]{36})/)?.[1];
 if (!inviteID) throw new Error(`Could not parse invite:\n${aliceSeen.join("")}`);
 
-bobChild.stdin.write(`/invite redeem vex://invite/${inviteID}\n`);
-caraChild.stdin.write(`/invite redeem vex://invite/${inviteID}\n`);
-await waitUntil(() => bobSeen.join("").includes("redeemed invite"), "bob redeem");
-await waitUntil(() => caraSeen.join("").includes("redeemed invite"), "cara redeem");
+bobChild.stdin.write(`redeem vex://invite/${inviteID}\n`);
+caraChild.stdin.write(`redeem vex://invite/${inviteID}\n`);
+await waitUntil(() => bobSeen.join("").includes("join this server"), "bob join prompt");
+await waitUntil(() => caraSeen.join("").includes("join this server"), "cara join prompt");
+bobChild.stdin.write("y\n");
+caraChild.stdin.write("y\n");
+await waitUntil(() => bobSeen.join("").includes("joined smoke"), "bob join");
+await waitUntil(() => caraSeen.join("").includes("joined smoke"), "cara join");
 
-aliceChild.stdin.write(`/join ${channelID}\n`);
 aliceChild.stdin.write("hello-channel\n");
 await waitUntil(() => bobSeen.join("").includes("hello-channel"), "bob group");
 await waitUntil(() => caraSeen.join("").includes("hello-channel"), "cara group");
+
+bobChild.stdin.write("/join smoke\n");
+await waitUntil(() => bobSeen.join("").includes("channel number"), "bob server channel picker");
+bobChild.stdin.write("\n");
+aliceChild.stdin.write(`/dm ${users[1]} server-dm-inline\n`);
+await waitUntil(() => bobSeen.join("").includes("server-dm-inline"), "bob server-scoped dm notice");
 
 aliceChild?.stdin?.write("/quit\n");
 bobChild?.stdin?.write("/quit\n");
