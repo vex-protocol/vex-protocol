@@ -151,21 +151,33 @@ const checkAuth: express.RequestHandler = (req, _res, next) => {
     next();
 };
 
-const checkDevice: express.RequestHandler = (req, _res, next) => {
-    const token = req.headers["x-device-token"];
-    if (typeof token === "string" && token) {
-        try {
-            const result = jwt.verify(token, getJwtSecret());
-            const parsed = jwtDevicePayload.safeParse(result);
-            if (parsed.success) {
-                req.device = parsed.data.device;
+export const createCheckDevice =
+    (db: Database): express.RequestHandler =>
+    async (req, _res, next) => {
+        const token = req.headers["x-device-token"];
+        if (typeof token === "string" && token) {
+            try {
+                const result = jwt.verify(token, getJwtSecret());
+                const parsed = jwtDevicePayload.safeParse(result);
+                if (parsed.success) {
+                    const tokenDevice = parsed.data.device;
+                    const currentDevice = await db.retrieveDevice(
+                        tokenDevice.deviceID,
+                    );
+                    if (
+                        currentDevice &&
+                        currentDevice.owner === tokenDevice.owner &&
+                        currentDevice.signKey === tokenDevice.signKey
+                    ) {
+                        req.device = currentDevice;
+                    }
+                }
+            } catch {
+                // Device token verification failed — continue without device
             }
-        } catch {
-            // Device token verification failed — continue without device
         }
-    }
-    next();
-};
+        next();
+    };
 
 export const protect: express.RequestHandler = (req, res, next) => {
     if (!req.user) {
@@ -256,7 +268,9 @@ export const initApp = (
 
     // CORS before helmet/auth so browser preflight (OPTIONS) and PATCH get
     // Access-Control-* headers. Node clients ignore CORS; browsers do not.
-    // Set `CORS_ORIGINS` to a comma-separated allowlist to restrict frontends.
+    // Set `CORS_ORIGINS` to a comma-separated allowlist for browser frontends.
+    // Development reflects origins for localhost/Tauri ergonomics. Production
+    // requires an explicit allowlist; non-browser clients do not use CORS.
     const corsRaw = process.env["CORS_ORIGINS"];
     const corsOrigins = corsRaw
         ? corsRaw
@@ -279,14 +293,16 @@ export const initApp = (
             origin:
                 corsOrigins.length > 0
                     ? corsOrigins
-                    : true /* reflect request Origin */,
+                    : process.env["NODE_ENV"] === "production"
+                      ? false
+                      : true /* reflect request Origin */,
         }),
     );
 
     api.use(helmet());
     api.use(msgpackParser);
     api.use(checkAuth);
-    api.use(checkDevice);
+    api.use(createCheckDevice(db));
 
     api.get("/server/:id", protect, async (req, res) => {
         const server = await db.retrieveServer(getParam(req, "id"));
