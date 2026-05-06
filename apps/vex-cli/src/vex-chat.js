@@ -1829,12 +1829,6 @@ function totalUnreadDms(state) {
     return total;
 }
 
-function bufferIndex(state) {
-    if (!state.target || !Array.isArray(state.buffers)) return null;
-    const index = state.buffers.findIndex((buffer) => buffer.id === state.target.id);
-    return index >= 0 ? index + 1 : null;
-}
-
 function targetLabel(target) {
     if (target.type === "channel") {
         return target.serverName ? `${target.serverName}/${target.label}` : target.label;
