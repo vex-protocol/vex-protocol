@@ -149,11 +149,34 @@ export class DeviceApprovalRequiredError extends Error {
     }
 }
 
+function cloneNullableBytes(value: null | Uint8Array): null | Uint8Array {
+    return value ? new Uint8Array(value) : null;
+}
+
+function cloneSessionCrypto(session: SessionCrypto): SessionCrypto {
+    return {
+        ...session,
+        CKr: cloneNullableBytes(session.CKr),
+        CKs: cloneNullableBytes(session.CKs),
+        DHr: cloneNullableBytes(session.DHr),
+        DHsPrivate: new Uint8Array(session.DHsPrivate),
+        DHsPublic: new Uint8Array(session.DHsPublic),
+        fingerprint: new Uint8Array(session.fingerprint),
+        publicKey: new Uint8Array(session.publicKey),
+        RK: new Uint8Array(session.RK),
+        SK: new Uint8Array(session.SK),
+        skippedKeys: { ...session.skippedKeys },
+    };
+}
+
 function debugLibvexDm(
     msg: string,
     data?: Record<string, boolean | null | number | string | undefined>,
 ): void {
     if (!libvexDebugDmEnabled()) {
+        return;
+    }
+    if (isHeartbeatDebugMessage(msg, data) && libvexDebugLevel() !== "trace") {
         return;
     }
     const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
@@ -166,6 +189,14 @@ function ignoreSocketTeardown(err: unknown): void {
     // Re-throw anything else as a real unhandled rejection so it
     // shows up in dev tools and Sentry-style reporters.
     throw err;
+}
+
+function isHeartbeatDebugMessage(
+    msg: string,
+    data?: Record<string, boolean | null | number | string | undefined>,
+): boolean {
+    if (/\b(?:ping|pong)\b/i.test(msg)) return true;
+    return data?.["type"] === "ping" || data?.["type"] === "pong";
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -199,6 +230,26 @@ function libvexDebugDmEnabled(): boolean {
         return Reflect.get(env, "LIBVEX_DEBUG_DM") === "1";
     } catch {
         return false;
+    }
+}
+
+function libvexDebugLevel(): "debug" | "trace" {
+    try {
+        const g = Object.getOwnPropertyDescriptor(globalThis, "\u0070rocess");
+        if (!g) return "debug";
+        const proc: unknown = typeof g.get === "function" ? g.get() : g.value;
+        if (typeof proc !== "object" || proc === null) return "debug";
+        const envDesc = Object.getOwnPropertyDescriptor(proc, "env");
+        if (!envDesc) return "debug";
+        const env: unknown =
+            typeof envDesc.get === "function" ? envDesc.get() : envDesc.value;
+        if (typeof env !== "object" || env === null) return "debug";
+        const value = String(
+            Reflect.get(env, "LIBVEX_DEBUG_LEVEL") ?? "",
+        ).toLowerCase();
+        return value === "trace" || value === "2" ? "trace" : "debug";
+    } catch {
+        return "debug";
     }
 }
 
@@ -3650,6 +3701,23 @@ export class Client {
             return;
         }
 
+        if (await this.database.hasMessage(mail.mailID)) {
+            if (libvexDebugDmEnabled()) {
+                try {
+                    debugLibvexDm("readMail: skip (stored mailID)", {
+                        mailID: mail.mailID,
+                        thisDevice: this.getDevice().deviceID,
+                    });
+                } catch {
+                    debugLibvexDm("readMail: skip (stored mailID)", {
+                        mailID: mail.mailID,
+                    });
+                }
+            }
+            this.acknowledgeInboundMail(mail);
+            return;
+        }
+
         if (this.manuallyClosing) {
             if (libvexDebugDmEnabled()) {
                 debugLibvexDm("readMail: skip (manually closing)", {
@@ -4056,39 +4124,100 @@ export class Client {
                             return;
                         }
 
+                        const originalSession = cloneSessionCrypto(session);
                         const firstInboundFromSubsequent = !session.DHr;
+                        let candidateSession = cloneSessionCrypto(session);
                         if (firstInboundFromSubsequent) {
-                            session.DHr = ratchetHeader.dhPub;
-                            // First inbound after X3DH initial mail has no prior DH ratchet.
-                            // If this side has no receiving chain yet (initiator path),
-                            // derive the bootstrap receive chain to match peer's first
-                            // bootstrap send chain.
-                            if (!session.CKr) {
-                                session.CKr = deriveBootstrapSendChain(
-                                    session.RK,
+                            candidateSession.DHr = ratchetHeader.dhPub;
+                            // First inbound after X3DH initial mail can be either:
+                            // - peer's bootstrap send chain if they replied before seeing
+                            //   one of our subsequent messages; or
+                            // - a real DH ratchet if they already received one from us.
+                            // Try bootstrap first for backwards compatibility, then fall
+                            // back to the DH-ratchet interpretation if HMAC disagrees.
+                            if (!candidateSession.CKr) {
+                                candidateSession.CKr = deriveBootstrapSendChain(
+                                    candidateSession.RK,
                                 );
                             }
                         } else if (
-                            hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
+                            hasRemoteDhChanged(
+                                candidateSession.DHr,
+                                ratchetHeader.dhPub,
+                            )
                         ) {
                             await ratchetStepReceive(
-                                session,
+                                candidateSession,
                                 ratchetHeader.dhPub,
                                 ratchetHeader.pn,
                             );
                         }
 
-                        const messageKey = takeReceiveMessageKey(
-                            session,
+                        let messageKey = takeReceiveMessageKey(
+                            candidateSession,
                             ratchetHeader.dhPub,
                             ratchetHeader.n,
                         );
-                        const HMAC = xHMAC(mail, messageKey);
+                        let HMAC = xHMAC(mail, messageKey);
+
+                        if (
+                            !XUtils.bytesEqual(HMAC, header) &&
+                            firstInboundFromSubsequent &&
+                            !originalSession.CKr
+                        ) {
+                            const ratchetedCandidate =
+                                cloneSessionCrypto(originalSession);
+                            await ratchetStepReceive(
+                                ratchetedCandidate,
+                                ratchetHeader.dhPub,
+                                ratchetHeader.pn,
+                            );
+                            const ratchetedMessageKey = takeReceiveMessageKey(
+                                ratchetedCandidate,
+                                ratchetHeader.dhPub,
+                                ratchetHeader.n,
+                            );
+                            const ratchetedHMAC = xHMAC(
+                                mail,
+                                ratchetedMessageKey,
+                            );
+                            if (XUtils.bytesEqual(ratchetedHMAC, header)) {
+                                if (libvexDebugDmEnabled()) {
+                                    debugLibvexDm(
+                                        "readMail subsequent: first inbound used DH-ratchet fallback",
+                                        {
+                                            mailID: mail.mailID,
+                                            thisDevice:
+                                                this.getDevice().deviceID,
+                                        },
+                                    );
+                                }
+                                candidateSession = ratchetedCandidate;
+                                messageKey = ratchetedMessageKey;
+                                HMAC = ratchetedHMAC;
+                            }
+                        }
 
                         if (!XUtils.bytesEqual(HMAC, header)) {
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm(
+                                    "readMail subsequent: abort (HMAC mismatch)",
+                                    {
+                                        mailID: mail.mailID,
+                                        sender: mail.sender,
+                                        thisDevice: this.getDevice().deviceID,
+                                    },
+                                );
+                            }
                             healSession();
+                            this.emitter.emit("retryRequest", {
+                                mailID: mail.mailID,
+                                source: "decrypt_failure",
+                            });
                             return;
                         }
+
+                        session = candidateSession;
 
                         const decrypted = await xSecretboxOpenAsync(
                             new Uint8Array(mail.cipher),

@@ -225,8 +225,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         };
     }
 
-    // ── Sessions ─────────────────────────────────────────────────────────────
-
     async getPreKeys(): Promise<null | PreKeysCrypto> {
         await this.untilReady();
         if (this.closing) {
@@ -249,6 +247,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             signature: XUtils.decodeHex(preKeyInfo.signature),
         };
     }
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
 
     async getSessionByDeviceID(
         deviceID: string,
@@ -295,6 +295,19 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
 
         return this.sqlToCrypto(await this.sessionRowToSQLAsync(sessionRow));
+    }
+
+    async hasMessage(mailID: string): Promise<boolean> {
+        await this.untilReady();
+        if (this.closing) {
+            return false;
+        }
+        const row = await this.db
+            .selectFrom("messages")
+            .select("mailID")
+            .where("mailID", "=", mailID)
+            .executeTakeFirst();
+        return row !== undefined;
     }
 
     async init(): Promise<void> {

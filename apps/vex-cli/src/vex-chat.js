@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { unpack } from "msgpackr";
 
-const DEFAULT_HOST = "127.0.0.1:16777";
+const DEFAULT_HOST = "api.vex.wtf";
 const COLOR = process.env.NO_COLOR === undefined;
 const ANSI = {
     blue: "\x1b[34m",
@@ -23,6 +23,7 @@ const ANSI = {
     reverse: "\x1b[7m",
     yellow: "\x1b[33m",
 };
+const STATUS_SPINNER = ["-", "\\", "|", "/"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -133,7 +134,7 @@ function parseArgs(argv) {
             continue;
         }
         const key = arg.slice(2);
-        if (["http", "help", "no-home"].includes(key)) {
+        if (["debug", "http", "help", "no-home"].includes(key)) {
             flags[key] = true;
             continue;
         }
@@ -145,7 +146,15 @@ function parseArgs(argv) {
 }
 
 async function createContext(flags) {
-    const host = String(flags.host ?? process.env.API_HOST ?? hostFromApiUrl(process.env.API_URL) ?? DEFAULT_HOST);
+    const debugLevel = normalizeDebugLevel(flags["debug-level"] ?? process.env.VEX_CHAT_DEBUG_LEVEL ?? process.env.VEX_CHAT_DEBUG);
+    const debug = Boolean(flags.debug) || debugLevel !== "off";
+    if (debug && !process.env.LIBVEX_DEBUG_DM) {
+        process.env.LIBVEX_DEBUG_DM = "1";
+    }
+    if (debug && !process.env.LIBVEX_DEBUG_LEVEL) {
+        process.env.LIBVEX_DEBUG_LEVEL = debugLevel === "off" ? "debug" : debugLevel;
+    }
+    const host = String(flags.host ?? process.env.VEX_CHAT_HOST ?? process.env.API_HOST ?? hostFromApiUrl(process.env.API_URL) ?? DEFAULT_HOST);
     const unsafeHttp =
         Boolean(flags.http) ||
         process.env.VEX_CHAT_HTTP === "1" ||
@@ -175,8 +184,18 @@ async function createContext(flags) {
         username: flags.username || flags.user ? String(flags.username ?? flags.user).toLowerCase() : undefined,
         noHome: Boolean(flags["no-home"]),
         password: flags.password ? String(flags.password) : undefined,
+        debug,
+        debugLevel: debug ? (debugLevel === "off" ? "debug" : debugLevel) : "off",
         sound: normalizeSound(flags.sound ?? process.env.VEX_CHAT_SOUND ?? "Glass"),
     };
+}
+
+function normalizeDebugLevel(value) {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (!raw || ["0", "false", "off", "none"].includes(raw)) return "off";
+    if (["1", "true", "debug", "verbose"].includes(raw)) return "debug";
+    if (["2", "trace", "silly"].includes(raw)) return "trace";
+    return "debug";
 }
 
 function isLocalHost(host) {
@@ -222,10 +241,11 @@ async function register(ctx, args) {
     }
     const privateKey = Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
+    attachDebugClientEvents(ctx, client, `register:${username}`);
     try {
         const [, registerErr] = await client.register(username, password);
         if (registerErr) throw registerErr;
-        await connectAndWait(client);
+        await connectAndWait(client, ctx, `register:${username}`);
         config.accounts[username] = {
             deviceID: client.me.device().deviceID,
             privateKey,
@@ -248,10 +268,11 @@ async function login(ctx, args) {
         throw new Error("Usage: vex-chat login <username> <password>");
     }
     const { client, config } = await makeClient(ctx, username);
+    attachDebugClientEvents(ctx, client, `login:${username}`);
     try {
         const loginResult = await client.login(username, password);
         if (!loginResult.ok) throw new Error(loginResult.error ?? "Login failed.");
-        await connectAndWait(client);
+        await connectAndWait(client, ctx, `login:${username}`);
         config.accounts[username] = {
             deviceID: client.me.device().deviceID,
             privateKey: client.getKeys().private,
@@ -480,9 +501,15 @@ async function useChannel(ctx, args) {
 async function createServerInChat(ctx, client, state, name, rl) {
     const resolvedName = name || (rl ? await askText(rl, "server name") : "");
     if (!resolvedName) throw new Error("Server name is required.");
+    debugLog(ctx, "server.create.start", { name: resolvedName });
     const server = await client.servers.create(resolvedName);
     const channels = await client.channels.retrieve(server.serverID);
     const channel = channels[0] ?? null;
+    debugLog(ctx, "server.create.ok", {
+        channelIDs: channels.map((item) => item.channelID),
+        serverID: server.serverID,
+        serverName: server.name,
+    });
     const config = await readConfig(ctx.configPath);
     config.lastServer = server.serverID;
     await writeConfig(ctx.configPath, config);
@@ -508,20 +535,31 @@ async function createInviteInteractive(ctx, client, state, args, rl) {
     if (first && !looksLikeDuration(first)) {
         const user = await resolveUser(client, first);
         const duration = second ?? "1h";
+        debugLog(ctx, "invite.dm.start", { duration, serverID, targetUserID: user.userID, targetUsername: user.username });
         const invite = await client.invites.create(serverID, duration);
         await client.messages.send(user.userID, `Join ${state.target?.serverName ?? "my server"}: ${inviteLink(invite.inviteID)}`);
+        debugLog(ctx, "invite.dm.ok", { inviteID: invite.inviteID, targetUserID: user.userID });
         console.log(`${color("green", "sent invite to")} ${color("magenta", user.username)}`);
         return;
     }
     const duration = first ?? (await askText(rl, "duration", "1h"));
+    debugLog(ctx, "invite.create.start", { duration: duration || "1h", serverID });
     const invite = await client.invites.create(serverID, duration || "1h");
+    debugLog(ctx, "invite.create.ok", { inviteID: invite.inviteID, serverID });
     printInvite(invite);
 }
 
 async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
     const value = rawInvite || (await askText(rl, "invite code or link"));
     const inviteID = parseInviteID(value);
+    debugLog(ctx, "invite.redeem.preview.start", { inviteID, raw: value });
     const preview = await fetchInvitePreview(client, inviteID);
+    debugLog(ctx, "invite.redeem.preview.ok", {
+        channelIDs: preview.channels.map((item) => item.channelID),
+        inviteID,
+        serverID: preview.server?.serverID,
+        serverName: preview.server?.name,
+    });
     printInvitePreview(preview);
     const answer = (await askText(rl, "join this server?", "Y")).trim().toLowerCase();
     if (answer && answer !== "y" && answer !== "yes") {
@@ -529,6 +567,7 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
         return;
     }
 
+    debugLog(ctx, "invite.redeem.start", { inviteID });
     const permission = await client.invites.redeem(inviteID);
     const server = preview.server ?? (await client.servers.retrieveByID(permission.resourceID));
     const channels =
@@ -536,6 +575,13 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
             ? preview.channels
             : await client.channels.retrieve(permission.resourceID).catch(() => []);
     console.log(`${color("green", "joined")} ${color("blue", server?.name ?? "server")}`);
+    debugLog(ctx, "invite.redeem.ok", {
+        channelIDs: channels.map((item) => item.channelID),
+        permissionResourceID: permission.resourceID,
+        permissionResourceType: permission.resourceType,
+        serverID: server?.serverID,
+        serverName: server?.name,
+    });
     await refreshBuffers(client, state);
 
     const channel =
@@ -567,6 +613,7 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     const resolvedIdentifier = identifier || (await askText(rl, "username or user id"));
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
+    markDmRead(state, user.userID);
     state.target = { id: user.userID, label: user.username, type: "dm" };
     addWindow(state, state.target);
     await saveTarget(ctx, state.target);
@@ -577,7 +624,7 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
 async function enterDm(client, state, user) {
     clearScreen();
     renderHeader(state, client.me.user(), `@${user.username}`);
-    console.log(color("dim", "/user open DM  /dm send  /join server  /channels open  /window switch  /help"));
+    console.log(color("dim", "/user open DM  /dms list  /dm send  /join server  /channels open  /window switch  /help"));
     console.log("");
     const history = await client.messages.retrieve(user.userID);
     if (history.length === 0) {
@@ -589,6 +636,70 @@ async function enterDm(client, state, user) {
     console.log("");
 }
 
+async function openDmSelector(ctx, client, state, names, rl) {
+    const rows = await listDmRows(client, state, names);
+    if (rows.length === 0) {
+        console.log(color("dim", "No DMs yet. Use /user <username> to open one."));
+        return null;
+    }
+    const selected = await chooseItem(
+        rl,
+        "DM",
+        rows,
+        (row) => renderDmChoice(row),
+        {
+            defaultIndex: defaultDmIndex(rows),
+        },
+    );
+    if (!selected) return null;
+    return selectDmInChat(ctx, client, state, names, selected.userID, rl);
+}
+
+async function listDmRows(client, state, names) {
+    const byUser = new Map();
+    for (const user of await client.users.familiars().catch(() => [])) {
+        names.set(user.userID, user.username);
+        byUser.set(user.userID, { userID: user.userID, username: user.username });
+    }
+    for (const buffer of state.buffers ?? []) {
+        if (buffer.type !== "dm") continue;
+        byUser.set(buffer.id, {
+            ...(byUser.get(buffer.id) ?? {}),
+            userID: buffer.id,
+            username: buffer.label,
+        });
+    }
+    for (const [userID, activity] of state.dms ?? []) {
+        byUser.set(userID, {
+            ...(byUser.get(userID) ?? {}),
+            ...activity,
+            userID,
+        });
+    }
+    const rows = [];
+    for (const row of byUser.values()) {
+        const username = row.username ?? await cachedUsername(client, names, row.userID);
+        rows.push({ ...row, username });
+    }
+    return rows.sort((a, b) => {
+        const unreadDiff = (b.unread ?? 0) - (a.unread ?? 0);
+        if (unreadDiff !== 0) return unreadDiff;
+        return String(b.lastAt ?? "").localeCompare(String(a.lastAt ?? ""));
+    });
+}
+
+function renderDmChoice(row) {
+    const unread = row.unread > 0 ? color("yellow", `${row.unread} unread`) : color("dim", "read");
+    const when = row.lastAt ? color("dim", formatMessageTime(row.lastAt)) : color("dim", "no recent messages");
+    const preview = row.lastMessage ? ` ${color("dim", truncateInline(row.lastMessage, 64))}` : "";
+    return `${color("magenta", `@${row.username}`)} ${unread} ${when}${preview}`;
+}
+
+function defaultDmIndex(rows) {
+    const unreadIndex = rows.findIndex((row) => row.unread > 0);
+    return unreadIndex >= 0 ? unreadIndex : 0;
+}
+
 async function sendDmInChat(ctx, client, state, names, identifier, messageParts, rl) {
     const resolvedIdentifier = identifier || (await askText(rl, "username or user id"));
     const user = await resolveUser(client, resolvedIdentifier);
@@ -598,7 +709,20 @@ async function sendDmInChat(ctx, client, state, names, identifier, messageParts,
         console.log(color("dim", "cancelled"));
         return;
     }
+    bumpActivity(state, "send");
+    refreshPrompt(rl, state);
+    debugLog(ctx, "message.send.dm.start", {
+        message,
+        targetUserID: user.userID,
+        targetUsername: user.username,
+    });
     await client.messages.send(user.userID, message);
+    debugLog(ctx, "message.send.dm.ok", {
+        message,
+        targetUserID: user.userID,
+        targetUsername: user.username,
+    });
+    markDmRead(state, user.userID);
     state.target = { id: user.userID, label: user.username, type: "dm" };
     addWindow(state, state.target);
     await saveTarget(ctx, state.target);
@@ -908,9 +1032,15 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         type: "channel",
     };
     await saveTarget(ctx, state.target);
+    debugLog(ctx, "channel.enter", {
+        channelID: channel.channelID,
+        channelName: channel.name,
+        serverID: channel.serverID,
+        serverName: server?.name,
+    });
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
-    console.log(color("dim", "/join server  /channels open  /window switch  /user open DM  /dm send  /invite create  redeem invite"));
+    console.log(color("dim", "/join server  /servers browse  /channels open  /window switch  /user open DM  /dms list  /dm send"));
     console.log("");
     const history = await client.messages.retrieveGroup(channel.channelID);
     if (history.length === 0) {
@@ -925,12 +1055,19 @@ async function enterChannel(ctx, client, state, channel, server = null) {
 async function chat(ctx, args) {
     const username = (args[0] ?? ctx.username) ? String(args[0] ?? ctx.username).toLowerCase() : undefined;
     const { account, client, config } = await authenticateOrRegister(ctx, username);
+    attachDebugClientEvents(ctx, client, `chat:${account.username}`);
     const state = {
         account,
         buffers: [],
+        dms: new Map(),
         host: ctx.clientOptions.host,
         renderedMessageKeys: new Map(),
         serverMemberCache: new Map(),
+        status: {
+            activity: "connect",
+            lastActivityAt: Date.now(),
+            spinnerIndex: 0,
+        },
         target: config.lastTarget ?? null,
     };
     if (state.target?.type === "dm") {
@@ -940,22 +1077,41 @@ async function chat(ctx, args) {
     let rl = null;
 
     client.on("message", async (message) => {
+        bumpActivity(state, message.direction === "incoming" ? "recv" : "send");
+        debugLog(ctx, "message.event", messageDebugPayload(message));
         if (shouldSkipRenderedMessage(state, message)) {
+            debugLog(ctx, "message.event.skip.rendered", messageDebugPayload(message));
+            refreshPrompt(rl, state);
             return;
         }
         const route = await messageRoute(client, state, message);
+        if (!message.group) {
+            await recordDmActivity(client, state, names, message, route);
+        }
+        debugLog(ctx, "message.route", {
+            ...messageDebugPayload(message),
+            activeTarget: state.target,
+            route,
+        });
         if (!route.render) {
             if (message.direction === "incoming" && route.isDm) {
                 playIncomingSound(ctx.sound);
                 notifyIncomingDm(await cachedUsername(client, names, message.authorID), message.message);
             }
+            refreshPrompt(rl, state);
             return;
         }
         if (!message.decrypted) {
+            debugLog(ctx, "message.render.undecrypted", messageDebugPayload(message));
             renderChatLine(rl, state, `[undecrypted] ${message.mailID}`);
             return;
         }
         const author = await cachedUsername(client, names, message.authorID);
+        debugLog(ctx, "message.render", {
+            ...messageDebugPayload(message),
+            author,
+            route,
+        });
         renderChatLine(
             rl,
             state,
@@ -987,9 +1143,21 @@ async function chat(ctx, args) {
                 renderChatLine(rl, state, `${color("yellow", "invite")} ${color("dim", `type redeem ${inviteID} to inspect it`)}`);
             }
         }
+        refreshPrompt(rl, state);
     });
+    for (const [event, activity] of [
+        ["connected", "online"],
+        ["decryptingMail", "mail"],
+        ["ready", "ready"],
+        ["disconnect", "offline"],
+    ]) {
+        client.on(event, () => {
+            bumpActivity(state, activity);
+            refreshPrompt(rl, state);
+        });
+    }
 
-    await connectAndWait(client);
+    await connectAndWait(client, ctx, `chat:${account.username}`);
     await refreshBuffers(client, state);
 
     rl = createInterface({ input, output, prompt: promptFor(state) });
@@ -1018,7 +1186,7 @@ async function chat(ctx, args) {
             } else if (trimmed === "/accounts") {
                 await listAccounts(ctx);
             } else if (trimmed === "/servers") {
-                printServers(await client.servers.retrieve());
+                await openServerSelector(ctx, client, state, rl);
             } else if (trimmed === "/server" || trimmed === "/join") {
                 await selectServerByName(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("/server ")) {
@@ -1049,7 +1217,7 @@ async function chat(ctx, args) {
                 const name = trimmed.slice(15).trim();
                 await createServerInChat(ctx, client, state, name, rl);
             } else if (trimmed === "/dm") {
-                await sendDmInChat(ctx, client, state, names, "", [], rl);
+                console.log(color("dim", "Use /user <username> to open a DM, or /dm <username> <message> to send."));
             } else if (trimmed.startsWith("/dm ")) {
                 const [identifier, ...messageParts] = splitWords(trimmed.slice(4));
                 if (messageParts.length === 0) {
@@ -1076,6 +1244,8 @@ async function chat(ctx, args) {
                 await navigateInChat(ctx, client, state, names, rl);
             } else if (trimmed.startsWith("/nav ")) {
                 console.log(color("dim", "Use /nav, then choose a channel or DM."));
+            } else if (trimmed === "/dms") {
+                await openDmSelector(ctx, client, state, names, rl);
             } else if (trimmed === "redeem" || trimmed === "/redeem") {
                 await joinInviteInChat(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("redeem ")) {
@@ -1094,13 +1264,44 @@ async function chat(ctx, args) {
             } else if (trimmed === "/history") {
                 console.log(color("dim", "Recent history is shown when you open a chat."));
             } else if (state.target?.type === "dm") {
+                bumpActivity(state, "send");
+                refreshPrompt(rl, state);
+                debugLog(ctx, "message.send.dm.current.start", {
+                    message: trimmed,
+                    targetUserID: state.target.id,
+                    target: targetLabel(state.target),
+                });
                 await client.messages.send(state.target.id, trimmed);
+                debugLog(ctx, "message.send.dm.current.ok", {
+                    message: trimmed,
+                    targetUserID: state.target.id,
+                    target: targetLabel(state.target),
+                });
             } else if (state.target?.type === "channel") {
+                bumpActivity(state, "send");
+                refreshPrompt(rl, state);
+                debugLog(ctx, "message.send.group.start", {
+                    channelID: state.target.id,
+                    message: trimmed,
+                    serverID: state.target.serverID,
+                    target: targetLabel(state.target),
+                });
                 await client.messages.group(state.target.id, trimmed);
+                debugLog(ctx, "message.send.group.ok", {
+                    channelID: state.target.id,
+                    message: trimmed,
+                    serverID: state.target.serverID,
+                    target: targetLabel(state.target),
+                });
             } else {
                 console.log(color("yellow", "No chat open. Use /join, /channels, /user, or /nav."));
             }
         } catch (err) {
+            debugLog(ctx, "command.error", {
+                error: err,
+                input: trimmed,
+                target: state.target,
+            });
             console.error(err instanceof Error ? err.message : String(err));
         }
         clearActivePrompt();
@@ -1115,7 +1316,7 @@ async function withReadyClient(ctx, args, fn) {
     const username = (ctx.username ?? undefined) || undefined;
     const { client } = await authenticate(ctx, username);
     try {
-        await connectAndWait(client);
+        await connectAndWait(client, ctx, `command:${username ?? "current"}`);
         await fn(client, args);
     } finally {
         await client.close().catch(() => {});
@@ -1133,6 +1334,7 @@ async function authenticate(ctx, explicitUsername) {
         throw new Error(`No local account for ${username}. Run register/login first.`);
     }
     const client = await Client.create(account.privateKey, ctx.clientOptions);
+    attachDebugClientEvents(ctx, client, `auth:${username}`);
     const deviceErr = account.deviceID ? await client.loginWithDeviceKey(account.deviceID) : new Error("missing device id");
     if (deviceErr && ctx.password) {
         const loginResult = await client.login(username, ctx.password);
@@ -1164,9 +1366,10 @@ async function authenticateOrRegister(ctx, explicitUsername) {
         }
         const privateKey = Client.generateSecretKey();
         const client = await Client.create(privateKey, ctx.clientOptions);
+        attachDebugClientEvents(ctx, client, `register:${entered}`);
         const [, registerErr] = await client.register(entered);
         if (registerErr) throw registerErr;
-        await connectAndWait(client);
+        await connectAndWait(client, ctx, `register:${entered}`);
         const account = {
             deviceID: client.me.device().deviceID,
             privateKey,
@@ -1190,18 +1393,106 @@ async function makeClient(ctx, username) {
     return { client, config };
 }
 
-async function connectAndWait(client) {
+async function connectAndWait(client, ctx = null, label = "client") {
+    debugLog(ctx, "client.connect.start", { label });
     await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for client connection.")), 20_000);
+        const timer = setTimeout(() => {
+            debugLog(ctx, "client.connect.timeout", { label });
+            reject(new Error("Timed out waiting for client connection."));
+        }, 20_000);
         client.once("connected", () => {
             clearTimeout(timer);
+            debugLog(ctx, "client.connect.ok", { label });
             resolve();
         });
         client.connect().catch((err) => {
             clearTimeout(timer);
+            debugLog(ctx, "client.connect.error", { error: err, label });
             reject(err);
         });
     });
+}
+
+function attachDebugClientEvents(ctx, client, label) {
+    if (!ctx.debug || client.__vexCliDebugAttached) return;
+    client.__vexCliDebugAttached = true;
+    const base = () => {
+        try {
+            return {
+                deviceID: client.me.device().deviceID,
+                label,
+                userID: client.me.user().userID,
+                username: client.me.user().username,
+            };
+        } catch {
+            return { label };
+        }
+    };
+    for (const event of ["connected", "disconnect", "decryptingMail", "ready"]) {
+        client.on(event, () => debugLog(ctx, `client.${event}`, base()));
+    }
+    client.on("session", (session, user) => debugLog(ctx, "client.session", {
+        ...base(),
+        peerDeviceID: session.deviceID,
+        peerUserID: session.userID,
+        peerUsername: user?.username,
+        sessionID: session.sessionID,
+    }));
+    client.on("retryRequest", (request) => debugLog(ctx, "client.retryRequest", {
+        ...base(),
+        mailID: request?.mailID,
+        source: request?.source,
+    }));
+}
+
+function debugLog(ctx, event, data = {}, level = "debug") {
+    if (!ctx?.debug) return;
+    if (!shouldDebugAtLevel(ctx.debugLevel, level)) return;
+    if (isHeartbeatDebugEvent(event, data) && !shouldDebugAtLevel(ctx.debugLevel, "trace")) return;
+    const payload = {
+        data,
+        event,
+        time: new Date().toISOString(),
+    };
+    process.stderr.write(`[vex-cli:debug] ${JSON.stringify(payload, jsonReplacer)}\n`);
+}
+
+function shouldDebugAtLevel(current, needed) {
+    const levels = { off: 0, debug: 1, trace: 2 };
+    return (levels[current] ?? 0) >= (levels[needed] ?? 1);
+}
+
+function isHeartbeatDebugEvent(event, data) {
+    if (/\b(?:ping|pong)\b/i.test(event)) return true;
+    const type = typeof data?.type === "string" ? data.type : "";
+    const messageType = typeof data?.message?.type === "string" ? data.message.type : "";
+    return type === "ping" || type === "pong" || messageType === "ping" || messageType === "pong";
+}
+
+function jsonReplacer(_key, value) {
+    if (value instanceof Uint8Array) {
+        return { bytes: value.length, hex: Buffer.from(value).toString("hex") };
+    }
+    if (value instanceof Error) {
+        return { message: value.message, name: value.name, stack: value.stack };
+    }
+    return value;
+}
+
+function messageDebugPayload(message) {
+    return {
+        authorID: message.authorID,
+        decrypted: message.decrypted,
+        direction: message.direction,
+        forward: message.forward,
+        group: message.group,
+        mailID: message.mailID,
+        message: message.message,
+        readerID: message.readerID,
+        recipient: message.recipient,
+        sender: message.sender,
+        timestamp: message.timestamp,
+    };
 }
 
 async function resolveUser(client, identifier) {
@@ -1312,6 +1603,7 @@ async function messageRoute(client, state, message) {
         return {
             isActiveDm: false,
             isDm: false,
+            reason: isActiveChannel ? "active-channel" : "other-channel",
             render: isActiveChannel,
             target: isActiveChannel ? targetLabel(state.target) : `#${shortID(message.group)}`,
         };
@@ -1323,6 +1615,7 @@ async function messageRoute(client, state, message) {
         return {
             isActiveDm: true,
             isDm: true,
+            reason: "active-dm",
             render: true,
             target: targetLabel(state.target),
         };
@@ -1337,6 +1630,7 @@ async function messageRoute(client, state, message) {
     return {
         isActiveDm: false,
         isDm: true,
+        reason: canInlineInServer ? "server-scoped-dm" : "offscreen-dm",
         render: Boolean(canInlineInServer),
         target: "DM",
     };
@@ -1347,6 +1641,37 @@ function dmPeerID(state, message) {
         return message.readerID === state.account?.userID ? message.authorID : message.readerID;
     }
     return message.authorID;
+}
+
+async function recordDmActivity(client, state, names, message, route = null) {
+    const userID = dmPeerID(state, message);
+    if (!userID || userID === state.account?.userID) return;
+    const username = await cachedUsername(client, names, userID);
+    const existing = state.dms.get(userID) ?? {
+        unread: 0,
+        userID,
+        username,
+    };
+    const isUnread = message.direction === "incoming" && !(route?.isActiveDm ?? isActiveDm(state, userID));
+    state.dms.set(userID, {
+        ...existing,
+        direction: message.direction,
+        lastAt: message.timestamp ?? new Date().toISOString(),
+        lastMessage: message.message,
+        unread: isUnread ? (existing.unread ?? 0) + 1 : (existing.unread ?? 0),
+        userID,
+        username,
+    });
+}
+
+function markDmRead(state, userID) {
+    const existing = state.dms?.get(userID);
+    if (!existing) return;
+    state.dms.set(userID, { ...existing, unread: 0 });
+}
+
+function isActiveDm(state, userID) {
+    return state.target?.type === "dm" && state.target.id === userID;
 }
 
 async function userSharesServer(client, state, serverID, userID) {
@@ -1460,10 +1785,48 @@ function safeSetPrompt(rl, prompt) {
     }
 }
 
+function refreshPrompt(rl, state) {
+    if (!rl || !input.isTTY || !output.isTTY) return;
+    safeSetPrompt(rl, promptFor(state));
+    const activeLine = rl.line ?? "";
+    const activeCursor = rl.cursor ?? activeLine.length;
+    clearActivePrompt();
+    restoreActivePrompt(rl, state, activeLine, activeCursor);
+}
+
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${color("green", user)} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${color("green", user)} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}${color("dim", " >")} `;
+}
+
+function statusBar(state) {
+    const status = state.status ?? {};
+    const active = Date.now() - (status.lastActivityAt ?? 0) < 2_500;
+    const spinner = active ? STATUS_SPINNER[status.spinnerIndex % STATUS_SPINNER.length] : " ";
+    const unread = totalUnreadDms(state);
+    const parts = [`${spinner} ${active ? status.activity ?? "net" : "idle"}`];
+    if (unread > 0) {
+        parts.push(`dm ${unread}`);
+    }
+    return color(unread > 0 ? "yellow" : "dim", `[${parts.join(" | ")}]`);
+}
+
+function bumpActivity(state, activity = "net") {
+    if (!state.status) {
+        state.status = { activity, lastActivityAt: 0, spinnerIndex: 0 };
+    }
+    state.status.activity = activity;
+    state.status.lastActivityAt = Date.now();
+    state.status.spinnerIndex = (state.status.spinnerIndex + 1) % STATUS_SPINNER.length;
+}
+
+function totalUnreadDms(state) {
+    let total = 0;
+    for (const item of state.dms?.values() ?? []) {
+        total += item.unread ?? 0;
+    }
+    return total;
 }
 
 function bufferIndex(state) {
@@ -1496,7 +1859,7 @@ function renderHeader(state, user, title) {
     const target = state.target ? targetLabel(state.target) : "no chat selected";
     console.log(color("reverse", " vex chat "));
     console.log(`${color("bold", title)} ${color("dim", "|")} ${color("green", username)} ${color("dim", "on")} ${color("blue", host)} ${color("dim", "|")} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`);
-    console.log(color("dim", "/nav /join /channels /window /user /dm /invite redeem /members /help"));
+    console.log(color("dim", "/nav /join /servers /channels /window /user /dms /dm /invite redeem /members /help"));
 }
 
 function printWhoami(client) {
@@ -1596,6 +1959,11 @@ function truncateNotification(value) {
     return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
 }
 
+function truncateInline(value, maxLength) {
+    const clean = String(value).replace(/\s+/g, " ").trim();
+    return clean.length > maxLength ? `${clean.slice(0, Math.max(0, maxLength - 3))}...` : clean;
+}
+
 function appleScriptString(value) {
     return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -1650,9 +2018,11 @@ Flags:
   --username <name>      local account to use
   --user <name>          alias for --username
   --password <password>  fallback password for login
-  --host <host:port>     API host, default 127.0.0.1:16777
+  --host <host:port>     API host, default api.vex.wtf
   --http                 use http/ws
   --dev-key <key>        send x-dev-api-key
+  --debug                print send/receive/connect diagnostics to stderr
+  --debug-level <level>  debug or trace; trace includes heartbeat ping/pong
   --data-dir <dir>       local CLI account and sqlite storage
   --sound <name-or-path> incoming message sound, default Glass; use off to disable
 
@@ -1665,11 +2035,12 @@ function printInteractiveHelp() {
 
 ${color("cyan", "/nav")}                   open a channel or DM
 ${color("cyan", "/join [server]")}         choose a server, then a channel
-${color("cyan", "/servers")}               list your servers
+${color("cyan", "/servers")}               browse your servers and open a channel
 ${color("cyan", "/channels")}              choose a channel
 ${color("cyan", "/window")}                list open chats
 ${color("cyan", "/window <number>")}       switch to an open chat
 ${color("cyan", "/user <user>")}           open a DM conversation
+${color("cyan", "/dms")}                   show DMs, unread counts, and recent senders
 ${color("cyan", "/dm <user>")}             open a DM conversation
 ${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
 ${color("cyan", "/to <user>")}             open a DM conversation

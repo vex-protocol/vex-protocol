@@ -104,6 +104,10 @@ bobChild.stdin.write(`/dm ${users[0]}\n`);
 await waitUntil(() => bobSeen.join("").includes(`@${users[0]}`), "bob dm focus");
 aliceChild.stdin.write(`/dm ${users[1]} hello-bob\n`);
 await waitUntil(() => bobSeen.join("").includes("hello-bob"), "bob dm");
+bobChild.stdin.write("/dms\n");
+await waitUntil(() => bobSeen.join("").includes(`@${users[0]}`), "bob dms list");
+await waitUntil(() => bobSeen.join("").includes("DM number"), "bob dms prompt");
+bobChild.stdin.write("\n");
 
 aliceChild.stdin.write("/create server smoke\n");
 await waitUntil(() => aliceSeen.join("").includes("created server smoke"), "server create");
@@ -128,7 +132,9 @@ aliceChild.stdin.write("hello-channel\n");
 await waitUntil(() => bobSeen.join("").includes("hello-channel"), "bob group");
 await waitUntil(() => caraSeen.join("").includes("hello-channel"), "cara group");
 
-bobChild.stdin.write("/join smoke\n");
+bobChild.stdin.write("/servers\n");
+await waitUntil(() => bobSeen.join("").includes("server number"), "bob server picker");
+bobChild.stdin.write("\n");
 await waitUntil(() => bobSeen.join("").includes("channel number"), "bob server channel picker");
 bobChild.stdin.write("\n");
 aliceChild.stdin.write(`/dm ${users[1]} server-dm-inline\n`);
