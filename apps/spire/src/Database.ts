@@ -43,6 +43,13 @@ import { MailType } from "@vex-chat/types";
 import argon2 from "argon2";
 
 import { serverMailRetentionCutoffIso } from "./mailRetention.ts";
+import {
+    assertDevicePayloadPreKeySignature,
+    PreKeyValidationError,
+} from "./utils/preKeyValidation.ts";
+
+const DEVICE_ID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
@@ -205,9 +212,15 @@ export class Database extends EventEmitter {
         owner: string,
         payload: DevicePayload,
     ): Promise<Device> {
+        await assertDevicePayloadPreKeySignature(payload);
+        const deviceID = payload.deviceID ?? crypto.randomUUID();
+        if (!DEVICE_ID_PATTERN.test(deviceID)) {
+            throw new PreKeyValidationError("Invalid device ID.");
+        }
+
         const device = {
             deleted: 0,
-            deviceID: crypto.randomUUID(),
+            deviceID,
             lastLogin: new Date().toISOString(),
             name: payload.deviceName,
             owner,
@@ -359,6 +372,8 @@ export class Database extends EventEmitter {
         regPayload: RegistrationPayload,
     ): Promise<[null | UserRecord, Error | null]> {
         try {
+            await assertDevicePayloadPreKeySignature(regPayload);
+
             const userID = uuidStringify(regKey);
             const username = normalizeRegistrationUsername(
                 regPayload.username,
@@ -702,9 +717,7 @@ export class Database extends EventEmitter {
             .execute();
     }
 
-    /**
-     * Deletes server-side mail older than {@link SERVER_MAIL_RETENTION_DAYS}.
-     */
+    /** Deletes server-side mail older than the configured deployment TTL. */
     public async pruneExpiredMail(): Promise<void> {
         const cutoff = serverMailRetentionCutoffIso();
         await this.db
@@ -1186,7 +1199,7 @@ export class Database extends EventEmitter {
     ): Promise<void> {
         for (const otk of otks) {
             const newOTK = {
-                deviceID: otk.deviceID,
+                deviceID,
                 index: otk.index ?? 0,
                 keyID: crypto.randomUUID(),
                 publicKey: XUtils.encodeHex(otk.publicKey),

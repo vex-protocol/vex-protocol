@@ -22,6 +22,7 @@ export interface Device {
 
 /** Device registration payload (HTTP). */
 export interface DevicePayload {
+    deviceID?: string | undefined;
     deviceName: string;
     preKey: string;
     preKeyIndex: number;
@@ -83,6 +84,7 @@ export const DeviceSchema: z.ZodType<Device> = z
     .describe("Device registration record");
 
 const _devicePayloadSchema = z.object({
+    deviceID: z.string().optional().describe("Client-generated device ID"),
     deviceName: z.string().describe("Device display name"),
     preKey: z.string().describe("Pre-key public key (hex)"),
     preKeyIndex: z.number().describe("Pre-key index"),

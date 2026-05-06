@@ -17,6 +17,10 @@ import { stringify } from "uuid";
 import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
+import {
+    assertDevicePayloadPreKeySignature,
+    PreKeyValidationError,
+} from "../utils/preKeyValidation.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { censorUser, getParam, getUser } from "./utils.ts";
@@ -512,6 +516,16 @@ export const getUserRouter = (
         if (!token) {
             res.sendStatus(400);
             return;
+        }
+
+        try {
+            await assertDevicePayloadPreKeySignature(deviceData);
+        } catch (err: unknown) {
+            if (err instanceof PreKeyValidationError) {
+                res.status(err.status).send({ error: err.message });
+                return;
+            }
+            throw err;
         }
 
         if (userDetails.userID !== getParam(req, "id")) {

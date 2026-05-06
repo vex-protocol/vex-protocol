@@ -15,6 +15,7 @@ services:
         # fips: SPIRE_FIPS=true, SPK from `pnpm --filter @vex-chat/spire gen-spk-fips` (P-256 PKCS#8)
         # Shell overrides .env: SPIRE_FIPS=true docker compose up
         environment:
+            - NODE_ENV=${SPIRE_DOCKER_NODE_ENV:-production}
             - SPIRE_FIPS=${SPIRE_FIPS:-false}
             - API_PORT=${API_PORT:-}
         user: "1000:1000"

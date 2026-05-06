@@ -343,6 +343,10 @@
             "DevicePayload": {
                 "type": "object",
                 "properties": {
+                    "deviceID": {
+                        "type": "string",
+                        "description": "Client-generated device ID"
+                    },
                     "deviceName": {
                         "type": "string",
                         "description": "Device display name"
@@ -385,6 +389,10 @@
             "RegistrationPayload": {
                 "type": "object",
                 "properties": {
+                    "deviceID": {
+                        "type": "string",
+                        "description": "Client-generated device ID"
+                    },
                     "deviceName": {
                         "type": "string",
                         "description": "Device display name"
@@ -654,6 +662,10 @@
                             "schema": {
                                 "type": "object",
                                 "properties": {
+                                    "deviceID": {
+                                        "type": "string",
+                                        "description": "Client-generated device ID"
+                                    },
                                     "deviceName": {
                                         "type": "string",
                                         "description": "Device display name"

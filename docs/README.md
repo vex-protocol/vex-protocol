@@ -1,6 +1,9 @@
 # Vex documentation index
 
-Use this page as the **entry point** for public protocol, client, server, and security documentation in this repository.
+Public protocol, security, and deployment documentation for Vex. Use this page
+as the **entry point** for public protocol, client, server, and security
+documentation in this repository. Private planning, sales, and readiness
+material stays in `vex-refinery`.
 
 ---
 
@@ -30,4 +33,4 @@ Use this page as the **entry point** for public protocol, client, server, and se
 
 ## Maintenance
 
-Keep docs in this repository when they describe the public protocol, security model, wire behavior, reference implementation, or operational deployment of the stack. Private strategy and pitch material belongs outside this tree.
+Keep docs in this repository when they describe the public protocol, security model, wire behavior, reference implementation, or operational deployment of the stack. Keep private strategy and pitch material out of this tree.

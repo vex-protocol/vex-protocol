@@ -18,13 +18,13 @@ export function nodePreset(): PlatformPreset {
         async createStorage(dbName, privateKey): Promise<Storage> {
             const { getCryptoProfile } = await import("@vex-chat/crypto");
             const { createNodeStorage } = await import("../storage/node.js");
-            const { resolveAtRestAesKeyFromSignKeyHex } =
+            const { resolveAtRestAesKeysFromSignKeyHex } =
                 await import("../utils/resolveAtRestAesKey.js");
-            const atRest = await resolveAtRestAesKeyFromSignKeyHex(
+            const atRest = await resolveAtRestAesKeysFromSignKeyHex(
                 privateKey,
                 getCryptoProfile(),
             );
-            return createNodeStorage(dbName, atRest);
+            return createNodeStorage(dbName, atRest.primary, atRest.legacy);
         },
         deviceName: process.platform,
     };

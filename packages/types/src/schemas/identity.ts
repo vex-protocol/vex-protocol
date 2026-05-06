@@ -79,10 +79,16 @@ export const SessionSQLSchema: z.ZodType<SessionSQL> = z
         publicKey: z.string().describe("Remote public key (hex)"),
         RK: z.string().describe("Root key (hex)"),
         sessionID: z.string().describe("Session identifier"),
-        SK: z.string().describe("Shared secret key (hex)"),
+        SK: z
+            .string()
+            .describe(
+                "Legacy shared secret column (hex, retired for new SDK writes)",
+            ),
         skippedKeys: z
             .string()
-            .describe("Serialized skipped message keys map (JSON)"),
+            .describe(
+                "Serialized skipped message keys map (sealed at rest by current SDKs; legacy rows may contain JSON)",
+            ),
         userID: z.string().describe("User identifier"),
         verified: z.boolean().describe("Verification status"),
     })

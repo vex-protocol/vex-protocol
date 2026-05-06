@@ -199,9 +199,9 @@ async function main(): Promise<void> {
             rows.push(
                 `${String(combo)}\t${String(c)}\t${String(n)}\t${String(code)}`,
             );
-            if (opts.stopOnFail && !opts.informational && code === 1) {
+            if (opts.stopOnFail && !opts.informational && code !== 0) {
                 process.stderr.write(
-                    "\nintegration:cli: stopping (--stop-on-fail) after exit code 1.\n",
+                    `\nintegration:cli: stopping (--stop-on-fail) after exit code ${String(code)}.\n`,
                 );
                 break matrix;
             }
@@ -407,7 +407,7 @@ function printHelp(): void {
             "  --burst-gap-ms <n>    SPIRE_STRESS_BURST_GAP_MS when load=paced",
             "  --host <host:port>    SPIRE_STRESS_HOST",
             "  --informational       always exit 0 for harness failures (exit 2 still reserved for unreachable target)",
-            "  --stop-on-fail        stop the matrix early if a child exits with code 1 (harness saw HTTP failures)",
+            "  --stop-on-fail        stop the matrix early if a child exits nonzero",
             "  -v, --verbose         set SPIRE_STRESS_VERBOSE=1 on the child (noisier per-wall stderr)",
             "  -h, --help",
             "",
