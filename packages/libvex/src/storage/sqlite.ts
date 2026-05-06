@@ -358,6 +358,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     .execute();
                 await this.ensureSessionRatchetColumns();
                 await this.ensureRetentionHintColumn();
+                await this.ensureMessageMailIdIndex();
 
                 await this.db.schema
                     .createTable("preKeys")
@@ -505,6 +506,18 @@ export class SqliteStorage extends EventEmitter implements Storage {
 
     async saveMessage(message: Message): Promise<void> {
         if (this.isClosingNow()) {
+            return;
+        }
+        await this.untilReady();
+
+        // Fan-out to multiple devices reuses one `mailID` but each encrypt path
+        // uses a fresh nonce (table PK). Keep a single local row per logical mail.
+        const dupe = await this.db
+            .selectFrom("messages")
+            .select("nonce")
+            .where("mailID", "=", message.mailID)
+            .executeTakeFirst();
+        if (dupe !== undefined) {
             return;
         }
 
@@ -745,6 +758,19 @@ export class SqliteStorage extends EventEmitter implements Storage {
             owner: row.owner,
             signKey: row.signKey,
         };
+    }
+
+    /** Speeds up mailID existence checks for saveMessage deduplication. */
+    private async ensureMessageMailIdIndex(): Promise<void> {
+        try {
+            await sql
+                .raw(
+                    "CREATE INDEX IF NOT EXISTS messages_mailID_idx ON messages(mailID)",
+                )
+                .execute(this.db);
+        } catch {
+            // Extremely defensive — `messages` always exists at this point.
+        }
     }
 
     private async ensureRetentionHintColumn(): Promise<void> {

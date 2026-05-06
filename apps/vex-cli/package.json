@@ -1,0 +1,24 @@
+{
+    "name": "@vex-chat/cli",
+    "version": "0.1.0",
+    "description": "Terminal client for vex-chat.",
+    "type": "module",
+    "bin": {
+        "vex-chat": "./src/vex-chat.js"
+    },
+    "scripts": {
+        "vex": "node src/vex-chat.js",
+        "start": "node src/vex-chat.js",
+        "smoke": "node scripts/smoke-three-clients.mjs"
+    },
+    "dependencies": {
+        "@vex-chat/libvex": "workspace:^"
+    },
+    "devDependencies": {
+        "@types/node": "catalog:"
+    },
+    "engines": {
+        "node": ">=24.0.0"
+    },
+    "license": "AGPL-3.0-or-later"
+}
