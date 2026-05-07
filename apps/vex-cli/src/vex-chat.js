@@ -458,7 +458,10 @@ async function dmCommand(ctx, args) {
         await withReadyClient(ctx, args, async (client, rest) => {
             const user = await resolveUser(client, requireArg(rest, 0, "user"));
             const history = await client.messages.retrieve(user.userID);
-            printMessages(history);
+            await printMessages(client, history, {
+                names: historyNameCache(client.me.user(), user),
+                targetLabel: `@${user.username}`,
+            });
         });
         return;
     }
@@ -521,7 +524,13 @@ async function channelCommand(ctx, args) {
                 throw new Error(
                     "Missing channel id. Use vex channel use <channel-id> or pass one.",
                 );
-            printMessages(await client.messages.retrieveGroup(channelID));
+            await printMessages(
+                client,
+                await client.messages.retrieveGroup(channelID),
+                {
+                    names: historyNameCache(client.me.user()),
+                },
+            );
             return;
         }
         if (sub === "create") {
@@ -776,21 +785,28 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             renderChatLine(
                 rl,
                 state,
-                `${color("yellow", "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N")}`,
+                `${color("yellow", "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N  Ctrl-J joins when supported")}`,
             );
-            const answer = (await askText(rl, `join ${serverName}?`, "N"))
-                .trim()
-                .toLowerCase();
-            clearSubmittedPrompt();
-            if (answer !== "y" && answer !== "yes") {
-                renderChatLine(
-                    rl,
-                    state,
-                    `${color("yellow", "system")} ${color("dim", "invite dismissed")}`,
-                );
-                return;
+            state.pendingInviteJoin = { inviteID };
+            try {
+                const answer = (await askText(rl, `join ${serverName}?`, "N"))
+                    .trim()
+                    .toLowerCase();
+                clearSubmittedPrompt();
+                if (answer !== "y" && answer !== "yes") {
+                    renderChatLine(
+                        rl,
+                        state,
+                        `${color("yellow", "system")} ${color("dim", "invite dismissed")}`,
+                    );
+                    return;
+                }
+                await redeemInviteInChat(ctx, client, state, inviteID, preview);
+            } finally {
+                if (state.pendingInviteJoin?.inviteID === inviteID) {
+                    state.pendingInviteJoin = null;
+                }
             }
-            await redeemInviteInChat(ctx, client, state, inviteID, preview);
         })
         .catch((err) => {
             debugLog(ctx, "invite.prompt.error", { error: err, inviteID });
@@ -847,6 +863,10 @@ function bindKeypressShortcuts(ctx, client, state, names, rl) {
     if (!input.isTTY) return () => {};
     emitKeypressEvents(input, rl);
     const onKeypress = (_chunk, key = {}) => {
+        if (key.ctrl && key.name === "j" && state.pendingInviteJoin) {
+            rl.write("y\n");
+            return;
+        }
         if (key.name !== "tab" || !state.pendingJump) return;
         if ((rl.line ?? "").trim()) return;
         void jumpToPendingNotification(ctx, client, state, names, rl);
@@ -904,7 +924,10 @@ async function enterDm(client, state, user) {
         console.log(color("dim", "No local history yet."));
     } else {
         console.log(color("bold", "Recent history"));
-        printMessages(history.slice(-30));
+        await printMessages(client, history.slice(-30), {
+            names: historyNameCache(client.me.user(), user),
+            targetLabel: `@${user.username}`,
+        });
     }
     console.log("");
 }
@@ -1454,7 +1477,10 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         console.log(color("dim", "No local history yet."));
     } else {
         console.log(color("bold", "Recent history"));
-        printMessages(history.slice(-30));
+        await printMessages(client, history.slice(-30), {
+            names: historyNameCache(client.me.user()),
+            targetLabel: targetLabel(state.target),
+        });
     }
     console.log("");
 }
@@ -1475,6 +1501,7 @@ async function chat(ctx, args) {
         dms: new Map(),
         host: ctx.clientOptions.host,
         pendingJump: null,
+        pendingInviteJoin: null,
         pendingInvitePrompts: new Set(),
         promptQueue: Promise.resolve(),
         renderedMessageKeys: new Map(),
@@ -2157,7 +2184,7 @@ async function resolveUser(client, identifier) {
 async function cachedUsername(client, cache, userID) {
     if (cache.has(userID)) return cache.get(userID);
     const [user] = await client.users.retrieve(userID);
-    const name = user?.username ?? userID;
+    const name = user?.username ?? shortID(userID);
     cache.set(userID, name);
     return name;
 }
@@ -2853,17 +2880,28 @@ function appleScriptString(value) {
     return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function printMessages(messages) {
+function historyNameCache(...users) {
+    const names = new Map();
+    for (const user of users) {
+        if (user?.userID && user?.username) {
+            names.set(user.userID, user.username);
+        }
+    }
+    return names;
+}
+
+async function printMessages(client, messages, options = {}) {
     if (messages.length === 0) {
         console.log(color("dim", "no messages"));
         return;
     }
+    const names = options.names ?? historyNameCache(client.me.user());
+    const targets = options.targets ?? new Map();
     for (const message of messages) {
-        const target = message.group ? `#${shortID(message.group)}` : "DM";
-        const who =
-            message.direction === "outgoing"
-                ? "you"
-                : shortID(message.authorID);
+        const target =
+            options.targetLabel ??
+            (await historyTargetLabel(client, names, targets, message));
+        const who = await historyAuthorName(client, names, message.authorID);
         console.log(
             formatMessageLine({
                 direction: message.direction,
@@ -2874,6 +2912,48 @@ function printMessages(messages) {
                 who,
             }),
         );
+    }
+}
+
+async function historyAuthorName(client, names, userID) {
+    try {
+        return await cachedUsername(client, names, userID);
+    } catch {
+        return shortID(userID);
+    }
+}
+
+async function historyTargetLabel(client, names, targets, message) {
+    if (message.group) {
+        if (targets.has(message.group)) return targets.get(message.group);
+        const channel = await client.channels
+            .retrieveByID(message.group)
+            .catch(() => null);
+        if (!channel) {
+            const fallback = `#${shortID(message.group)}`;
+            targets.set(message.group, fallback);
+            return fallback;
+        }
+        const servers = await client.servers.retrieve().catch(() => []);
+        const server = servers.find(
+            (item) => item.serverID === channel.serverID,
+        );
+        const target = targetLabel({
+            id: channel.channelID,
+            label: `#${channel.name}`,
+            serverID: channel.serverID,
+            serverName: server?.name,
+            type: "channel",
+        });
+        targets.set(message.group, target);
+        return target;
+    }
+    const peerID =
+        message.direction === "outgoing" ? message.readerID : message.authorID;
+    try {
+        return `@${await cachedUsername(client, names, peerID)}`;
+    } catch {
+        return `@${shortID(peerID)}`;
     }
 }
 
