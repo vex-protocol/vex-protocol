@@ -195,6 +195,25 @@ if (bobSeen.join("").includes("server-dm-inline")) {
     throw new Error("server-scoped DM notice leaked message content");
 }
 
+bobChild.stdin.write("/quit\n");
+bobChild.kill("SIGTERM");
+bobSeen.length = 0;
+const bobRestartedWithHistory = waitFor((resolve) => {
+    void run(["chat", users[1]], {
+        allowTerminate: true,
+        onChild: (child) => {
+            bobChild = child;
+        },
+        onStdout: (chunk) => {
+            bobSeen.push(chunk);
+            if (bobSeen.join("").includes("hello-channel")) resolve();
+        },
+    }).catch((err) => {
+        throw err;
+    });
+});
+await bobRestartedWithHistory;
+
 aliceChild?.stdin?.write("/quit\n");
 bobChild?.stdin?.write("/quit\n");
 caraChild?.stdin?.write("/quit\n");

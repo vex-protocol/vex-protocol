@@ -958,6 +958,53 @@ async function enterDm(client, state, user) {
     console.log("");
 }
 
+async function restoreInitialTarget(ctx, client, state, names) {
+    const target = state.target;
+    if (!target) return false;
+    try {
+        if (target.type === "dm") {
+            const user = await resolveUser(client, target.id);
+            names.set(user.userID, user.username);
+            state.target = {
+                id: user.userID,
+                label: user.username,
+                type: "dm",
+            };
+            addWindow(state, state.target);
+            await saveTarget(ctx, state.target);
+            await enterDm(client, state, user);
+            return true;
+        }
+        const channel = await client.channels.retrieveByID(target.id);
+        if (!channel) return false;
+        const server =
+            target.serverID || channel.serverID
+                ? await client.servers
+                      .retrieveByID(target.serverID ?? channel.serverID)
+                      .catch(() => null)
+                : null;
+        await enterChannel(
+            ctx,
+            client,
+            state,
+            channel,
+            server ?? {
+                name: target.serverName,
+                serverID: target.serverID ?? channel.serverID,
+            },
+        );
+        return true;
+    } catch (err) {
+        debugLog(ctx, "target.restore.error", {
+            error: err,
+            target,
+        });
+        state.target = null;
+        await saveTarget(ctx, null);
+        return false;
+    }
+}
+
 async function openInbox(ctx, client, state, names, rl) {
     const rows = await listDmRows(client, state, names);
     if (rows.length === 0) {
@@ -1713,6 +1760,12 @@ async function chat(ctx, args) {
 
     await connectAndWait(client, ctx, `chat:${account.username}`);
     await refreshBuffers(client, state);
+    const restoredTarget = await restoreInitialTarget(
+        ctx,
+        client,
+        state,
+        names,
+    );
 
     rl = createInterface({ input, output, prompt: promptFor(state) });
     const keypressCleanup = bindKeypressShortcuts(
@@ -1722,11 +1775,13 @@ async function chat(ctx, args) {
         names,
         rl,
     );
-    renderHeader(
-        state,
-        account,
-        state.target ? targetLabel(state.target) : "Chat",
-    );
+    if (!restoredTarget) {
+        renderHeader(
+            state,
+            account,
+            state.target ? targetLabel(state.target) : "Chat",
+        );
+    }
     if (ctx.debugFile) {
         console.log(color("dim", `debug log ${ctx.debugFile}`));
     }
@@ -2666,7 +2721,7 @@ function inviteAccent(inviteID) {
 async function saveTarget(ctx, target) {
     const config = await readConfig(ctx.configPath);
     config.lastTarget = target;
-    if (target.type === "channel") {
+    if (target?.type === "channel") {
         config.lastChannel = target.id;
         if (target.serverID) config.lastServer = target.serverID;
     }
