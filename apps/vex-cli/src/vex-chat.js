@@ -57,6 +57,7 @@ const USER_ACCENTS = [
     "white",
 ];
 const TARGET_ACCENTS = ["steel", "azure", "indigo", "teal", "lavender"];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -1105,14 +1106,17 @@ async function sendDmInChat(
         console.log(color("dim", "cancelled"));
         return;
     }
-    bumpActivity(state, "send");
-    refreshPrompt(rl, state);
     debugLog(ctx, "message.send.dm.start", {
         message,
         targetUserID: user.userID,
         targetUsername: user.username,
     });
-    await client.messages.send(user.userID, message);
+    beginSendingStatus(state, rl);
+    try {
+        await client.messages.send(user.userID, message);
+    } finally {
+        endSendingStatus(state, rl);
+    }
     debugLog(ctx, "message.send.dm.ok", {
         message,
         targetUserID: user.userID,
@@ -1123,11 +1127,6 @@ async function sendDmInChat(
         label: user.username,
         type: "dm",
     });
-    renderChatLine(
-        rl,
-        state,
-        `${color(ROOT_ACCENT, "system")} ${color(userAccent(user.userID), `DM sent to ${user.username}`)}`,
-    );
 }
 
 async function selectChannelInChat(ctx, client, state, rl) {
@@ -2005,29 +2004,35 @@ async function chat(ctx, args) {
                     ),
                 );
             } else if (state.target?.type === "dm") {
-                bumpActivity(state, "send");
-                refreshPrompt(rl, state);
                 debugLog(ctx, "message.send.dm.current.start", {
                     message: trimmed,
                     targetUserID: state.target.id,
                     target: targetLabel(state.target),
                 });
-                await client.messages.send(state.target.id, trimmed);
+                beginSendingStatus(state, rl);
+                try {
+                    await client.messages.send(state.target.id, trimmed);
+                } finally {
+                    endSendingStatus(state, rl);
+                }
                 debugLog(ctx, "message.send.dm.current.ok", {
                     message: trimmed,
                     targetUserID: state.target.id,
                     target: targetLabel(state.target),
                 });
             } else if (state.target?.type === "channel") {
-                bumpActivity(state, "send");
-                refreshPrompt(rl, state);
                 debugLog(ctx, "message.send.group.start", {
                     channelID: state.target.id,
                     message: trimmed,
                     serverID: state.target.serverID,
                     target: targetLabel(state.target),
                 });
-                await client.messages.group(state.target.id, trimmed);
+                beginSendingStatus(state, rl);
+                try {
+                    await client.messages.group(state.target.id, trimmed);
+                } finally {
+                    endSendingStatus(state, rl);
+                }
                 debugLog(ctx, "message.send.group.ok", {
                     channelID: state.target.id,
                     message: trimmed,
@@ -2854,8 +2859,15 @@ function statusBar(state) {
     const status = state.status ?? {};
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
-    const content = `${networkIcon(network)} ${formatUnreadCount(unread)}`;
-    const tone = network === "offline" || unread > 0 ? ROOT_ACCENT : "dim";
+    const content = `${networkIcon(status)} ${formatUnreadCount(unread)}`;
+    const tone =
+        network === "offline" || unread > 0
+            ? ROOT_ACCENT
+            : network === "sending" ||
+                network === "syncing" ||
+                network === "connecting"
+              ? "yellow"
+              : "dim";
     return color(tone, `[${content}]`);
 }
 
@@ -2873,6 +2885,37 @@ function bumpActivity(state, activity = "net") {
         state.status.network = mapped.network;
     }
     state.status.lastActivityAt = Date.now();
+}
+
+function beginSendingStatus(state, rl) {
+    bumpActivity(state, "send");
+    state.status.pendingSends = (state.status.pendingSends ?? 0) + 1;
+    state.status.spinnerFrame = state.status.spinnerFrame ?? 0;
+    if (!state.status.spinnerTimer && rl) {
+        state.status.spinnerTimer = setInterval(() => {
+            state.status.spinnerFrame =
+                ((state.status.spinnerFrame ?? 0) + 1) % SPINNER_FRAMES.length;
+            refreshPrompt(rl, state);
+        }, 120);
+        state.status.spinnerTimer.unref?.();
+    }
+    refreshPrompt(rl, state);
+}
+
+function endSendingStatus(state, rl) {
+    if (!state.status) return;
+    state.status.pendingSends = Math.max(
+        0,
+        (state.status.pendingSends ?? 1) - 1,
+    );
+    if (state.status.pendingSends === 0) {
+        if (state.status.spinnerTimer) {
+            clearInterval(state.status.spinnerTimer);
+            state.status.spinnerTimer = null;
+        }
+        bumpActivity(state, "online");
+    }
+    refreshPrompt(rl, state);
 }
 
 function statusActivity(activity) {
@@ -2895,8 +2938,12 @@ function statusActivity(activity) {
     }
 }
 
-function networkIcon(network) {
-    switch (network) {
+function networkIcon(status) {
+    switch (status.network) {
+        case "sending":
+            return SPINNER_FRAMES[
+                (status.spinnerFrame ?? 0) % SPINNER_FRAMES.length
+            ];
         case "connecting":
         case "syncing":
             return "🟡";
