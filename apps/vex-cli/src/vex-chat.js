@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Client } from "@vex-chat/libvex";
+import { Client, DeviceApprovalRequiredError } from "@vex-chat/libvex";
 import { execFile } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { createRequire } from "node:module";
@@ -396,8 +396,12 @@ async function register(ctx, args) {
 async function login(ctx, args) {
     const username = (args[0] ?? ctx.username)?.toLowerCase();
     const password = args[1] ?? ctx.password;
-    if (!username || !password) {
-        throw new Error("Usage: vex-chat login <username> <password>");
+    if (!username) {
+        throw new Error("Usage: vex-chat login <username> [password]");
+    }
+    if (!password) {
+        await loginWithDeviceApproval(ctx, username);
+        return;
     }
     const { client, config } = await makeClient(ctx, username);
     attachDebugClientEvents(ctx, client, `login:${username}`);
@@ -423,6 +427,142 @@ async function login(ctx, args) {
     }
 }
 
+async function loginWithDeviceApproval(ctx, username) {
+    const config = await readConfig(ctx.configPath);
+    if (config.accounts[username]) {
+        config.lastUsername = username;
+        await writeConfig(ctx.configPath, config);
+        console.log(
+            `${color(ROOT_ACCENT, "using")} ${color(userAccent(config.accounts[username].userID), username)}`,
+        );
+        return;
+    }
+
+    const privateKey = Client.generateSecretKey();
+    const client = await Client.create(privateKey, ctx.clientOptions);
+    attachDebugClientEvents(ctx, client, `login-request:${username}`);
+    try {
+        const [, registerErr] = await client.register(username);
+        if (!registerErr) {
+            await connectAndWait(client, ctx, `login-request:${username}`);
+            config.accounts[username] = {
+                deviceID: client.me.device().deviceID,
+                privateKey,
+                userID: client.me.user().userID,
+                username,
+            };
+            config.lastUsername = username;
+            await writeConfig(ctx.configPath, config);
+            console.log(
+                `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
+            );
+            printWhoami(client);
+            return;
+        }
+        if (!isDeviceApprovalRequired(registerErr)) {
+            throw registerErr;
+        }
+        await waitForDeviceApproval(ctx, client, config, username, privateKey, {
+            challenge: registerErr.challenge,
+            expiresAt: registerErr.expiresAt,
+            requestID: registerErr.requestID,
+        });
+    } finally {
+        await client.close().catch(() => {});
+    }
+}
+
+async function waitForDeviceApproval(
+    ctx,
+    client,
+    config,
+    username,
+    privateKey,
+    pending,
+) {
+    const code = matchingCodeStringForSignKey(client.getKeys().public);
+    console.log(
+        `${color(ROOT_ACCENT, "device approval required")} ${color("dim", `request=${pending.requestID}`)}`,
+    );
+    console.log(
+        `${color("dim", "matching code")} ${formatDeviceApprovalCode(code)}`,
+    );
+    console.log(
+        color(
+            "dim",
+            "Confirm this code on an existing signed-in device before approving.",
+        ),
+    );
+
+    if (input.isTTY && output.isTTY) {
+        const rl = createInterface({ input, output });
+        try {
+            const answer = (await askText(rl, "notify existing devices?", "Y"))
+                .trim()
+                .toLowerCase();
+            if (answer === "n" || answer === "no") {
+                await client.devices
+                    .abortPendingRegistration({
+                        challenge: pending.challenge,
+                        requestID: pending.requestID,
+                    })
+                    .catch(() => {});
+                throw new Error("Device login cancelled.");
+            }
+        } finally {
+            rl.close();
+        }
+    }
+
+    await client.devices.publishPendingRegistration({
+        challenge: pending.challenge,
+        requestID: pending.requestID,
+    });
+    console.log(color(ROOT_ACCENT, "waiting for approval..."));
+
+    for (let attempt = 0; attempt < 300; attempt++) {
+        await sleep(2000);
+        const current = await client.devices.pollPendingRegistration({
+            challenge: pending.challenge,
+            requestID: pending.requestID,
+        });
+        if (!current || current.status === "pending") {
+            if (input.isTTY && output.isTTY) output.write(color("dim", "."));
+            continue;
+        }
+        if (input.isTTY && output.isTTY) output.write("\n");
+        if (current.status === "approved" && current.approvedDeviceID) {
+            const authErr = await client.loginWithDeviceKey(
+                current.approvedDeviceID,
+            );
+            if (authErr) throw authErr;
+            await connectAndWait(client, ctx, `login-approved:${username}`);
+            config.accounts[username] = {
+                deviceID: current.approvedDeviceID,
+                privateKey,
+                userID: client.me.user().userID,
+                username,
+            };
+            config.lastUsername = username;
+            await writeConfig(ctx.configPath, config);
+            console.log(
+                `${color(ROOT_ACCENT, "approved")} ${color(userAccent(client.me.user().userID), username)}`,
+            );
+            printWhoami(client);
+            return;
+        }
+        throw new Error(`Device login ${current.status}.`);
+    }
+    throw new Error("Timed out waiting for device approval.");
+}
+
+function isDeviceApprovalRequired(err) {
+    return (
+        err instanceof DeviceApprovalRequiredError ||
+        err?.name === "DeviceApprovalRequiredError"
+    );
+}
+
 async function authCommand(ctx, args) {
     const sub = args.shift() ?? "status";
     switch (sub) {
@@ -431,11 +571,11 @@ async function authCommand(ctx, args) {
             await register(ctx, args);
             return;
         case "login":
-            if (args.length === 1 && !ctx.password) {
-                await whoami(ctx, args);
-                return;
-            }
             await login(ctx, args);
+            return;
+        case "requests":
+        case "approvals":
+            await deviceRequestsCommand(ctx, args);
             return;
         case "status":
         case "whoami":
@@ -450,7 +590,7 @@ async function authCommand(ctx, args) {
             return;
         default:
             throw new Error(
-                "Usage: vex auth register <username> | login <username> [password] | use <username> | accounts | status",
+                "Usage: vex auth register <username> | login <username> [password] | requests | use <username> | accounts | status",
             );
     }
 }
@@ -480,6 +620,46 @@ async function listAccounts(ctx) {
             `${color(marker === "*" ? ROOT_ACCENT : "dim", marker)} ${color(userAccent(account.userID), name)} ${color("dim", `user=${account.userID}`)} ${color("dim", `device=${account.deviceID}`)}`,
         );
     }
+}
+
+async function deviceRequestsCommand(ctx, args) {
+    await withReadyClient(ctx, [], async (client) => {
+        const action = (args[0] ?? "list").toLowerCase();
+        if (action === "approve" || action === "reject") {
+            const requestID = requireArg(args, 1, "request id");
+            if (action === "approve") {
+                await client.devices.approveRequest(requestID);
+                console.log(color(ROOT_ACCENT, "device request approved"));
+            } else {
+                await client.devices.rejectRequest(requestID);
+                console.log(color(ROOT_ACCENT, "device request rejected"));
+            }
+            return;
+        }
+        const requests = (await client.devices.listRequests()).filter(
+            (request) => request.status === "pending",
+        );
+        printDeviceRequests(requests);
+    });
+}
+
+function printDeviceRequests(requests) {
+    if (requests.length === 0) {
+        console.log(color("dim", "no pending device requests"));
+        return;
+    }
+    for (const request of requests) {
+        console.log(formatDeviceRequestLine(request));
+    }
+}
+
+function formatDeviceRequestLine(request) {
+    const code = formatDeviceApprovalCode(request.signKey);
+    const device = color("white", request.deviceName ?? "unknown device");
+    const username = request.username
+        ? ` ${color("dim", "for")} ${color(ROOT_ACCENT, `@${request.username}`)}`
+        : "";
+    return `${color(ROOT_ACCENT, "device request")} ${device}${username} ${code} ${color("dim", `request=${request.requestID}`)}`;
 }
 
 async function useAccount(ctx, args) {
@@ -966,6 +1146,10 @@ async function switchToPreviousTarget(ctx, client, state, names, rl) {
 }
 
 async function openTarget(ctx, client, state, names, target, rl) {
+    if (target.type === "device-request") {
+        await inspectDeviceRequestInChat(ctx, client, state, target.id, rl);
+        return;
+    }
     if (target.type === "dm") {
         await selectDmInChat(ctx, client, state, names, target.id, rl);
         return;
@@ -1064,6 +1248,154 @@ async function openInbox(ctx, client, state, names, rl) {
     );
     if (!selected) return null;
     return selectDmInChat(ctx, client, state, names, selected.userID, rl);
+}
+
+async function openDeviceRequests(ctx, client, state, rl) {
+    const rows = (await client.devices.listRequests())
+        .filter((request) => request.status === "pending")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    for (const request of rows) {
+        state.deviceRequests.set(request.requestID, request);
+    }
+    if (rows.length === 0) {
+        console.log(color("dim", "No pending device login requests."));
+        return null;
+    }
+    const selected = await chooseItem(rl, "device request", rows, (request) =>
+        formatDeviceRequestLine(request),
+    );
+    if (!selected) return null;
+    await inspectDeviceRequestInChat(
+        ctx,
+        client,
+        state,
+        selected.requestID,
+        rl,
+    );
+    return selected;
+}
+
+async function handleDeviceRequestEvent(ctx, client, state, rl, update) {
+    if (update.status !== "pending") {
+        const cached = state.deviceRequests.get(update.requestID);
+        state.deviceRequests.delete(update.requestID);
+        if (
+            state.pendingJump?.target?.type === "device-request" &&
+            state.pendingJump.target.id === update.requestID
+        ) {
+            state.pendingJump = null;
+        }
+        if (cached) {
+            renderChatLine(
+                rl,
+                state,
+                `${color(ROOT_ACCENT, "system")} device request ${color(ROOT_ACCENT, update.status)} ${color("dim", update.requestID)}`,
+            );
+        }
+        return;
+    }
+
+    const request = await client.devices
+        .getRequest(update.requestID)
+        .catch(() => null);
+    if (!request || request.status !== "pending") return;
+    state.deviceRequests.set(request.requestID, request);
+    setPendingJump(
+        state,
+        {
+            id: request.requestID,
+            label: request.deviceName ?? "device request",
+            type: "device-request",
+        },
+        request.createdAt,
+    );
+    renderDeviceRequestNotification(rl, state, request);
+}
+
+async function notifyPendingDeviceRequests(client, state, rl) {
+    const requests = await client.devices.listRequests().catch(() => []);
+    for (const request of requests) {
+        if (request.status !== "pending") continue;
+        if (state.deviceRequests.has(request.requestID)) continue;
+        state.deviceRequests.set(request.requestID, request);
+        setPendingJump(
+            state,
+            {
+                id: request.requestID,
+                label: request.deviceName ?? "device request",
+                type: "device-request",
+            },
+            request.createdAt,
+        );
+        renderDeviceRequestNotification(rl, state, request);
+    }
+}
+
+function renderDeviceRequestNotification(rl, state, request) {
+    renderChatLine(
+        rl,
+        state,
+        `${color(ROOT_ACCENT, "system")} device login request from ${color("white", request.deviceName ?? "unknown device")} ${formatDeviceApprovalCode(request.signKey)} ${color("dim", "- press Tab to inspect")}`,
+    );
+}
+
+async function inspectDeviceRequestInChat(ctx, client, state, requestID, rl) {
+    const request =
+        (await client.devices.getRequest(requestID).catch(() => null)) ??
+        state.deviceRequests.get(requestID);
+    if (!request) {
+        state.deviceRequests.delete(requestID);
+        console.log(color("dim", "Device request no longer exists."));
+        return;
+    }
+    if (request.status !== "pending") {
+        state.deviceRequests.delete(requestID);
+        console.log(color("dim", `Device request is ${request.status}.`));
+        return;
+    }
+
+    renderChatLine(
+        rl,
+        state,
+        [
+            color(ROOT_ACCENT, "DEVICE LOGIN REQUEST"),
+            `${color("dim", "device")} ${color("white", request.deviceName ?? "unknown device")}`,
+            `${color("dim", "request")} ${request.requestID}`,
+            `${color("dim", "code")} ${formatDeviceApprovalCode(request.signKey)}`,
+            color("dim", "Approve only if this code matches the new device."),
+        ].join("\n"),
+    );
+    const answer = (await askText(rl, "approve this device?", "Y"))
+        .trim()
+        .toLowerCase();
+    if (answer === "n" || answer === "no") {
+        await client.devices.rejectRequest(request.requestID);
+        state.deviceRequests.delete(request.requestID);
+        clearPendingDeviceRequest(state, request.requestID);
+        renderChatLine(
+            rl,
+            state,
+            `${color(ROOT_ACCENT, "system")} device request rejected`,
+        );
+        return;
+    }
+    await client.devices.approveRequest(request.requestID);
+    state.deviceRequests.delete(request.requestID);
+    clearPendingDeviceRequest(state, request.requestID);
+    renderChatLine(
+        rl,
+        state,
+        `${color(ROOT_ACCENT, "system")} device request approved`,
+    );
+}
+
+function clearPendingDeviceRequest(state, requestID) {
+    if (
+        state.pendingJump?.target?.type === "device-request" &&
+        state.pendingJump.target.id === requestID
+    ) {
+        state.pendingJump = null;
+    }
 }
 
 async function listDmRows(client, state, names) {
@@ -1638,6 +1970,7 @@ async function chat(ctx, args) {
         account,
         avatarMarkers: new Map(),
         buffers: [],
+        deviceRequests: new Map(),
         dms: new Map(),
         host: ctx.clientOptions.host,
         pendingJump: null,
@@ -1804,6 +2137,19 @@ async function chat(ctx, args) {
             refreshPrompt(rl, state);
         });
     }
+    client.on("deviceRequest", async (update) => {
+        debugLog(ctx, "deviceRequest.event", update);
+        try {
+            await handleDeviceRequestEvent(ctx, client, state, rl, update);
+        } catch (err) {
+            debugLog(ctx, "deviceRequest.error", {
+                error: err,
+                update,
+            });
+        } finally {
+            refreshPrompt(rl, state);
+        }
+    });
 
     await connectAndWait(client, ctx, `chat:${account.username}`);
     await refreshBuffers(client, state);
@@ -1835,6 +2181,7 @@ async function chat(ctx, args) {
     if (!state.target) {
         printNoChatMessage(state);
     }
+    await notifyPendingDeviceRequests(client, state, rl);
     safeSetPrompt(rl, promptFor(state));
     safePrompt(rl);
     for await (const line of rl) {
@@ -2003,6 +2350,8 @@ async function chat(ctx, args) {
                 );
             } else if (trimmed === "/inbox" || trimmed === "/dms") {
                 await openInbox(ctx, client, state, names, rl);
+            } else if (trimmed === "/devices" || trimmed === "/requests") {
+                await openDeviceRequests(ctx, client, state, rl);
             } else if (trimmed === "redeem" || trimmed === "/redeem") {
                 await joinInviteInChat(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("redeem ")) {
@@ -2262,6 +2611,13 @@ function attachDebugClientEvents(ctx, client, label) {
             source: request?.source,
         }),
     );
+    client.on("deviceRequest", (update) =>
+        debugLog(ctx, "client.deviceRequest", {
+            ...base(),
+            requestID: update?.requestID,
+            status: update?.status,
+        }),
+    );
 }
 
 function debugLog(ctx, event, data = {}, level = "debug") {
@@ -2387,6 +2743,12 @@ function requireArg(args, index, name) {
 
 function splitWords(value) {
     return value.trim().split(/\s+/).filter(Boolean);
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 async function askText(rl, label, fallback = "") {
@@ -3106,6 +3468,30 @@ function shortID(id) {
     return id.slice(0, 8);
 }
 
+function matchingCodeForSignKey(signKey) {
+    if (!signKey) return ["", "", "", ""];
+    return String(signKey)
+        .replace(/[^0-9a-fA-F]/g, "")
+        .toUpperCase()
+        .slice(0, 4)
+        .padEnd(4, "·")
+        .split("")
+        .slice(0, 4);
+}
+
+function matchingCodeStringForSignKey(signKey) {
+    return matchingCodeForSignKey(signKey).join("");
+}
+
+function formatDeviceApprovalCode(signKeyOrCode) {
+    const chars = /^[0-9A-F·]{4}$/.test(String(signKeyOrCode))
+        ? String(signKeyOrCode).split("")
+        : matchingCodeForSignKey(signKeyOrCode);
+    return chars
+        .map((char) => color(ROOT_ACCENT, `[${char || "·"}]`))
+        .join(" ");
+}
+
 function renderHeader(state, user, title) {
     const username = user?.username ?? state.account?.username ?? "unknown";
     const host = state.host ?? "unknown-host";
@@ -3363,6 +3749,8 @@ Commands:
   vex <username>              open as a specific local user
   vex chat [username]          open the live terminal chat app
   vex auth register <username>
+  vex auth login <username>    request approval as a second device
+  vex auth requests            list pending device login requests
   vex auth accounts
   vex auth use <username>
   vex whoami
@@ -3402,6 +3790,7 @@ ${color(ROOT_ACCENT, "/invite <user>")}         send an invite link by DM
 ${color(ROOT_ACCENT, "/join <invite-link>")}    preview and accept a server invite
 ${color(ROOT_ACCENT, "/create")}                create a server and enter #general
 ${color(ROOT_ACCENT, "/members")}               list people in the current channel
+${color(ROOT_ACCENT, "/devices")}               review pending device login requests
 ${color(ROOT_ACCENT, "/accounts")}              list local users
 ${color(ROOT_ACCENT, "/whoami")}                show your login
 ${color(ROOT_ACCENT, "/quit")}                  leave chat
