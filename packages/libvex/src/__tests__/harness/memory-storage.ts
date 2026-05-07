@@ -155,6 +155,10 @@ export class MemoryStorage extends EventEmitter implements Storage {
         return Promise.resolve(this.sqlToCrypto(s));
     }
 
+    hasMessage(mailID: string): Promise<boolean> {
+        return Promise.resolve(this.messages.some((m) => m.mailID === mailID));
+    }
+
     init(): Promise<void> {
         this.ready = true;
         this.emit("ready");
@@ -215,6 +219,9 @@ export class MemoryStorage extends EventEmitter implements Storage {
     }
 
     async saveMessage(message: Message): Promise<void> {
+        if (this.messages.some((m) => m.mailID === message.mailID)) {
+            return;
+        }
         const copy = { ...message };
         const fips = getCryptoProfile() === "fips";
         const ct = fips

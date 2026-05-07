@@ -56,6 +56,28 @@ export const getInviteRouter = (
         );
     });
 
+    router.get("/:inviteID/preview", protect, async (req, res) => {
+        const invite = await db.retrieveInvite(getParam(req, "inviteID"));
+        if (!invite) {
+            res.sendStatus(404);
+            return;
+        }
+
+        if (new Date(invite.expiration).getTime() < Date.now()) {
+            res.sendStatus(401);
+            return;
+        }
+
+        const server = await db.retrieveServer(invite.serverID);
+        if (!server) {
+            res.sendStatus(404);
+            return;
+        }
+
+        const channels = await db.retrieveChannels(invite.serverID);
+        res.send(msgpack.encode({ channels, invite, server }));
+    });
+
     router.get("/:inviteID", protect, async (req, res) => {
         const invite = await db.retrieveInvite(getParam(req, "inviteID"));
         if (!invite) {

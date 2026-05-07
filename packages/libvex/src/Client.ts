@@ -149,11 +149,34 @@ export class DeviceApprovalRequiredError extends Error {
     }
 }
 
+function cloneNullableBytes(value: null | Uint8Array): null | Uint8Array {
+    return value ? new Uint8Array(value) : null;
+}
+
+function cloneSessionCrypto(session: SessionCrypto): SessionCrypto {
+    return {
+        ...session,
+        CKr: cloneNullableBytes(session.CKr),
+        CKs: cloneNullableBytes(session.CKs),
+        DHr: cloneNullableBytes(session.DHr),
+        DHsPrivate: new Uint8Array(session.DHsPrivate),
+        DHsPublic: new Uint8Array(session.DHsPublic),
+        fingerprint: new Uint8Array(session.fingerprint),
+        publicKey: new Uint8Array(session.publicKey),
+        RK: new Uint8Array(session.RK),
+        SK: new Uint8Array(session.SK),
+        skippedKeys: { ...session.skippedKeys },
+    };
+}
+
 function debugLibvexDm(
     msg: string,
     data?: Record<string, boolean | null | number | string | undefined>,
 ): void {
     if (!libvexDebugDmEnabled()) {
+        return;
+    }
+    if (isHeartbeatDebugMessage(msg, data) && libvexDebugLevel() !== "trace") {
         return;
     }
     const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
@@ -166,6 +189,14 @@ function ignoreSocketTeardown(err: unknown): void {
     // Re-throw anything else as a real unhandled rejection so it
     // shows up in dev tools and Sentry-style reporters.
     throw err;
+}
+
+function isHeartbeatDebugMessage(
+    msg: string,
+    data?: Record<string, boolean | null | number | string | undefined>,
+): boolean {
+    if (/\b(?:ping|pong)\b/i.test(msg)) return true;
+    return data?.["type"] === "ping" || data?.["type"] === "pong";
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -199,6 +230,26 @@ function libvexDebugDmEnabled(): boolean {
         return Reflect.get(env, "LIBVEX_DEBUG_DM") === "1";
     } catch {
         return false;
+    }
+}
+
+function libvexDebugLevel(): "debug" | "trace" {
+    try {
+        const g = Object.getOwnPropertyDescriptor(globalThis, "\u0070rocess");
+        if (!g) return "debug";
+        const proc: unknown = typeof g.get === "function" ? g.get() : g.value;
+        if (typeof proc !== "object" || proc === null) return "debug";
+        const envDesc = Object.getOwnPropertyDescriptor(proc, "env");
+        if (!envDesc) return "debug";
+        const env: unknown =
+            typeof envDesc.get === "function" ? envDesc.get() : envDesc.value;
+        if (typeof env !== "object" || env === null) return "debug";
+        const value = String(
+            Reflect.get(env, "LIBVEX_DEBUG_LEVEL") ?? "",
+        ).toLowerCase();
+        return value === "trace" || value === "2" ? "trace" : "debug";
+    } catch {
+        return "debug";
     }
 }
 
@@ -1299,16 +1350,17 @@ export class Client {
 
     private readonly dbPath: string;
 
+    private readonly decryptFailureCounts = new Map<string, number>();
+
     private device?: Device;
 
     private deviceRecords: Record<string, Device> = {};
-
     // ── Event subscription (composition over inheritance) ───────────────
     private readonly emitter = new EventEmitter<ClientEvents>();
+
     private fetchingMail: boolean = false;
 
     private firstMailFetch = true;
-
     private readonly forwarded = new Set<string>();
     private readonly host: string;
     private readonly http: AxiosInstance;
@@ -1316,13 +1368,13 @@ export class Client {
     private readonly httpAbortController = new AbortController();
     private readonly idKeys: KeyPair | null;
     private isAlive: boolean = true;
-    private localMessageRetentionDays: number;
 
+    private localMessageRetentionDays: number;
     private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
         null;
     private readonly mailInterval?: NodeJS.Timeout;
-    private manuallyClosing: boolean = false;
 
+    private manuallyClosing: boolean = false;
     /**
      * Node-only: per-client HTTP(S) agents (see `init()` + `storage/node/http-agents`).
      * Dropped on `close()` so idle keep-alive sockets do not keep the process alive.
@@ -1336,19 +1388,19 @@ export class Client {
     and finally falls back to username. */
     /** Negative cache for user lookups that returned 404. TTL = 30 minutes. */
     private readonly notFoundUsers = new Map<string, number>();
+
     private readonly options?: ClientOptions | undefined;
 
     private pingInterval: null | ReturnType<typeof setTimeout> = null;
-
     /**
      * Bumped when the WebSocket is torn down and re-opened so the previous
      * `postAuth` loop exits instead of overlapping a new one.
      */
     private postAuthVersion = 0;
+
     private readonly prefixes:
         | { HTTP: "http://"; WS: "ws://" }
         | { HTTP: "https://"; WS: "wss://" };
-
     private reading: boolean = false;
     private retentionPurgeDebounce: null | ReturnType<typeof setTimeout> = null;
     private readonly seenMailIDs: Set<string> = new Set();
@@ -2179,8 +2231,25 @@ export class Client {
     }
 
     private acknowledgeInboundMail(mail: MailWS): void {
+        this.decryptFailureCounts.delete(mail.mailID);
         this.seenMailIDs.add(mail.mailID);
         this.sendReceipt(new Uint8Array(mail.nonce));
+    }
+
+    private acknowledgeRepeatedDecryptFailure(
+        mail: MailWS,
+        count: number,
+    ): void {
+        if (count < 2) return;
+        if (libvexDebugDmEnabled()) {
+            debugLibvexDm("readMail: acknowledge repeated decrypt failure", {
+                attempts: count,
+                mailID: mail.mailID,
+                sender: mail.sender,
+                thisDevice: this.getDevice().deviceID,
+            });
+        }
+        this.acknowledgeInboundMail(mail);
     }
 
     private async approveDeviceRequest(requestID: string): Promise<Device> {
@@ -2615,6 +2684,7 @@ export class Client {
     private async deletePermission(permissionID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/permission/" + permissionID);
     }
+
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
@@ -2631,7 +2701,6 @@ export class Client {
         }
         return "";
     }
-
     /**
      * Gets a list of permissions for a server.
      *
@@ -3140,8 +3209,6 @@ export class Client {
         return decodeAxios(UserArrayCodec, res.data);
     }
 
-    // ── Passkeys ────────────────────────────────────────────────────────
-
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
             case "deviceRequest": {
@@ -3209,6 +3276,8 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
+
+    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -3650,6 +3719,23 @@ export class Client {
             return;
         }
 
+        if (await this.database.hasMessage(mail.mailID)) {
+            if (libvexDebugDmEnabled()) {
+                try {
+                    debugLibvexDm("readMail: skip (stored mailID)", {
+                        mailID: mail.mailID,
+                        thisDevice: this.getDevice().deviceID,
+                    });
+                } catch {
+                    debugLibvexDm("readMail: skip (stored mailID)", {
+                        mailID: mail.mailID,
+                    });
+                }
+            }
+            this.acknowledgeInboundMail(mail);
+            return;
+        }
+
         if (this.manuallyClosing) {
             if (libvexDebugDmEnabled()) {
                 debugLibvexDm("readMail: skip (manually closing)", {
@@ -4056,39 +4142,109 @@ export class Client {
                             return;
                         }
 
+                        const originalSession = cloneSessionCrypto(session);
                         const firstInboundFromSubsequent = !session.DHr;
+                        let candidateSession = cloneSessionCrypto(session);
                         if (firstInboundFromSubsequent) {
-                            session.DHr = ratchetHeader.dhPub;
-                            // First inbound after X3DH initial mail has no prior DH ratchet.
-                            // If this side has no receiving chain yet (initiator path),
-                            // derive the bootstrap receive chain to match peer's first
-                            // bootstrap send chain.
-                            if (!session.CKr) {
-                                session.CKr = deriveBootstrapSendChain(
-                                    session.RK,
+                            candidateSession.DHr = ratchetHeader.dhPub;
+                            // First inbound after X3DH initial mail can be either:
+                            // - peer's bootstrap send chain if they replied before seeing
+                            //   one of our subsequent messages; or
+                            // - a real DH ratchet if they already received one from us.
+                            // Try bootstrap first for backwards compatibility, then fall
+                            // back to the DH-ratchet interpretation if HMAC disagrees.
+                            if (!candidateSession.CKr) {
+                                candidateSession.CKr = deriveBootstrapSendChain(
+                                    candidateSession.RK,
                                 );
                             }
                         } else if (
-                            hasRemoteDhChanged(session.DHr, ratchetHeader.dhPub)
+                            hasRemoteDhChanged(
+                                candidateSession.DHr,
+                                ratchetHeader.dhPub,
+                            )
                         ) {
                             await ratchetStepReceive(
-                                session,
+                                candidateSession,
                                 ratchetHeader.dhPub,
                                 ratchetHeader.pn,
                             );
                         }
 
-                        const messageKey = takeReceiveMessageKey(
-                            session,
+                        let messageKey = takeReceiveMessageKey(
+                            candidateSession,
                             ratchetHeader.dhPub,
                             ratchetHeader.n,
                         );
-                        const HMAC = xHMAC(mail, messageKey);
+                        let HMAC = xHMAC(mail, messageKey);
+
+                        if (
+                            !XUtils.bytesEqual(HMAC, header) &&
+                            firstInboundFromSubsequent &&
+                            !originalSession.CKr
+                        ) {
+                            const ratchetedCandidate =
+                                cloneSessionCrypto(originalSession);
+                            await ratchetStepReceive(
+                                ratchetedCandidate,
+                                ratchetHeader.dhPub,
+                                ratchetHeader.pn,
+                            );
+                            const ratchetedMessageKey = takeReceiveMessageKey(
+                                ratchetedCandidate,
+                                ratchetHeader.dhPub,
+                                ratchetHeader.n,
+                            );
+                            const ratchetedHMAC = xHMAC(
+                                mail,
+                                ratchetedMessageKey,
+                            );
+                            if (XUtils.bytesEqual(ratchetedHMAC, header)) {
+                                if (libvexDebugDmEnabled()) {
+                                    debugLibvexDm(
+                                        "readMail subsequent: first inbound used DH-ratchet fallback",
+                                        {
+                                            mailID: mail.mailID,
+                                            thisDevice:
+                                                this.getDevice().deviceID,
+                                        },
+                                    );
+                                }
+                                candidateSession = ratchetedCandidate;
+                                messageKey = ratchetedMessageKey;
+                                HMAC = ratchetedHMAC;
+                            }
+                        }
 
                         if (!XUtils.bytesEqual(HMAC, header)) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm(
+                                    "readMail subsequent: abort (HMAC mismatch)",
+                                    {
+                                        attempts: failureCount,
+                                        mailID: mail.mailID,
+                                        sender: mail.sender,
+                                        thisDevice: this.getDevice().deviceID,
+                                    },
+                                );
+                            }
                             healSession();
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                            );
                             return;
                         }
+
+                        session = candidateSession;
 
                         const decrypted = await xSecretboxOpenAsync(
                             new Uint8Array(mail.cipher),
@@ -4182,11 +4338,19 @@ export class Client {
                             ] = session;
                             this.acknowledgeInboundMail(mail);
                         } else {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             healSession();
-                            this.emitter.emit("retryRequest", {
-                                mailID: mail.mailID,
-                                source: "decrypt_failure",
-                            });
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                            );
                         }
                         break;
                     }
@@ -4204,6 +4368,12 @@ export class Client {
             this.getHost() + "/invite/" + inviteID,
         );
         return decodeAxios(PermissionCodec, res.data);
+    }
+
+    private registerDecryptFailure(mail: MailWS): number {
+        const count = (this.decryptFailureCounts.get(mail.mailID) ?? 0) + 1;
+        this.decryptFailureCounts.set(mail.mailID, count);
+        return count;
     }
 
     private async registerDevice(): Promise<DeviceRegistrationResult | null> {
@@ -4381,10 +4551,12 @@ export class Client {
                 if (newDevice && "deviceID" in newDevice) {
                     device = newDevice;
                 } else if (newDevice && "status" in newDevice) {
-                    throw new Error(
-                        "Device registration requires approval from an existing device. requestID=" +
-                            newDevice.requestID,
-                    );
+                    throw new DeviceApprovalRequiredError({
+                        challenge: newDevice.challenge,
+                        expiresAt: newDevice.expiresAt,
+                        requestID: newDevice.requestID,
+                        userID: newDevice.userID ?? null,
+                    });
                 } else {
                     throw new Error("Error registering device.");
                 }

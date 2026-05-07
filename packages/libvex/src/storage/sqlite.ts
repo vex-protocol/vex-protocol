@@ -225,8 +225,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         };
     }
 
-    // ── Sessions ─────────────────────────────────────────────────────────────
-
     async getPreKeys(): Promise<null | PreKeysCrypto> {
         await this.untilReady();
         if (this.closing) {
@@ -249,6 +247,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
             signature: XUtils.decodeHex(preKeyInfo.signature),
         };
     }
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
 
     async getSessionByDeviceID(
         deviceID: string,
@@ -295,6 +295,19 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
 
         return this.sqlToCrypto(await this.sessionRowToSQLAsync(sessionRow));
+    }
+
+    async hasMessage(mailID: string): Promise<boolean> {
+        await this.untilReady();
+        if (this.closing) {
+            return false;
+        }
+        const row = await this.db
+            .selectFrom("messages")
+            .select("mailID")
+            .where("mailID", "=", mailID)
+            .executeTakeFirst();
+        return row !== undefined;
     }
 
     async init(): Promise<void> {
@@ -358,6 +371,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     .execute();
                 await this.ensureSessionRatchetColumns();
                 await this.ensureRetentionHintColumn();
+                await this.ensureMessageMailIdIndex();
 
                 await this.db.schema
                     .createTable("preKeys")
@@ -505,6 +519,18 @@ export class SqliteStorage extends EventEmitter implements Storage {
 
     async saveMessage(message: Message): Promise<void> {
         if (this.isClosingNow()) {
+            return;
+        }
+        await this.untilReady();
+
+        // Fan-out to multiple devices reuses one `mailID` but each encrypt path
+        // uses a fresh nonce (table PK). Keep a single local row per logical mail.
+        const dupe = await this.db
+            .selectFrom("messages")
+            .select("nonce")
+            .where("mailID", "=", message.mailID)
+            .executeTakeFirst();
+        if (dupe !== undefined) {
             return;
         }
 
@@ -745,6 +771,19 @@ export class SqliteStorage extends EventEmitter implements Storage {
             owner: row.owner,
             signKey: row.signKey,
         };
+    }
+
+    /** Speeds up mailID existence checks for saveMessage deduplication. */
+    private async ensureMessageMailIdIndex(): Promise<void> {
+        try {
+            await sql
+                .raw(
+                    "CREATE INDEX IF NOT EXISTS messages_mailID_idx ON messages(mailID)",
+                )
+                .execute(this.db);
+        } catch {
+            // Extremely defensive — `messages` always exists at this point.
+        }
     }
 
     private async ensureRetentionHintColumn(): Promise<void> {

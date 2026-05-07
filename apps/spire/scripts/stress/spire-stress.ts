@@ -1388,7 +1388,8 @@ function printSpireStressCliHelp(): void {
             "  SPIRE_STRESS_WEB=0             no web UI; quiet stderr unless SPIRE_STRESS_VERBOSE=1",
             "  SPIRE_STRESS_JSON=1            append JSON summary to stdout",
             "  SPIRE_STRESS_WS_DELIVERY_MS    floor (ms) for post-burst WS waits; also scales with client count (chat/noise)",
-            "  SPIRE_STRESS_WS_WITNESS_MAX    post-burst: how many guests must see each ping (default 3; `all` = every guest)",
+            "  SPIRE_STRESS_WS_REQUIRED_RATIO post-burst witness ratio; local default 1, CI default ~0.67",
+            "  SPIRE_STRESS_WS_SAMPLES        post-burst WS probes per sender; local default 1, CI default 3",
             "  SPIRE_STRESS_WS_CI=0           disable CI timeout multiplier (CI/GITHUB_ACTIONS default ~1.3×)",
             "  SPIRE_STRESS_WS_CI_FACTOR      override CI multiplier (1–4; default on CI ~1.3)",
             "",
@@ -1554,8 +1555,7 @@ async function verifyRealtimeWsDeliveryIfNeeded(
             telemetry,
             phase,
             burst,
-            noiseWorld.userIDs[0] ?? "",
-            noiseWorld.userIDs[1] ?? "",
+            noiseWorld.userIDs,
         );
     }
 }

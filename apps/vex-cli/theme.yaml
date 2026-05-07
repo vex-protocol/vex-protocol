@@ -1,0 +1,36 @@
+# Vex CLI theme contract.
+#
+# The current runtime keeps these values as constants in src/vex-chat.js. This
+# file is the portable shape for importing/swapping themes once we add theme
+# loading.
+root: fireRed
+colors:
+    fireRed: "#E70000"
+    royalPurple: "#2a075b"
+    incineratorGreen: "#91e643"
+    iceBlue: "#a8c8df"
+    peachPink: "#c5698b"
+    nightBlack: "#0a0a0a"
+    brightWhite: "#F5F5F5"
+    cream: "#d9c2a3"
+    forestGreen: "#2b501d"
+ids:
+    users:
+        palette:
+            - fireRed
+            - incineratorGreen
+            - iceBlue
+            - peachPink
+            - cream
+            - royalPurple
+            - forestGreen
+            - brightWhite
+    targets:
+        palette:
+            - iceBlue
+            - cream
+            - forestGreen
+            - royalPurple
+            - peachPink
+    invites:
+        palette: targets

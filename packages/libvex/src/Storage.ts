@@ -64,6 +64,8 @@ export interface Storage extends EventEmitter {
     getSessionByPublicKey: (
         publicKey: Uint8Array,
     ) => Promise<null | SessionCrypto>;
+    /** Returns whether a message with this `mailID` already exists locally. */
+    hasMessage: (mailID: string) => Promise<boolean>;
     /**
      * Performs storage initialization (schema creation, migrations, warmup, etc.).
      *
