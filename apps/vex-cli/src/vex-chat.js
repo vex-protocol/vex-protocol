@@ -1035,26 +1035,19 @@ function queueInvitePrompt(
                 state,
                 formatInvitePromptMessage(preview, inviteID, sender),
             );
-            state.pendingInviteJoin = { inviteID };
-            try {
-                const answer = (await askText(rl, `join ${serverName}?`, "N"))
-                    .trim()
-                    .toLowerCase();
-                clearSubmittedPrompt();
-                if (answer !== "y" && answer !== "yes") {
-                    renderChatLine(
-                        rl,
-                        state,
-                        `${color(ROOT_ACCENT, "system")} ${color("dim", "invite dismissed")}`,
-                    );
-                    return;
-                }
-                await redeemInviteInChat(ctx, client, state, inviteID, preview);
-            } finally {
-                if (state.pendingInviteJoin?.inviteID === inviteID) {
-                    state.pendingInviteJoin = null;
-                }
+            const answer = (await askText(rl, `join ${serverName}?`, "Y"))
+                .trim()
+                .toLowerCase();
+            clearSubmittedPrompt();
+            if (answer === "n" || answer === "no") {
+                renderChatLine(
+                    rl,
+                    state,
+                    `${color(ROOT_ACCENT, "system")} ${color("dim", "invite dismissed")}`,
+                );
+                return;
             }
+            await redeemInviteInChat(ctx, client, state, inviteID, preview);
         })
         .catch((err) => {
             debugLog(ctx, "invite.prompt.error", { error: err, inviteID });
@@ -1145,15 +1138,6 @@ function bindKeypressShortcuts(ctx, client, state, names, rl) {
     if (!input.isTTY) return () => {};
     emitKeypressEvents(input, rl);
     const onKeypress = (_chunk, key = {}) => {
-        if (key.ctrl && key.name === "j" && state.pendingInviteJoin) {
-            rl.write("y\n");
-            return;
-        }
-        if (key.ctrl && key.name === "tab") {
-            if ((rl.line ?? "").trim()) return;
-            void switchToPreviousTarget(ctx, client, state, names, rl);
-            return;
-        }
         if (key.name !== "tab" || !state.pendingJump) return;
         if ((rl.line ?? "").trim()) return;
         void jumpToPendingNotification(ctx, client, state, names, rl);
@@ -1170,25 +1154,6 @@ async function jumpToPendingNotification(ctx, client, state, names, rl) {
     try {
         pushPreviousTarget(state, state.target);
         await openTarget(ctx, client, state, names, pending.target, rl);
-    } catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
-    } finally {
-        safeSetPrompt(rl, promptFor(state));
-        safePrompt(rl);
-    }
-}
-
-async function switchToPreviousTarget(ctx, client, state, names, rl) {
-    const previous = state.previousTargets.pop();
-    if (!previous) return;
-    const current = cloneTarget(state.target);
-    rl.write(null, { ctrl: true, name: "u" });
-    clearActivePrompt();
-    try {
-        if (current && !sameTarget(current, previous)) {
-            pushPreviousTarget(state, current);
-        }
-        await openTarget(ctx, client, state, names, previous, rl);
     } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2039,7 +2004,6 @@ async function chat(ctx, args) {
         dms: new Map(),
         host: ctx.clientOptions.host,
         pendingJump: null,
-        pendingInviteJoin: null,
         pendingInvitePrompts: new Set(),
         previousTargets: [],
         promptQueue: Promise.resolve(),
@@ -2981,7 +2945,7 @@ function formatInvitePromptMessage(preview, inviteID, sender = null) {
     return [
         `${color(ROOT_ACCENT, "invite")} ${color("dim", "from")} ${senderText}`,
         formatInvitePreviewBox(preview, inviteID),
-        color("dim", "Want to join? y/N  Ctrl-J joins when supported"),
+        color("dim", "Want to join? Y/n"),
     ].join("\n");
 }
 
