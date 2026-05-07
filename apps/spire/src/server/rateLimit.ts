@@ -83,14 +83,14 @@ const keyByIp = (req: Request): string => ipKeyGenerator(req.ip ?? "");
 /**
  * Global per-IP limiter. Applied app-wide via `api.use(globalLimiter)`.
  *
- * 3000 requests per 15 minutes per client IP. A human chatting via a
- * browser or the libvex client won't come close; a single-host DoS
- * gets throttled quickly.
+ * 150,000 requests per 15 minutes per client IP. This leaves room for
+ * high-throughput clients and algorithmic applications while still
+ * putting a ceiling on runaway single-host traffic.
  */
 export const globalLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 3000,
+    limit: 150_000,
     skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
@@ -100,7 +100,7 @@ export const globalLimiter = rateLimit({
  * Strict auth endpoint limiter. Applied per-route to /auth, /register,
  * and /auth/device.
  *
- * 50 failed attempts per 15 minutes per IP. Successful logins don't
+ * 2,500 failed attempts per 15 minutes per IP. Successful logins don't
  * count (`skipSuccessfulRequests`), so a normal user doesn't lock
  * themselves out by fat-fingering a password once. Blocks brute force
  * (CWE-307) without harming UX.
@@ -108,7 +108,7 @@ export const globalLimiter = rateLimit({
 export const authLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 50,
+    limit: 2_500,
     skip: devApiKeySkipsRateLimits,
     skipSuccessfulRequests: true,
     standardHeaders: "draft-7",
@@ -121,13 +121,14 @@ export const authLimiter = rateLimit({
  * upload attempts per minute so an attacker can't force spire to
  * spend CPU/IO on repeated large-body parses.
  *
- * 200 uploads per minute per IP — generous for a chat client (rapid-
- * fire image attachments) but tight enough to shield the disk.
+ * 10,000 uploads per minute per IP — high enough for bursty clients
+ * and automation while keeping a hard per-host guardrail before
+ * multipart parsing.
  */
 export const uploadLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 200,
+    limit: 10_000,
     skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 60 * 1000,
