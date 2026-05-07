@@ -30,6 +30,7 @@ const ANSI = {
     white: "\x1b[37m",
     yellow: "\x1b[33m",
 };
+const USER_ACCENTS = ["white", "yellow", "green", "cyan", "magenta"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -997,7 +998,7 @@ function renderDmChoice(row) {
     const preview = row.lastMessage
         ? ` ${color("dim", truncateInline(row.lastMessage, 64))}`
         : "";
-    return `${color("red", `@${row.username}`)} ${unread} ${when}${preview}`;
+    return `${color(userAccent(row.userID), `@${row.username}`)} ${unread} ${when}${preview}`;
 }
 
 function defaultDmIndex(rows) {
@@ -1396,7 +1397,7 @@ async function printMembers(client, state) {
     );
     for (const user of users) {
         console.log(
-            `  ${color("white", user.username)} ${color("dim", `(${shortID(user.userID)})`)}`,
+            `  ${color(userAccent(user.userID), user.username)} ${color("dim", `(${shortID(user.userID)})`)}`,
         );
     }
 }
@@ -1537,6 +1538,7 @@ async function chat(ctx, args) {
             message.direction === "incoming" || route.render
                 ? await cachedUsername(client, names, message.authorID)
                 : null;
+        const authorID = message.authorID;
         if (message.direction === "incoming" && !route.render) {
             if (route.targetObject) {
                 setPendingJump(state, route.targetObject, message.timestamp);
@@ -1545,6 +1547,7 @@ async function chat(ctx, args) {
             notifyIncomingMessage(author);
             renderNotificationLine(rl, state, {
                 author,
+                authorID,
                 isDm: route.isDm,
                 target: route.target,
             });
@@ -1578,6 +1581,7 @@ async function chat(ctx, args) {
             notifyIncomingMessage(author);
             renderNotificationLine(rl, state, {
                 author,
+                authorID,
                 isDm: true,
                 target: route.target,
             });
@@ -1615,6 +1619,7 @@ async function chat(ctx, args) {
                 target: route.target,
                 timestamp: message.timestamp,
                 who: author,
+                whoID: authorID,
             }),
         );
         if (message.direction === "incoming") {
@@ -2540,6 +2545,15 @@ function color(name, value) {
     return `${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
 }
 
+function userAccent(userID) {
+    if (!userID) return "white";
+    let hash = 0;
+    for (const char of String(userID)) {
+        hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    }
+    return USER_ACCENTS[hash % USER_ACCENTS.length];
+}
+
 async function saveTarget(ctx, target) {
     const config = await readConfig(ctx.configPath);
     config.lastTarget = target;
@@ -2568,11 +2582,15 @@ function renderChatLine(rl, state, line) {
     restoreActivePrompt(rl, state, activeLine, activeCursor);
 }
 
-function renderNotificationLine(rl, state, { author, isDm, target }) {
+function renderNotificationLine(rl, state, { author, authorID, isDm, target }) {
     const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
+    const authorText = color(
+        userAccent(authorID),
+        isDm ? `@${author}` : author,
+    );
     const message = isDm
-        ? `DM message received from ${color("red", `@${author}`)}`
-        : `Channel message received in ${color("red", target)} from ${color("white", author)}`;
+        ? `DM message received from ${authorText}`
+        : `Channel message received in ${color("red", target)} from ${authorText}`;
     renderChatLine(rl, state, `${color("red", "system")} ${message}${jump}`);
 }
 
@@ -2903,6 +2921,7 @@ async function printMessages(client, messages, options = {}) {
                 target,
                 timestamp: message.timestamp,
                 who,
+                whoID: message.authorID,
             }),
         );
     }
@@ -2957,8 +2976,9 @@ function formatMessageLine({
     target,
     timestamp,
     who,
+    whoID,
 }) {
-    const whoColor = direction === "outgoing" ? "white" : "red";
+    const whoColor = direction === "outgoing" ? "white" : userAccent(whoID);
     const targetColor = "red";
     return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${color(whoColor, who)}${color("dim", ":")} ${message}`;
 }
