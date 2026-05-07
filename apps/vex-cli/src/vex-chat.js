@@ -902,6 +902,11 @@ function bindKeypressShortcuts(ctx, client, state, names, rl) {
             rl.write("y\n");
             return;
         }
+        if (key.ctrl && key.name === "tab") {
+            if ((rl.line ?? "").trim()) return;
+            void switchToPreviousTarget(ctx, client, state, names, rl);
+            return;
+        }
         if (key.name !== "tab" || !state.pendingJump) return;
         if ((rl.line ?? "").trim()) return;
         void jumpToPendingNotification(ctx, client, state, names, rl);
@@ -916,32 +921,49 @@ async function jumpToPendingNotification(ctx, client, state, names, rl) {
     rl.write(null, { ctrl: true, name: "u" });
     clearActivePrompt();
     try {
-        if (pending.target.type === "dm") {
-            await selectDmInChat(
-                ctx,
-                client,
-                state,
-                names,
-                pending.target.id,
-                rl,
-            );
-        } else {
-            const channel = {
-                channelID: pending.target.id,
-                name: pending.target.label.replace(/^#/, ""),
-                serverID: pending.target.serverID,
-            };
-            await enterChannel(ctx, client, state, channel, {
-                name: pending.target.serverName,
-                serverID: pending.target.serverID,
-            });
-        }
+        pushPreviousTarget(state, state.target);
+        await openTarget(ctx, client, state, names, pending.target, rl);
     } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
     } finally {
         safeSetPrompt(rl, promptFor(state));
         safePrompt(rl);
     }
+}
+
+async function switchToPreviousTarget(ctx, client, state, names, rl) {
+    const previous = state.previousTargets.pop();
+    if (!previous) return;
+    const current = cloneTarget(state.target);
+    rl.write(null, { ctrl: true, name: "u" });
+    clearActivePrompt();
+    try {
+        if (current && !sameTarget(current, previous)) {
+            pushPreviousTarget(state, current);
+        }
+        await openTarget(ctx, client, state, names, previous, rl);
+    } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+    } finally {
+        safeSetPrompt(rl, promptFor(state));
+        safePrompt(rl);
+    }
+}
+
+async function openTarget(ctx, client, state, names, target, rl) {
+    if (target.type === "dm") {
+        await selectDmInChat(ctx, client, state, names, target.id, rl);
+        return;
+    }
+    const channel = {
+        channelID: target.id,
+        name: target.label.replace(/^#/, ""),
+        serverID: target.serverID,
+    };
+    await enterChannel(ctx, client, state, channel, {
+        name: target.serverName,
+        serverID: target.serverID,
+    });
 }
 
 async function enterDm(client, state, user) {
@@ -1410,6 +1432,24 @@ function addWindow(state, target) {
     state.buffers.unshift({ ...target });
 }
 
+function pushPreviousTarget(state, target) {
+    const copy = cloneTarget(target);
+    if (!copy) return;
+    state.previousTargets = (state.previousTargets ?? []).filter(
+        (item) => !sameTarget(item, copy),
+    );
+    state.previousTargets.push(copy);
+    state.previousTargets = state.previousTargets.slice(-2);
+}
+
+function cloneTarget(target) {
+    return target ? { ...target } : null;
+}
+
+function sameTarget(a, b) {
+    return Boolean(a && b && a.type === b.type && a.id === b.id);
+}
+
 function printWindows(state) {
     if (!state.buffers || state.buffers.length === 0) {
         console.log(
@@ -1596,6 +1636,7 @@ async function chat(ctx, args) {
         pendingJump: null,
         pendingInviteJoin: null,
         pendingInvitePrompts: new Set(),
+        previousTargets: [],
         promptQueue: Promise.resolve(),
         renderedMessageKeys: new Map(),
         serverMemberCache: new Map(),
