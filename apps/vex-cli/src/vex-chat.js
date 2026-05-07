@@ -1040,11 +1040,16 @@ async function sendDmInChat(
         targetUserID: user.userID,
         targetUsername: user.username,
     });
-    markDmRead(state, user.userID);
-    state.target = { id: user.userID, label: user.username, type: "dm" };
-    addWindow(state, state.target);
-    await saveTarget(ctx, state.target);
-    await enterDm(client, state, user);
+    addWindow(state, {
+        id: user.userID,
+        label: user.username,
+        type: "dm",
+    });
+    renderChatLine(
+        rl,
+        state,
+        `${color("yellow", "system")} ${color("green", `DM sent to ${user.username}`)}`,
+    );
 }
 
 async function selectChannelInChat(ctx, client, state, rl) {
@@ -3014,7 +3019,7 @@ ${color("cyan", "/user <user>")}           open a DM conversation
 ${color("cyan", "/inbox")}                 show DMs, unread counts, and recent senders
 ${color("cyan", "/dm")}                    alias for /inbox
 ${color("cyan", "/dm <user>")}             open a DM conversation
-${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
+${color("cyan", "/dm <user> <message>")}   send a DM without leaving the current chat
 ${color("cyan", "/to <user>")}             open a DM conversation
 ${color("cyan", "/invite")}                create an invite for the current server
 ${color("cyan", "/invite <user>")}         send an invite link by DM
