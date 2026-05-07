@@ -9,6 +9,7 @@
         "test": "pnpm -r --if-present test",
         "vex": "node apps/vex-cli/src/vex-chat.js",
         "vex:dev": "node apps/vex-cli/scripts/dev-watch.mjs",
+        "vex:watch": "node apps/vex-cli/scripts/dev-watch.mjs",
         "integration:cli": "bash scripts/integration-cli-with-docker.sh",
         "integration:cli:raw": "env SPIRE_STRESS_TRACE=0 pnpm --filter @vex-chat/spire run integration:cli",
         "integration:web": "env SPIRE_STRESS_TRACE=0 pnpm --filter @vex-chat/spire run integration:web",
