@@ -822,8 +822,11 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
     markDmRead(state, user.userID);
-    if (state.pendingDmJump?.userID === user.userID) {
-        state.pendingDmJump = null;
+    if (
+        state.pendingJump?.target?.type === "dm" &&
+        state.pendingJump.target.id === user.userID
+    ) {
+        state.pendingJump = null;
     }
     state.target = { id: user.userID, label: user.username, type: "dm" };
     addWindow(state, state.target);
@@ -836,21 +839,40 @@ function bindKeypressShortcuts(ctx, client, state, names, rl) {
     if (!input.isTTY) return () => {};
     emitKeypressEvents(input, rl);
     const onKeypress = (_chunk, key = {}) => {
-        if (key.name !== "tab" || !state.pendingDmJump) return;
+        if (key.name !== "tab" || !state.pendingJump) return;
         if ((rl.line ?? "").trim()) return;
-        void jumpToPendingDm(ctx, client, state, names, rl);
+        void jumpToPendingNotification(ctx, client, state, names, rl);
     };
     input.on("keypress", onKeypress);
     return () => input.off("keypress", onKeypress);
 }
 
-async function jumpToPendingDm(ctx, client, state, names, rl) {
-    const pending = state.pendingDmJump;
+async function jumpToPendingNotification(ctx, client, state, names, rl) {
+    const pending = state.pendingJump;
     if (!pending) return;
     rl.write(null, { ctrl: true, name: "u" });
     clearActivePrompt();
     try {
-        await selectDmInChat(ctx, client, state, names, pending.userID, rl);
+        if (pending.target.type === "dm") {
+            await selectDmInChat(
+                ctx,
+                client,
+                state,
+                names,
+                pending.target.id,
+                rl,
+            );
+        } else {
+            const channel = {
+                channelID: pending.target.id,
+                name: pending.target.label.replace(/^#/, ""),
+                serverID: pending.target.serverID,
+            };
+            await enterChannel(ctx, client, state, channel, {
+                name: pending.target.serverName,
+                serverID: pending.target.serverID,
+            });
+        }
     } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1397,6 +1419,12 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         serverName: server?.name,
         type: "channel",
     };
+    if (
+        state.pendingJump?.target?.type === "channel" &&
+        state.pendingJump.target.id === state.target.id
+    ) {
+        state.pendingJump = null;
+    }
     await saveTarget(ctx, state.target);
     debugLog(ctx, "channel.enter", {
         channelID: channel.channelID,
@@ -1438,7 +1466,7 @@ async function chat(ctx, args) {
         buffers: [],
         dms: new Map(),
         host: ctx.clientOptions.host,
-        pendingDmJump: null,
+        pendingJump: null,
         pendingInvitePrompts: new Set(),
         promptQueue: Promise.resolve(),
         renderedMessageKeys: new Map(),
@@ -1477,13 +1505,25 @@ async function chat(ctx, args) {
             activeTarget: state.target,
             route,
         });
-        if (!route.render) {
-            if (message.direction === "incoming" && route.isDm) {
-                playIncomingSound(ctx.sound);
-                notifyIncomingDm(
-                    await cachedUsername(client, names, message.authorID),
-                );
+        const author =
+            message.direction === "incoming" || route.render
+                ? await cachedUsername(client, names, message.authorID)
+                : null;
+        if (message.direction === "incoming" && !route.render) {
+            if (route.targetObject) {
+                setPendingJump(state, route.targetObject, message.timestamp);
             }
+            playIncomingSound(ctx.sound);
+            notifyIncomingMessage(author);
+            renderNotificationLine(rl, state, {
+                author,
+                isDm: route.isDm,
+                target: route.target,
+            });
+            refreshPrompt(rl, state);
+            return;
+        }
+        if (!route.render) {
             refreshPrompt(rl, state);
             return;
         }
@@ -1496,7 +1536,6 @@ async function chat(ctx, args) {
             renderChatLine(rl, state, `[undecrypted] ${message.mailID}`);
             return;
         }
-        const author = await cachedUsername(client, names, message.authorID);
         debugLog(ctx, "message.render", {
             ...messageDebugPayload(message),
             author,
@@ -1508,8 +1547,12 @@ async function chat(ctx, args) {
             !route.isActiveDm
         ) {
             playIncomingSound(ctx.sound);
-            notifyIncomingDm(author);
-            renderDmReceiptLine(rl, state, author);
+            notifyIncomingMessage(author);
+            renderNotificationLine(rl, state, {
+                author,
+                isDm: true,
+                target: route.target,
+            });
             refreshPrompt(rl, state);
             return;
         }
@@ -2238,14 +2281,19 @@ async function messageRoute(client, state, message) {
         const isActiveChannel =
             state.target?.type === "channel" &&
             state.target.id === message.group;
+        const targetObject = isActiveChannel
+            ? state.target
+            : await channelTargetForMessage(client, state, message.group);
+        const target = targetObject
+            ? targetLabel(targetObject)
+            : `#${shortID(message.group)}`;
         return {
             isActiveDm: false,
             isDm: false,
             reason: isActiveChannel ? "active-channel" : "other-channel",
             render: isActiveChannel,
-            target: isActiveChannel
-                ? targetLabel(state.target)
-                : `#${shortID(message.group)}`,
+            target,
+            targetObject,
         };
     }
 
@@ -2259,6 +2307,7 @@ async function messageRoute(client, state, message) {
             reason: "active-dm",
             render: true,
             target: targetLabel(state.target),
+            targetObject: state.target,
         };
     }
 
@@ -2274,6 +2323,24 @@ async function messageRoute(client, state, message) {
         reason: canInlineInServer ? "server-scoped-dm" : "offscreen-dm",
         render: Boolean(canInlineInServer),
         target: "DM",
+    };
+}
+
+async function channelTargetForMessage(client, state, channelID) {
+    const existing = state.buffers?.find((buffer) => buffer.id === channelID);
+    if (existing) return existing;
+    const channel = await client.channels
+        .retrieveByID(channelID)
+        .catch(() => null);
+    if (!channel) return null;
+    const servers = await client.servers.retrieve().catch(() => []);
+    const server = servers.find((item) => item.serverID === channel.serverID);
+    return {
+        id: channel.channelID,
+        label: `#${channel.name}`,
+        serverID: channel.serverID,
+        serverName: server?.name,
+        type: "channel",
     };
 }
 
@@ -2308,11 +2375,11 @@ async function recordDmActivity(client, state, names, message, route = null) {
         username,
     });
     if (isUnread) {
-        state.pendingDmJump = {
-            lastAt: message.timestamp ?? new Date().toISOString(),
-            userID,
-            username,
-        };
+        setPendingJump(
+            state,
+            { id: userID, label: username, type: "dm" },
+            message.timestamp,
+        );
     }
 }
 
@@ -2320,16 +2387,29 @@ function markDmRead(state, userID) {
     const existing = state.dms?.get(userID);
     if (!existing) return;
     state.dms.set(userID, { ...existing, unread: 0 });
-    if (state.pendingDmJump?.userID === userID) {
+    if (
+        state.pendingJump?.target?.type === "dm" &&
+        state.pendingJump.target.id === userID
+    ) {
         const next = nextUnreadDm(state);
-        state.pendingDmJump = next
+        state.pendingJump = next
             ? {
                   lastAt: next.lastAt,
-                  userID: next.userID,
-                  username: next.username,
+                  target: {
+                      id: next.userID,
+                      label: next.username,
+                      type: "dm",
+                  },
               }
             : null;
     }
+}
+
+function setPendingJump(state, target, timestamp = null) {
+    state.pendingJump = {
+        lastAt: timestamp ?? new Date().toISOString(),
+        target,
+    };
 }
 
 function nextUnreadDm(state) {
@@ -2403,16 +2483,12 @@ function renderChatLine(rl, state, line) {
     restoreActivePrompt(rl, state, activeLine, activeCursor);
 }
 
-function renderDmReceiptLine(rl, state, author) {
-    const jump =
-        state.pendingDmJump?.username === author
-            ? color("dim", " - press Tab to open")
-            : "";
-    renderChatLine(
-        rl,
-        state,
-        `${color("yellow", "system")} DM message received from ${color("magenta", `@${author}`)}${jump}`,
-    );
+function renderNotificationLine(rl, state, { author, isDm, target }) {
+    const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
+    const message = isDm
+        ? `DM message received from ${color("magenta", `@${author}`)}`
+        : `Channel message received in ${color("cyan", target)} from ${color("yellow", author)}`;
+    renderChatLine(rl, state, `${color("yellow", "system")} ${message}${jump}`);
 }
 
 function restoreActivePrompt(rl, state, line, cursor) {
@@ -2550,9 +2626,9 @@ function networkIcon(network) {
 }
 
 function formatUnreadCount(unread) {
-    if (unread <= 0) return "dm00";
-    if (unread > 99) return "dm99+";
-    return `dm${String(unread).padStart(2, "0")}`;
+    if (unread <= 0) return "🔔00";
+    if (unread > 99) return "🔔99+";
+    return `🔔${String(unread).padStart(2, "0")}`;
 }
 
 function totalUnreadDms(state) {
@@ -2689,7 +2765,7 @@ function resolveSoundFile(sound) {
     return null;
 }
 
-function notifyIncomingDm(author) {
+function notifyIncomingMessage(author) {
     if (process.platform !== "darwin") {
         return;
     }
