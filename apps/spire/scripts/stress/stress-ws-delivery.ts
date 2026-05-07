@@ -39,6 +39,7 @@ const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
 const WS_REQUIRED_RATIO_ENV = "SPIRE_STRESS_WS_REQUIRED_RATIO";
 const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
 const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
+const WS_SAMPLES_ENV = "SPIRE_STRESS_WS_SAMPLES";
 
 const DEFAULT_WS_DELIVERY_MS = 25_000;
 
@@ -165,6 +166,15 @@ function minWitnessSuccesses(totalWitnesses: number): number {
     return Math.max(1, Math.floor(totalWitnesses * ratio));
 }
 
+function parsePositiveIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
+    if (raw === undefined || raw === "") {
+        return fallback;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
 function parsePositiveMsEnv(name: string, fallback: number): number {
     const raw = process.env[name]?.trim();
     if (raw === undefined || raw === "") {
@@ -209,6 +219,13 @@ function touchCtx(
 
 function withStressWsCiBudget(ms: number): number {
     return Math.ceil(ms * stressWsCiMultiplier());
+}
+
+function wsPostBurstSamples(): number {
+    const onCi =
+        process.env["CI"] === "true" ||
+        process.env["GITHUB_ACTIONS"] === "true";
+    return parsePositiveIntEnv(WS_SAMPLES_ENV, onCi ? 3 : 1);
 }
 
 function wsRequiredRatio(): number {
@@ -462,57 +479,70 @@ async function verifyGroupAllClientsWsDelivery(
     timeoutMs: number,
     surface: string,
 ): Promise<void> {
+    const samples = wsPostBurstSamples();
     for (const [senderIndex, sender] of clients.entries()) {
-        const token = `[spire-ws-ping:${step}:${String(senderIndex)}:${randomUUID()}]`;
-        const waits = clients
+        const waits: Promise<void>[] = [];
+        const witnesses = clients
             .map((client, clientIndex) => ({ client, clientIndex }))
-            .filter(({ clientIndex }) => clientIndex !== senderIndex)
-            .map(({ client, clientIndex }) =>
-                waitForClientMessageWs(
-                    client,
-                    incomingGroupPredicate(channelID, token),
-                    timeoutMs,
-                    `${label} sender#${String(senderIndex)} witness#${String(clientIndex)}`,
-                ).then(
-                    () => {
-                        telemetry?.touchOk(
-                            WS_DELIVERY_SURFACE,
-                            touchCtx(phase, burst, clientIndex),
-                        );
-                    },
-                    (err: unknown) => {
-                        recordHttpFailure(stats, err);
-                        telemetry?.touchFail(
-                            WS_DELIVERY_SURFACE,
-                            touchCtx(phase, burst, clientIndex),
-                            err,
-                        );
-                        throw err;
-                    },
+            .filter(({ clientIndex }) => clientIndex !== senderIndex);
+
+        for (let sample = 0; sample < samples; sample += 1) {
+            const token = `[spire-ws-ping:${step}:${String(senderIndex)}:${String(sample)}:${randomUUID()}]`;
+            waits.push(
+                ...witnesses.map(({ client, clientIndex }) =>
+                    waitForClientMessageWs(
+                        client,
+                        incomingGroupPredicate(channelID, token),
+                        timeoutMs,
+                        `${label} sender#${String(senderIndex)} sample#${String(sample)} witness#${String(clientIndex)}`,
+                    ).then(
+                        () => {
+                            telemetry?.touchOk(
+                                WS_DELIVERY_SURFACE,
+                                touchCtx(phase, burst, clientIndex),
+                            );
+                        },
+                        (err: unknown) => {
+                            throw err;
+                        },
+                    ),
                 ),
             );
-        const minSuccesses = minWitnessSuccesses(waits.length);
 
-        await settleWithTelemetry(
-            stats,
-            telemetry,
-            surface,
-            touchCtx(phase, burst, senderIndex),
-            sender.messages.group(channelID, token),
-            {
-                inputs: {
-                    channelID: shortId(channelID),
-                    senderIndex,
-                    step,
-                    witnessMinSuccess: minSuccesses,
-                    witnessTotal: waits.length,
+            await settleWithTelemetry(
+                stats,
+                telemetry,
+                surface,
+                touchCtx(phase, burst, senderIndex),
+                sender.messages.group(channelID, token),
+                {
+                    inputs: {
+                        channelID: shortId(channelID),
+                        sample,
+                        samples,
+                        senderIndex,
+                        step,
+                        witnessMinSuccess: minWitnessSuccesses(waits.length),
+                        witnessTotal: waits.length,
+                    },
                 },
-            },
-        );
-        await awaitWsWitnessSet({
-            label: `${label} sender#${String(senderIndex)}`,
-            minSuccesses,
-            waits,
-        });
+            );
+        }
+        const minSuccesses = minWitnessSuccesses(waits.length);
+        try {
+            await awaitWsWitnessSet({
+                label: `${label} sender#${String(senderIndex)} samples=${String(samples)}`,
+                minSuccesses,
+                waits,
+            });
+        } catch (err: unknown) {
+            recordHttpFailure(stats, err);
+            telemetry?.touchFail(
+                WS_DELIVERY_SURFACE,
+                touchCtx(phase, burst, senderIndex),
+                err,
+            );
+            throw err;
+        }
     }
 }
