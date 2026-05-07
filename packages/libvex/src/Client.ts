@@ -109,6 +109,7 @@ import {
     takeReceiveMessageKey,
     takeSendMessageKey,
 } from "./utils/ratchet.js";
+import { verifyKeyBundleSignatures } from "./utils/verifyKeyBundle.js";
 
 /**
  * Thrown by {@link Client.register} when the server determined the supplied
@@ -2440,6 +2441,11 @@ export class Client {
 
             try {
                 keyBundle = await this.retrieveKeyBundle(device.deviceID);
+                await verifyKeyBundleSignatures(
+                    keyBundle,
+                    device,
+                    this.cryptoProfile,
+                );
             } catch (e) {
                 if (allowKeyBundleFailure) {
                     return;

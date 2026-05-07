@@ -5,7 +5,7 @@
  */
 
 import type { Database } from "../Database.ts";
-import type { Emoji } from "@vex-chat/types";
+import type { Device, Emoji } from "@vex-chat/types";
 
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -42,7 +42,7 @@ import {
     hasPermission,
     userHasPermission,
 } from "./permissions.ts";
-import { globalLimiter } from "./rateLimit.ts";
+import { globalLimiter, keyBundleLimiter } from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -147,21 +147,45 @@ const checkAuth: express.RequestHandler = (req, _res, next) => {
     next();
 };
 
-const checkDevice: express.RequestHandler = (req, _res, next) => {
-    const token = req.headers["x-device-token"];
-    if (typeof token === "string" && token) {
-        try {
-            const result = jwt.verify(token, getJwtSecret());
-            const parsed = jwtDevicePayload.safeParse(result);
-            if (parsed.success) {
-                req.device = parsed.data.device;
+export function createCheckDevice(
+    db: Pick<Database, "retrieveDevice">,
+): express.RequestHandler {
+    return async (req, _res, next) => {
+        const token = req.headers["x-device-token"];
+        if (typeof token === "string" && token) {
+            try {
+                const result = jwt.verify(token, getJwtSecret());
+                const parsed = jwtDevicePayload.safeParse(result);
+                if (parsed.success) {
+                    const device = await currentTokenDevice(
+                        db,
+                        parsed.data.device,
+                    );
+                    if (
+                        device &&
+                        (!req.user || device.owner === req.user.userID)
+                    ) {
+                        req.device = device;
+                    }
+                }
+            } catch {
+                // Device token verification/revalidation failed — continue without device.
             }
-        } catch {
-            // Device token verification failed — continue without device
         }
+        next();
+    };
+}
+
+async function currentTokenDevice(
+    db: Pick<Database, "retrieveDevice">,
+    tokenDevice: Device,
+): Promise<Device | null> {
+    const device = await db.retrieveDevice(tokenDevice.deviceID);
+    if (!device || device.signKey !== tokenDevice.signKey) {
+        return null;
     }
-    next();
-};
+    return device;
+}
 
 export const protect: express.RequestHandler = (req, res, next) => {
     if (!req.user) {
@@ -282,7 +306,7 @@ export const initApp = (
     api.use(helmet());
     api.use(msgpackParser);
     api.use(checkAuth);
-    api.use(checkDevice);
+    api.use(createCheckDevice(db));
 
     api.get("/server/:id", protect, async (req, res) => {
         const server = await db.retrieveServer(getParam(req, "id"));
@@ -596,18 +620,23 @@ export const initApp = (
         }
     });
 
-    api.post("/device/:id/keyBundle", protect, async (req, res) => {
-        try {
-            const keyBundle = await db.getKeyBundle(getParam(req, "id"));
-            if (keyBundle) {
-                res.send(msgpack.encode(keyBundle));
-            } else {
-                res.sendStatus(404);
+    api.post(
+        "/device/:id/keyBundle",
+        protect,
+        keyBundleLimiter,
+        async (req, res) => {
+            try {
+                const keyBundle = await db.getKeyBundle(getParam(req, "id"));
+                if (keyBundle) {
+                    res.send(msgpack.encode(keyBundle));
+                } else {
+                    res.sendStatus(404);
+                }
+            } catch {
+                res.sendStatus(500);
             }
-        } catch {
-            res.sendStatus(500);
-        }
-    });
+        },
+    );
 
     api.post("/device/:id/mail", protect, async (req, res) => {
         const deviceDetails = req.device;

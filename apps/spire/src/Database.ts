@@ -702,9 +702,7 @@ export class Database extends EventEmitter {
             .execute();
     }
 
-    /**
-     * Deletes server-side mail older than {@link SERVER_MAIL_RETENTION_DAYS}.
-     */
+    /** Deletes server-side mail older than the configured retention window. */
     public async pruneExpiredMail(): Promise<void> {
         const cutoff = serverMailRetentionCutoffIso();
         await this.db
