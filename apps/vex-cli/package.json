@@ -8,10 +8,10 @@
         "vex-chat": "./src/vex-chat.js"
     },
     "scripts": {
-        "vex": "node src/vex-chat.js",
-        "start": "node src/vex-chat.js",
-        "dev": "node scripts/dev-watch.mjs",
-        "watch": "node scripts/dev-watch.mjs",
+        "vex": "pnpm --dir ../.. --filter @vex-chat/types --filter @vex-chat/crypto --filter @vex-chat/libvex --if-present build && node src/vex-chat.js",
+        "start": "pnpm --dir ../.. --filter @vex-chat/types --filter @vex-chat/crypto --filter @vex-chat/libvex --if-present build && node src/vex-chat.js",
+        "dev": "pnpm --dir ../.. --filter @vex-chat/types --filter @vex-chat/crypto --filter @vex-chat/libvex --if-present build && node scripts/dev-watch.mjs",
+        "watch": "pnpm --dir ../.. --filter @vex-chat/types --filter @vex-chat/crypto --filter @vex-chat/libvex --if-present build && node scripts/dev-watch.mjs",
         "diagnose": "node scripts/diagnose-three-clients.mjs",
         "smoke": "node scripts/smoke-three-clients.mjs"
     },
