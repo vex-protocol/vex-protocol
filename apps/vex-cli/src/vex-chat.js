@@ -2754,11 +2754,11 @@ function renderHeader(state, user, title) {
 
 function formatStartupMark(version) {
     return [
-        color("cyan", " _   __ _____ __  __"),
-        color("cyan", "| | / // ___// / / /"),
-        color("cyan", "| |/ // __/ / /_/ / "),
-        color("cyan", "|___//____/ \\____/  ") +
-            ` ${color("dim", `v${version}`)}`,
+        `${color("red", "__      __")} ${color("bold", "________")} ${color("red", "__  __")}`,
+        `${color("red", "\\ \\    / /")} ${color("bold", "|  ____|")} ${color("red", "\\ \\/ /")}`,
+        `${color("red", " \\ \\  / / ")} ${color("bold", "| |__   ")} ${color("red", ">  < ")}`,
+        `${color("red", "  \\ \\/ /  ")} ${color("bold", "|  __| ")} ${color("red", "/ /\\ \\")} ${color("dim", `v${version}`)}`,
+        `${color("red", "   \\__/   ")} ${color("bold", "|______|")} ${color("red", "/_/  \\_\\")}`,
     ].join("\n");
 }
 
