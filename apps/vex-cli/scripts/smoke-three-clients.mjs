@@ -175,6 +175,7 @@ await waitUntil(
     "cara group",
 );
 
+bobSeen.length = 0;
 bobChild.stdin.write("/servers\n");
 await waitUntil(
     () => bobSeen.join("").includes("server number"),
@@ -182,10 +183,9 @@ await waitUntil(
 );
 bobChild.stdin.write("\n");
 await waitUntil(
-    () => bobSeen.join("").includes("channel number"),
-    "bob server channel picker",
+    () => bobSeen.join("").includes("smoke/#general"),
+    "bob default channel",
 );
-bobChild.stdin.write("\n");
 aliceChild.stdin.write(`/dm ${users[1]} server-dm-inline\n`);
 await waitUntil(
     () => bobSeen.join("").includes("DM message received from @alice"),
@@ -219,5 +219,10 @@ async function waitUntil(predicate, label) {
         if (predicate()) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    throw new Error(`Timed out waiting for ${label}`);
+    throw new Error(
+        `Timed out waiting for ${label}\n` +
+            `alice: ${aliceSeen.join("").slice(-500)}\n` +
+            `bob: ${bobSeen.join("").slice(-500)}\n` +
+            `cara: ${caraSeen.join("").slice(-500)}`,
+    );
 }

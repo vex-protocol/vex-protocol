@@ -1064,7 +1064,7 @@ async function selectServerByName(ctx, client, state, query, rl) {
               color("blue", item.name),
           );
     if (!server) return null;
-    const channel = await chooseChannelFromServer(client, server, rl);
+    const channel = await defaultChannelFromServer(client, server);
     if (channel) {
         await enterChannel(ctx, client, state, channel, server);
     }
@@ -1110,6 +1110,18 @@ async function chooseChannel(client, rl) {
     const server = await chooseServer(client, rl);
     if (!server) return null;
     return chooseChannelFromServer(client, server, rl);
+}
+
+async function defaultChannelFromServer(client, server) {
+    const channels = await client.channels.retrieve(server.serverID);
+    if (channels.length === 0) {
+        console.log(color("dim", "no channels"));
+        return null;
+    }
+    return {
+        ...channels[defaultChannelIndex(channels)],
+        serverName: server.name,
+    };
 }
 
 async function chooseChannelFromServer(client, server, rl) {
@@ -1372,7 +1384,7 @@ async function openServerSelector(ctx, client, state, rl) {
         },
     );
     if (!selected) return;
-    const channel = await chooseChannelFromServer(client, selected.server, rl);
+    const channel = await defaultChannelFromServer(client, selected.server);
     if (channel) {
         await enterChannel(ctx, client, state, channel, selected.server);
     }
