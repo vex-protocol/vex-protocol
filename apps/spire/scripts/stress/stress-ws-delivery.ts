@@ -160,7 +160,11 @@ function minWitnessSuccesses(totalWitnesses: number): number {
     if (totalWitnesses <= 0) {
         return 0;
     }
-    return Math.max(1, Math.ceil(totalWitnesses * wsRequiredRatio()));
+    const ratio = wsRequiredRatio();
+    if (ratio >= 1) {
+        return totalWitnesses;
+    }
+    return Math.max(1, Math.floor(totalWitnesses * ratio));
 }
 
 function parsePositiveMsEnv(name: string, fallback: number): number {
