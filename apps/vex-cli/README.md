@@ -29,6 +29,7 @@ Inside the app:
 - `/create` asks for a server name and selects its `#general`
 - `/invite` asks for duration and creates a pasteable `vex://invite/...` link
 - `/invite <username-or-user-id>` sends an invite link by DM
+- Incoming `vex://invite/...` links show a server preview and ask whether to join
 - `redeem <code-or-link>` previews a server invite, asks you to confirm, then opens its first channel
 - Plain text sends to the selected DM/channel
 - `/create server <name>` creates a server and selects its `#general`

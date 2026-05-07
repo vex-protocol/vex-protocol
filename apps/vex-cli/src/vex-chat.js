@@ -669,6 +669,10 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
         return;
     }
 
+    await redeemInviteInChat(ctx, client, state, inviteID, preview);
+}
+
+async function redeemInviteInChat(ctx, client, state, inviteID, preview) {
     debugLog(ctx, "invite.redeem.start", { inviteID });
     const permission = await client.invites.redeem(inviteID);
     const server =
@@ -708,6 +712,47 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
             ),
         );
     }
+}
+
+function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
+    if (!rl || state.pendingInvitePrompts?.has(inviteID)) return;
+    if (!state.pendingInvitePrompts) state.pendingInvitePrompts = new Set();
+    state.pendingInvitePrompts.add(inviteID);
+    state.promptQueue = (state.promptQueue ?? Promise.resolve())
+        .catch(() => {})
+        .then(async () => {
+            const serverName = preview.server?.name ?? "this server";
+            renderChatLine(
+                rl,
+                state,
+                `${color("yellow", "system")} ${formatInvitePreviewLine(preview)} ${color("dim", "- join? y/N")}`,
+            );
+            const answer = (await askText(rl, `join ${serverName}?`, "N"))
+                .trim()
+                .toLowerCase();
+            clearSubmittedPrompt();
+            if (answer !== "y" && answer !== "yes") {
+                renderChatLine(
+                    rl,
+                    state,
+                    `${color("yellow", "system")} ${color("dim", "invite dismissed")}`,
+                );
+                return;
+            }
+            await redeemInviteInChat(ctx, client, state, inviteID, preview);
+        })
+        .catch((err) => {
+            debugLog(ctx, "invite.prompt.error", { error: err, inviteID });
+            renderChatLine(
+                rl,
+                state,
+                `${color("yellow", "system")} ${color("red", err instanceof Error ? err.message : String(err))}`,
+            );
+        })
+        .finally(() => {
+            state.pendingInvitePrompts.delete(inviteID);
+            refreshPrompt(rl, state);
+        });
 }
 
 async function fetchInvitePreview(client, inviteID) {
@@ -1308,6 +1353,8 @@ async function chat(ctx, args) {
         buffers: [],
         dms: new Map(),
         host: ctx.clientOptions.host,
+        pendingInvitePrompts: new Set(),
+        promptQueue: Promise.resolve(),
         renderedMessageKeys: new Map(),
         serverMemberCache: new Map(),
         status: {
@@ -1370,13 +1417,34 @@ async function chat(ctx, args) {
             author,
             route,
         });
+        const inviteID =
+            message.direction === "incoming" && message.decrypted
+                ? extractInviteID(message.message)
+                : null;
+        let renderedMessage = message.message;
+        let invitePreview = null;
+        if (inviteID) {
+            try {
+                invitePreview = await fetchInvitePreview(client, inviteID);
+                renderedMessage = replaceInviteLinkWithPreview(
+                    message.message,
+                    inviteID,
+                    invitePreview,
+                );
+            } catch (err) {
+                debugLog(ctx, "invite.preview.error", {
+                    error: err,
+                    inviteID,
+                });
+            }
+        }
         renderChatLine(
             rl,
             state,
             formatMessageLine({
                 direction: message.direction,
                 isDm: route.isDm,
-                message: message.message,
+                message: renderedMessage,
                 target: route.target,
                 timestamp: message.timestamp,
                 who: author,
@@ -1388,25 +1456,14 @@ async function chat(ctx, args) {
                 notifyIncomingDm(author, message.message);
             }
         }
-        const inviteID =
-            message.direction === "incoming"
-                ? extractInviteID(message.message)
-                : null;
-        if (inviteID) {
-            try {
-                const preview = await fetchInvitePreview(client, inviteID);
-                renderChatLine(
-                    rl,
-                    state,
-                    `${color("yellow", "invite")} ${color("blue", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)} ${color("dim", `- type redeem ${inviteID}`)}`,
-                );
-            } catch {
-                renderChatLine(
-                    rl,
-                    state,
-                    `${color("yellow", "invite")} ${color("dim", `type redeem ${inviteID} to inspect it`)}`,
-                );
-            }
+        if (inviteID && invitePreview) {
+            queueInvitePrompt(ctx, client, state, rl, inviteID, invitePreview);
+        } else if (inviteID) {
+            renderChatLine(
+                rl,
+                state,
+                `${color("yellow", "system")} ${color("dim", `invite detected, type redeem ${inviteID} to inspect it`)}`,
+            );
         }
         refreshPrompt(rl, state);
     });
@@ -2031,6 +2088,21 @@ function extractInviteID(value) {
         /vex:\/\/invite\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
     );
     return match?.[1] ?? null;
+}
+
+function replaceInviteLinkWithPreview(message, inviteID, preview) {
+    return message.replace(
+        new RegExp(`vex://invite/${escapeRegExp(inviteID)}`, "i"),
+        formatInvitePreviewLine(preview),
+    );
+}
+
+function formatInvitePreviewLine(preview) {
+    return `${color("yellow", "invite")} ${color("blue", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)}`;
+}
+
+function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function inviteLink(inviteID) {
@@ -2662,6 +2734,7 @@ ${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
 ${color("cyan", "/to <user>")}             open a DM conversation
 ${color("cyan", "/invite")}                create an invite for the current server
 ${color("cyan", "/invite <user>")}         send an invite link by DM
+${color("cyan", "vex://invite/...")}       previews in chat and asks whether to join
 ${color("cyan", "redeem <code>")}          preview and accept a server invite
 ${color("cyan", "/create")}                create a server and enter #general
 ${color("cyan", "/members")}               list people in the current channel
