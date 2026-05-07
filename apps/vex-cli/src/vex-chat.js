@@ -2552,6 +2552,11 @@ function color(name, value) {
     return `${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
 }
 
+function boldColor(name, value) {
+    if (!COLOR) return String(value);
+    return `${ANSI.bold}${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
+}
+
 function hashID(value) {
     if (!value) return 0;
     let hash = 0;
@@ -2712,7 +2717,7 @@ function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
     const targetTone = state.target ? targetAccent(state.target) : "red";
-    return `${statusBar(state)} ${color("white", user)} ${color(targetTone, target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${selfName(user)} ${color(targetTone, target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -2808,7 +2813,7 @@ function renderHeader(state, user, title) {
     console.log(formatStartupMark(CLI_VERSION));
     const targetTone = state.target ? targetAccent(state.target) : "red";
     console.log(
-        `${color(targetTone, title)} ${color("dim", "|")} ${color("white", username)} ${color("dim", "on")} ${color("red", host)} ${color("dim", "|")} ${color(targetTone, target)}`,
+        `${color(targetTone, title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color("red", host)} ${color("dim", "|")} ${color(targetTone, target)}`,
     );
 }
 
@@ -3034,12 +3039,19 @@ function formatMessageLine({
     who,
     whoID,
 }) {
-    const whoColor = direction === "outgoing" ? "white" : userAccent(whoID);
     const targetColor =
         targetType === "dm" || isDm
             ? userAccent(targetID)
             : channelAccent(targetID);
-    return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${color(whoColor, who)}${color("dim", ":")} ${message}`;
+    const whoText =
+        direction === "outgoing"
+            ? selfName(who)
+            : color(userAccent(whoID), who);
+    return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${whoText}${color("dim", ":")} ${message}`;
+}
+
+function selfName(value) {
+    return boldColor("red", value);
 }
 
 function formatMessageTime(timestamp) {
