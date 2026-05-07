@@ -2769,11 +2769,12 @@ function renderHeader(state, user, title) {
 
 function formatStartupMark(version) {
     return [
-        `${color("red", "__     __")} ${color("white", " ______ ")} ${color("red", "__  __")}`,
-        `${color("red", "\\ \\   / /")} ${color("white", "|  ____|")} ${color("red", "\\ \\/ /")}`,
-        `${color("red", " \\ \\ / / ")} ${color("white", "| |__   ")} ${color("red", " >  < ")}`,
-        `${color("red", "  \\ V /  ")} ${color("white", "|  __|  ")} ${color("red", "/ /\\ \\")} ${color("dim", `v${version}`)}`,
-        `${color("red", "   \\_/   ")} ${color("white", "|______|")} ${color("red", "/_/  \\_\\")}`,
+        `${color("red", "██╗   ██╗")} ${color("white", "███████╗")} ${color("red", "██╗  ██╗")}`,
+        `${color("red", "██║   ██║")} ${color("white", "██╔════╝")} ${color("red", "╚██╗██╔╝")}`,
+        `${color("red", "██║   ██║")} ${color("white", "█████╗  ")} ${color("red", " ╚███╔╝ ")}`,
+        `${color("red", "╚██╗ ██╔╝")} ${color("white", "██╔══╝  ")} ${color("red", " ██╔██╗ ")} ${color("dim", `v${version}`)}`,
+        `${color("red", " ╚████╔╝ ")} ${color("white", "███████╗")} ${color("red", "██╔╝ ██╗")}`,
+        `${color("red", "  ╚═══╝  ")} ${color("white", "╚══════╝")} ${color("red", "╚═╝  ╚═╝")}`,
     ].join("\n");
 }
 
