@@ -25,6 +25,7 @@ const ANSI = {
     yellow: "\x1b[33m",
 };
 const STATUS_ACTIVITY_TTL_MS = 5_000;
+const STATUS_BAR_CONTENT_WIDTH = 22;
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -2281,15 +2282,13 @@ function statusBar(state) {
         Date.now() - (status.lastActivityAt ?? 0) < STATUS_ACTIVITY_TTL_MS;
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
-    const parts = [network];
-    if (unread > 0) {
-        parts.push(`${unread} unread`);
-    }
-    if (recent && status.activity) {
-        parts.push(status.activity);
-    }
+    const activity = recent ? (status.activity ?? "idle") : "idle";
+    const content = fitDisplayWidth(
+        `${networkIcon(network)} ${formatUnreadCount(unread)} ${activityIcon(activity)} ${activityLabel(activity)}`,
+        STATUS_BAR_CONTENT_WIDTH,
+    );
     const tone = network === "offline" ? "red" : unread > 0 ? "yellow" : "dim";
-    return color(tone, `[${parts.join(" | ")}]`);
+    return color(tone, `[${content}]`);
 }
 
 function bumpActivity(state, activity = "net") {
@@ -2326,6 +2325,82 @@ function statusActivity(activity) {
         default:
             return { activity, network: null };
     }
+}
+
+function networkIcon(network) {
+    switch (network) {
+        case "connecting":
+        case "syncing":
+            return "🟡";
+        case "offline":
+            return "🔴";
+        default:
+            return "🟢";
+    }
+}
+
+function activityIcon(activity) {
+    switch (activity) {
+        case "checking mail":
+        case "connecting":
+            return "🔄";
+        case "received":
+            return "📥";
+        case "sending":
+            return "📤";
+        case "offline":
+            return "⚠️";
+        case "online":
+            return "✅";
+        default:
+            return "💬";
+    }
+}
+
+function activityLabel(activity) {
+    switch (activity) {
+        case "checking mail":
+            return "mail";
+        case "connecting":
+            return "conn";
+        case "received":
+            return "recv";
+        case "sending":
+            return "send";
+        case "offline":
+            return "off";
+        case "online":
+            return "on";
+        default:
+            return "idle";
+    }
+}
+
+function formatUnreadCount(unread) {
+    if (unread <= 0) return "✉00";
+    if (unread > 99) return "✉99+";
+    return `✉${String(unread).padStart(2, "0")}`;
+}
+
+function fitDisplayWidth(value, width) {
+    let fitted = "";
+    let used = 0;
+    for (const char of Array.from(value)) {
+        const charWidth = displayWidth(char);
+        if (used + charWidth > width) break;
+        fitted += char;
+        used += charWidth;
+    }
+    return `${fitted}${" ".repeat(Math.max(0, width - used))}`;
+}
+
+function displayWidth(char) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (codePoint === 0xfe0f || codePoint === 0xfe0e) return 0;
+    if (codePoint >= 0x0300 && codePoint <= 0x036f) return 0;
+    if (codePoint >= 0x1f000 && codePoint <= 0x1faff) return 2;
+    if (codePoint >= 0x2600 && codePoint <= 0x27bf) return 2;
+    return 1;
 }
 
 function totalUnreadDms(state) {
