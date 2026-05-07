@@ -4,9 +4,6 @@
 # file is the portable shape for importing/swapping themes once we add theme
 # loading.
 root: red
-self:
-    accent: root
-    style: bold
 ids:
     users:
         palette:

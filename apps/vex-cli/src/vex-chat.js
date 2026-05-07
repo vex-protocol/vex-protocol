@@ -369,7 +369,7 @@ async function register(ctx, args) {
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
         console.log(
-            `${color(ROOT_ACCENT, "registered")} ${selfName(username)}`,
+            `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
         );
         printWhoami(client);
     } finally {
@@ -398,7 +398,9 @@ async function login(ctx, args) {
         };
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
-        console.log(`${color(ROOT_ACCENT, "logged in")} ${selfName(username)}`);
+        console.log(
+            `${color(ROOT_ACCENT, "logged in")} ${color(userAccent(client.me.user().userID), username)}`,
+        );
         printWhoami(client);
     } finally {
         await client.close().catch(() => {});
@@ -1473,13 +1475,12 @@ async function printMembers(client, state) {
     console.log(
         `${color("bold", "Members in")} ${color(targetAccent(state.target), targetLabel(state.target))}`,
     );
-    const selfID = client.me.user().userID;
-    state.userAccentMap = buildRoomUserAccentMap(users, selfID);
+    state.userAccentMap = buildRoomUserAccentMap(users);
     for (const user of users) {
-        const username =
-            user.userID === selfID
-                ? selfName(user.username)
-                : color(userAccentFor(state, user.userID), user.username);
+        const username = color(
+            userAccentFor(state, user.userID),
+            user.username,
+        );
         console.log(
             `  ${username} ${color("dim", `(${shortID(user.userID)})`)}`,
         );
@@ -1560,10 +1561,7 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     const members = await client.channels
         .userList(channel.channelID)
         .catch(() => []);
-    state.userAccentMap = buildRoomUserAccentMap(
-        members,
-        client.me.user().userID,
-    );
+    state.userAccentMap = buildRoomUserAccentMap(members);
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
     console.log("");
@@ -2681,9 +2679,9 @@ function userAccentFor(state, userID) {
     return state?.userAccentMap?.get(userID) ?? userAccent(userID);
 }
 
-function buildRoomUserAccentMap(users, selfID) {
+function buildRoomUserAccentMap(users) {
     const peers = users
-        .filter((user) => user?.userID && user.userID !== selfID)
+        .filter((user) => user?.userID)
         .map((user) => user.userID)
         .sort((a, b) => hashID(a) - hashID(b) || a.localeCompare(b));
     return new Map(
@@ -2849,7 +2847,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${selfName(user)} ${color("dim", target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${color(userAccent(state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -2944,7 +2942,7 @@ function renderHeader(state, user, title) {
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
     console.log(
-        `${color("dim", title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
+        `${color("dim", title)} ${color("dim", "|")} ${color(userAccent(user?.userID ?? state.account?.userID), username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
     );
 }
 
@@ -2964,7 +2962,9 @@ function formatStartupMark(version) {
 function printWhoami(client) {
     const user = client.me.user();
     const device = client.me.device();
-    console.log(`${color(ROOT_ACCENT, "username")} ${selfName(user.username)}`);
+    console.log(
+        `${color(ROOT_ACCENT, "username")} ${color(userAccent(user.userID), user.username)}`,
+    );
     console.log(`${color(ROOT_ACCENT, "user    ")} ${user.userID}`);
     console.log(`${color(ROOT_ACCENT, "device  ")} ${device.deviceID}`);
     console.log(`${color(ROOT_ACCENT, "name    ")} ${device.name}`);
@@ -3172,15 +3172,8 @@ function formatMessageLine({
     who,
     whoID,
 }) {
-    const whoText =
-        direction === "outgoing"
-            ? selfName(who)
-            : color(userAccents?.get(whoID) ?? userAccent(whoID), who);
+    const whoText = color(userAccents?.get(whoID) ?? userAccent(whoID), who);
     return `${color("dim", formatMessageTime(timestamp))} ${color("dim", target)} ${whoText}${color("dim", ":")} ${message}`;
-}
-
-function selfName(value) {
-    return boldColor(ROOT_ACCENT, value);
 }
 
 function formatMessageTime(timestamp) {
