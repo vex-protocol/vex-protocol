@@ -388,6 +388,7 @@ async function register(ctx, args) {
                     challenge: err.challenge,
                     expiresAt: err.expiresAt,
                     requestID: err.requestID,
+                    userID: err.userID,
                 },
             );
             return;
@@ -414,6 +415,30 @@ async function persistNewLocalAccount(
         deviceID,
         privateKey,
         userID: client.me.user().userID,
+        username,
+    };
+    config.lastUsername = username;
+    await writeConfig(ctx.configPath, config);
+    return config.accounts[username];
+}
+
+async function persistPendingLocalAccount(
+    ctx,
+    config,
+    username,
+    privateKey,
+    pending,
+) {
+    const previous = config.accounts[username] ?? {};
+    config.accounts[username] = {
+        ...previous,
+        privateKey,
+        pendingApproval: {
+            challenge: pending.challenge,
+            expiresAt: pending.expiresAt,
+            requestID: pending.requestID,
+        },
+        ...(pending.userID ? { userID: pending.userID } : {}),
         username,
     };
     config.lastUsername = username;
@@ -497,6 +522,7 @@ async function loginWithDeviceApproval(ctx, username) {
             challenge: registerErr.challenge,
             expiresAt: registerErr.expiresAt,
             requestID: registerErr.requestID,
+            userID: registerErr.userID,
         });
     } finally {
         await client.close().catch(() => {});
@@ -511,6 +537,30 @@ async function waitForDeviceApproval(
     privateKey,
     pending,
 ) {
+    await persistPendingLocalAccount(
+        ctx,
+        config,
+        username,
+        privateKey,
+        pending,
+    );
+    const existingApprovedDeviceID = await resolveStoredDeviceID(
+        ctx,
+        client,
+        {},
+        username,
+    );
+    if (existingApprovedDeviceID) {
+        return completeApprovedDeviceLogin(
+            ctx,
+            client,
+            config,
+            username,
+            privateKey,
+            existingApprovedDeviceID,
+        );
+    }
+
     const code = matchingCodeStringForSignKey(client.getKeys().public);
     console.log(
         `${color(ROOT_ACCENT, "device approval required")} ${color("dim", `request=${pending.requestID}`)}`,
@@ -538,6 +588,8 @@ async function waitForDeviceApproval(
                         requestID: pending.requestID,
                     })
                     .catch(() => {});
+                delete config.accounts[username];
+                await writeConfig(ctx.configPath, config);
                 throw new Error("Device login cancelled.");
             }
         } finally {
@@ -545,10 +597,20 @@ async function waitForDeviceApproval(
         }
     }
 
-    await client.devices.publishPendingRegistration({
-        challenge: pending.challenge,
-        requestID: pending.requestID,
-    });
+    await client.devices
+        .publishPendingRegistration({
+            challenge: pending.challenge,
+            requestID: pending.requestID,
+        })
+        .catch(async (err) => {
+            const approvedDeviceID = await resolveStoredDeviceID(
+                ctx,
+                client,
+                {},
+                username,
+            );
+            if (!approvedDeviceID) throw err;
+        });
     console.log(color(ROOT_ACCENT, "waiting for approval..."));
 
     for (let attempt = 0; attempt < 300; attempt++) {
@@ -558,33 +620,86 @@ async function waitForDeviceApproval(
             requestID: pending.requestID,
         });
         if (!current || current.status === "pending") {
+            const approvedDeviceID = await resolveStoredDeviceID(
+                ctx,
+                client,
+                {},
+                username,
+            );
+            if (approvedDeviceID) {
+                if (input.isTTY && output.isTTY) output.write("\n");
+                return completeApprovedDeviceLogin(
+                    ctx,
+                    client,
+                    config,
+                    username,
+                    privateKey,
+                    approvedDeviceID,
+                );
+            }
             if (input.isTTY && output.isTTY) output.write(color("dim", "."));
             continue;
         }
         if (input.isTTY && output.isTTY) output.write("\n");
         if (current.status === "approved" && current.approvedDeviceID) {
-            const authErr = await client.loginWithDeviceKey(
-                current.approvedDeviceID,
-            );
-            if (authErr) throw authErr;
-            await connectAndWait(client, ctx, `login-approved:${username}`);
-            const account = await persistNewLocalAccount(
+            return completeApprovedDeviceLogin(
                 ctx,
+                client,
                 config,
                 username,
                 privateKey,
-                client,
                 current.approvedDeviceID,
             );
-            console.log(
-                `${color(ROOT_ACCENT, "approved")} ${color(userAccent(client.me.user().userID), username)}`,
-            );
-            printWhoami(client);
-            return { account, client, config };
         }
+        if (current.status === "approved") {
+            const approvedDeviceID = await resolveStoredDeviceID(
+                ctx,
+                client,
+                {},
+                username,
+            );
+            if (approvedDeviceID) {
+                return completeApprovedDeviceLogin(
+                    ctx,
+                    client,
+                    config,
+                    username,
+                    privateKey,
+                    approvedDeviceID,
+                );
+            }
+        }
+        delete config.accounts[username];
+        await writeConfig(ctx.configPath, config);
         throw new Error(`Device login ${current.status}.`);
     }
     throw new Error("Timed out waiting for device approval.");
+}
+
+async function completeApprovedDeviceLogin(
+    ctx,
+    client,
+    config,
+    username,
+    privateKey,
+    deviceID,
+) {
+    const authErr = await client.loginWithDeviceKey(deviceID);
+    if (authErr) throw authErr;
+    await connectAndWait(client, ctx, `login-approved:${username}`);
+    const account = await persistNewLocalAccount(
+        ctx,
+        config,
+        username,
+        privateKey,
+        client,
+        deviceID,
+    );
+    console.log(
+        `${color(ROOT_ACCENT, "approved")} ${color(userAccent(client.me.user().userID), username)}`,
+    );
+    printWhoami(client);
+    return { account, client, config };
 }
 
 function isDeviceApprovalRequired(err) {
@@ -2608,6 +2723,16 @@ async function authenticate(ctx, explicitUsername) {
     const deviceErr = deviceID
         ? await client.loginWithDeviceKey(deviceID)
         : new Error("missing device id");
+    if (deviceErr && account.pendingApproval) {
+        return waitForDeviceApproval(
+            ctx,
+            client,
+            config,
+            username,
+            account.privateKey,
+            account.pendingApproval,
+        );
+    }
     if (deviceErr && ctx.password) {
         const loginResult = await client.login(username, ctx.password);
         if (!loginResult.ok)
@@ -2687,6 +2812,7 @@ async function authenticateOrRegister(ctx, explicitUsername) {
                     challenge: err.challenge,
                     expiresAt: err.expiresAt,
                     requestID: err.requestID,
+                    userID: err.userID,
                 },
             );
         }
@@ -2712,6 +2838,10 @@ async function makeClient(ctx, username) {
 }
 
 async function connectAndWait(client, ctx = null, label = "client") {
+    if (client.__vexCliConnected) {
+        debugLog(ctx, "client.connect.skip.connected", { label });
+        return;
+    }
     debugLog(ctx, "client.connect.start", { label });
     await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -2720,6 +2850,7 @@ async function connectAndWait(client, ctx = null, label = "client") {
         }, 20_000);
         client.once("connected", () => {
             clearTimeout(timer);
+            client.__vexCliConnected = true;
             debugLog(ctx, "client.connect.ok", { label });
             resolve();
         });
