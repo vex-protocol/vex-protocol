@@ -8,14 +8,13 @@
  * Wait for libvex `Client` "message" events (WebSocket mail path) so integration
  * runs assert realtime delivery, not only HTTP API success.
  *
- * **Post-burst checks** (`verify*PostBurstWsDelivery`): only the first
- * `SPIRE_STRESS_WS_WITNESS_MAX` guests (default **3**) are sampled for each ping.
- * By default, local runs require all sampled witnesses; CI allows a small miss
+ * **Post-burst checks** (`verify*PostBurstWsDelivery`): every connected client
+ * sends a unique WS ping and every other client witnesses it. By default, local
+ * runs require all witnesses; CI allows a small miss
  * budget (default required ratio ~0.67). Override with
- * `SPIRE_STRESS_WS_REQUIRED_RATIO` (`0 < ratio <= 1`). Set
- * `SPIRE_STRESS_WS_WITNESS_MAX=all` to sample every guest. Timeout uses
- * `SPIRE_STRESS_WS_DELIVERY_MS` and scales with client count unless the env
- * value is already higher.
+ * `SPIRE_STRESS_WS_REQUIRED_RATIO` (`0 < ratio <= 1`). Timeout uses
+ * `SPIRE_STRESS_WS_DELIVERY_MS` and scales with client count unless the env value
+ * is already higher.
  *
  * When `CI=true` or `GITHUB_ACTIONS=true`, budgets are multiplied by
  * **~1.3** unless overridden (`SPIRE_STRESS_WS_CI_FACTOR`, or disabled with
@@ -37,7 +36,6 @@ import {
 } from "./stress-telemetry.ts";
 
 const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
-const WS_WITNESS_MAX_ENV = "SPIRE_STRESS_WS_WITNESS_MAX";
 const WS_REQUIRED_RATIO_ENV = "SPIRE_STRESS_WS_REQUIRED_RATIO";
 const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
 const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
@@ -73,7 +71,7 @@ export function waitForClientMessageWs(
             client.off("message", onMessage);
             reject(
                 new Error(
-                    `${diagnosticLabel}: WebSocket delivery not observed within ${String(timeoutMs)}ms (set ${WS_DELIVERY_ENV}, ${WS_WITNESS_MAX_ENV}, or ${WS_CI_FACTOR_ENV}; see scripts/stress/stress-ws-delivery.ts)`,
+                    `${diagnosticLabel}: WebSocket delivery not observed within ${String(timeoutMs)}ms (set ${WS_DELIVERY_ENV} or ${WS_CI_FACTOR_ENV}; see scripts/stress/stress-ws-delivery.ts)`,
                 ),
             );
         }, timeoutMs);
@@ -228,21 +226,6 @@ function wsRequiredRatio(): number {
     return onCi ? 0.67 : 1;
 }
 
-function wsWitnessCap(guestCount: number): number {
-    const raw = process.env[WS_WITNESS_MAX_ENV]?.trim().toLowerCase();
-    if (raw === "all" || raw === "*") {
-        return guestCount;
-    }
-    if (raw === undefined || raw === "") {
-        return Math.min(3, guestCount);
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 1) {
-        return Math.min(3, guestCount);
-    }
-    return Math.min(guestCount, Math.floor(n));
-}
-
 const WS_DELIVERY_SURFACE = "Client.on(message) | ws delivery";
 
 export interface ChatWsPingWorld {
@@ -278,9 +261,10 @@ export async function awaitWsInboundWithTelemetry(
 }
 
 /**
- * After a flood wall, hub posts a unique token on each guild channel; a subset
- * of guests (see `wsWitnessCap`) must observe inbound `message` events, then a
- * hub→guest1 DM is checked on WS.
+ * After a flood wall, each client posts a unique token on each guild channel;
+ * every other client must observe the inbound `message` event within the
+ * configured witness ratio. DMs are checked as a ring so every client sends and
+ * every client witnesses one inbound DM.
  */
 export async function verifyChatPostBurstWsDelivery(
     clients: readonly Client[],
@@ -290,161 +274,47 @@ export async function verifyChatPostBurstWsDelivery(
     phase: string,
     burst: number,
 ): Promise<void> {
-    const hub = clients[0];
-    if (hub === undefined || clients.length < 2) {
+    if (clients.length < 2) {
         return;
     }
-    const guests = clients.slice(1);
-    const cap = wsWitnessCap(guests.length);
-    const witnessGuests = guests.slice(0, cap);
-    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
 
-    const tokenPrimary = `[spire-ws-ping:${randomUUID()}]`;
-    const waitsPrimary = witnessGuests.map((guest, wIdx) => {
-        const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(world.channelID, tokenPrimary),
-            timeoutMs,
-            `chat post-wall primary #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
-    await settleWithTelemetry(
+    await verifyGroupAllClientsWsDelivery(
+        clients,
+        world.channelID,
+        "chat post-wall primary",
+        "post_burst_ws_ping_primary",
         stats,
         telemetry,
+        phase,
+        burst,
+        timeoutMs,
         "Client.messages.group | chat",
-        touchCtx(phase, burst, 0),
-        hub.messages.group(world.channelID, tokenPrimary),
-        {
-            inputs: {
-                channelID: shortId(world.channelID),
-                step: "post_burst_ws_ping_primary",
-                witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
-            },
-        },
     );
-    await awaitWsWitnessSet({
-        label: "chat post-wall primary",
-        minSuccesses,
-        waits: waitsPrimary,
-    });
-
-    const tokenLounge = `[spire-ws-ping-lounge:${randomUUID()}]`;
-    const waitsLounge = witnessGuests.map((guest, wIdx) => {
-        const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(world.secondaryChannelID, tokenLounge),
-            timeoutMs,
-            `chat post-wall lounge #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
-    await settleWithTelemetry(
+    await verifyGroupAllClientsWsDelivery(
+        clients,
+        world.secondaryChannelID,
+        "chat post-wall lounge",
+        "post_burst_ws_ping_lounge",
         stats,
         telemetry,
+        phase,
+        burst,
+        timeoutMs,
         "Client.messages.group | chat",
-        touchCtx(phase, burst, 0),
-        hub.messages.group(world.secondaryChannelID, tokenLounge),
-        {
-            inputs: {
-                channelID: shortId(world.secondaryChannelID),
-                step: "post_burst_ws_ping_lounge",
-                witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
-            },
-        },
     );
-    await awaitWsWitnessSet({
-        label: "chat post-wall lounge",
-        minSuccesses,
-        waits: waitsLounge,
-    });
-
-    const hubUser = world.userIDs.at(0);
-    const guestUser = world.userIDs.at(1);
-    const guestClient = clients.at(1);
-    if (
-        hubUser !== undefined &&
-        guestUser !== undefined &&
-        guestClient !== undefined
-    ) {
-        const dmToken = `[spire-ws-dm-ping:${randomUUID()}]`;
-        const waitDm = waitForClientMessageWs(
-            guestClient,
-            (m) =>
-                m.group === null &&
-                m.direction === "incoming" &&
-                m.decrypted &&
-                m.authorID === hubUser &&
-                m.message.includes(dmToken),
-            timeoutMs,
-            "chat post-wall hub→guest1 DM",
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, 1),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, 1),
-                    err,
-                );
-                throw err;
-            },
-        );
-        await settleWithTelemetry(
-            stats,
-            telemetry,
-            "Client.messages.send | chat",
-            touchCtx(phase, burst, 0),
-            hub.messages.send(guestUser, dmToken),
-            {
-                inputs: {
-                    peerUserID: shortId(guestUser),
-                    step: "post_burst_ws_ping_dm",
-                },
-            },
-        );
-        await waitDm;
-    }
+    await verifyDmRingWsDelivery(
+        clients,
+        world.userIDs,
+        "chat post-wall DM ring",
+        "post_burst_ws_ping_dm",
+        stats,
+        telemetry,
+        phase,
+        burst,
+        timeoutMs,
+        "Client.messages.send | chat",
+    );
 }
 
 /**
@@ -457,111 +327,36 @@ export async function verifyNoisePostBurstWsDelivery(
     telemetry: null | StressTelemetry,
     phase: string,
     burst: number,
-    hubUserID: string,
-    guestUserID: string,
+    userIDs: readonly string[],
 ): Promise<void> {
-    const hub = clients[0];
-    if (hub === undefined || clients.length < 2) {
+    if (clients.length < 2) {
         return;
     }
-    const guests = clients.slice(1);
-    const cap = wsWitnessCap(guests.length);
-    const witnessGuests = guests.slice(0, cap);
-    const minSuccesses = minWitnessSuccesses(witnessGuests.length);
     const timeoutMs = postBurstWsTimeoutMs(clients.length);
-    const token = `[spire-ws-ping-noise:${randomUUID()}]`;
-    const waits = witnessGuests.map((guest, wIdx) => {
-        const clientIndex = wIdx + 1;
-        return waitForClientMessageWs(
-            guest,
-            incomingGroupPredicate(channelID, token),
-            timeoutMs,
-            `noise post-wall group #${String(clientIndex)}`,
-        ).then(
-            () => {
-                telemetry?.touchOk(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                );
-            },
-            (err: unknown) => {
-                recordHttpFailure(stats, err);
-                telemetry?.touchFail(
-                    WS_DELIVERY_SURFACE,
-                    touchCtx(phase, burst, clientIndex),
-                    err,
-                );
-                throw err;
-            },
-        );
-    });
-    await settleWithTelemetry(
+    await verifyGroupAllClientsWsDelivery(
+        clients,
+        channelID,
+        "noise post-wall group",
+        "post_burst_ws_ping_noise",
         stats,
         telemetry,
-        "Client.messages.group",
-        touchCtx(phase, burst, 0),
-        hub.messages.group(channelID, token),
-        {
-            inputs: {
-                channelID: shortId(channelID),
-                step: "post_burst_ws_ping_noise",
-                witnessCap: cap,
-                witnessMinSuccess: minSuccesses,
-            },
-        },
-    );
-    await awaitWsWitnessSet({
-        label: "noise post-wall group",
-        minSuccesses,
-        waits,
-    });
-
-    if (hubUserID === "" || guestUserID === "") {
-        return;
-    }
-    const guestClient = clients.at(1);
-    if (guestClient === undefined) {
-        return;
-    }
-    const dmToken = `[spire-ws-dm-ping-noise:${randomUUID()}]`;
-    const waitDm = waitForClientMessageWs(
-        guestClient,
-        (m) =>
-            m.group === null &&
-            m.direction === "incoming" &&
-            m.decrypted &&
-            m.authorID === hubUserID &&
-            m.message.includes(dmToken),
+        phase,
+        burst,
         timeoutMs,
-        "noise post-wall hub→guest1 DM",
-    ).then(
-        () => {
-            telemetry?.touchOk(WS_DELIVERY_SURFACE, touchCtx(phase, burst, 1));
-        },
-        (err: unknown) => {
-            recordHttpFailure(stats, err);
-            telemetry?.touchFail(
-                WS_DELIVERY_SURFACE,
-                touchCtx(phase, burst, 1),
-                err,
-            );
-            throw err;
-        },
+        "Client.messages.group",
     );
-    await settleWithTelemetry(
+    await verifyDmRingWsDelivery(
+        clients,
+        userIDs,
+        "noise post-wall DM ring",
+        "post_burst_ws_ping_dm_noise",
         stats,
         telemetry,
+        phase,
+        burst,
+        timeoutMs,
         "Client.messages.send",
-        touchCtx(phase, burst, 0),
-        hub.messages.send(guestUserID, dmToken),
-        {
-            inputs: {
-                peerUserID: shortId(guestUserID),
-                step: "post_burst_ws_ping_dm_noise",
-            },
-        },
     );
-    await waitDm;
 }
 
 function incomingGroupPredicate(
@@ -573,4 +368,151 @@ function incomingGroupPredicate(
         m.direction === "incoming" &&
         m.decrypted &&
         m.message.includes(token);
+}
+
+async function verifyDmRingWsDelivery(
+    clients: readonly Client[],
+    userIDs: readonly string[],
+    label: string,
+    step: string,
+    stats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+    timeoutMs: number,
+    surface: string,
+): Promise<void> {
+    const n = Math.min(clients.length, userIDs.length);
+    if (n < 2) {
+        return;
+    }
+
+    for (let senderIndex = 0; senderIndex < n; senderIndex++) {
+        const recipientIndex = (senderIndex + 1) % n;
+        const sender = clients[senderIndex];
+        const recipient = clients[recipientIndex];
+        const senderUserID = userIDs[senderIndex];
+        const recipientUserID = userIDs[recipientIndex];
+        if (
+            sender === undefined ||
+            recipient === undefined ||
+            senderUserID === undefined ||
+            recipientUserID === undefined
+        ) {
+            continue;
+        }
+
+        const token = `[spire-ws-dm-ping:${step}:${String(senderIndex)}:${randomUUID()}]`;
+        const waitDm = waitForClientMessageWs(
+            recipient,
+            (m) =>
+                m.group === null &&
+                m.direction === "incoming" &&
+                m.decrypted &&
+                m.authorID === senderUserID &&
+                m.message.includes(token),
+            timeoutMs,
+            `${label} sender#${String(senderIndex)} recipient#${String(recipientIndex)}`,
+        ).then(
+            () => {
+                telemetry?.touchOk(
+                    WS_DELIVERY_SURFACE,
+                    touchCtx(phase, burst, recipientIndex),
+                );
+            },
+            (err: unknown) => {
+                recordHttpFailure(stats, err);
+                telemetry?.touchFail(
+                    WS_DELIVERY_SURFACE,
+                    touchCtx(phase, burst, recipientIndex),
+                    err,
+                );
+                throw err;
+            },
+        );
+
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            surface,
+            touchCtx(phase, burst, senderIndex),
+            sender.messages.send(recipientUserID, token),
+            {
+                inputs: {
+                    peerUserID: shortId(recipientUserID),
+                    recipientIndex,
+                    senderIndex,
+                    step,
+                },
+            },
+        );
+        await waitDm;
+    }
+}
+
+async function verifyGroupAllClientsWsDelivery(
+    clients: readonly Client[],
+    channelID: string,
+    label: string,
+    step: string,
+    stats: HttpExpectStats,
+    telemetry: null | StressTelemetry,
+    phase: string,
+    burst: number,
+    timeoutMs: number,
+    surface: string,
+): Promise<void> {
+    for (const [senderIndex, sender] of clients.entries()) {
+        const token = `[spire-ws-ping:${step}:${String(senderIndex)}:${randomUUID()}]`;
+        const waits = clients
+            .map((client, clientIndex) => ({ client, clientIndex }))
+            .filter(({ clientIndex }) => clientIndex !== senderIndex)
+            .map(({ client, clientIndex }) =>
+                waitForClientMessageWs(
+                    client,
+                    incomingGroupPredicate(channelID, token),
+                    timeoutMs,
+                    `${label} sender#${String(senderIndex)} witness#${String(clientIndex)}`,
+                ).then(
+                    () => {
+                        telemetry?.touchOk(
+                            WS_DELIVERY_SURFACE,
+                            touchCtx(phase, burst, clientIndex),
+                        );
+                    },
+                    (err: unknown) => {
+                        recordHttpFailure(stats, err);
+                        telemetry?.touchFail(
+                            WS_DELIVERY_SURFACE,
+                            touchCtx(phase, burst, clientIndex),
+                            err,
+                        );
+                        throw err;
+                    },
+                ),
+            );
+        const minSuccesses = minWitnessSuccesses(waits.length);
+
+        await settleWithTelemetry(
+            stats,
+            telemetry,
+            surface,
+            touchCtx(phase, burst, senderIndex),
+            sender.messages.group(channelID, token),
+            {
+                inputs: {
+                    channelID: shortId(channelID),
+                    senderIndex,
+                    step,
+                    witnessMinSuccess: minSuccesses,
+                    witnessTotal: waits.length,
+                },
+            },
+        );
+        await awaitWsWitnessSet({
+            label: `${label} sender#${String(senderIndex)}`,
+            minSuccesses,
+            waits,
+        });
+    }
 }
