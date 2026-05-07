@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.5.1
+
+### Patch Changes
+
+- [#96](https://github.com/vex-protocol/vex-protocol/pull/96) [`d132ff8`](https://github.com/vex-protocol/vex-protocol/commit/d132ff896425373ec168d8b0efa00327563672a9) Thanks [@yuki111888](https://github.com/yuki111888)! - Include all of the sender's devices in channel message fanout, including the active sending device, so server echo acts as the delivery acknowledgement and other logged-in devices receive outgoing channel messages.
+
 ## 6.5.0
 
 ### Minor Changes
