@@ -30,12 +30,19 @@ const ANSI = {
     white: "\x1b[37m",
     yellow: "\x1b[33m",
     azure: "\x1b[38;5;39m",
+    chartreuse: "\x1b[38;5;154m",
     coral: "\x1b[38;5;203m",
     gold: "\x1b[38;5;220m",
     indigo: "\x1b[38;5;63m",
     lavender: "\x1b[38;5;141m",
     lime: "\x1b[38;5;118m",
     mint: "\x1b[38;5;121m",
+    monokaiBlue: "\x1b[38;2;102;217;239m",
+    monokaiGreen: "\x1b[38;2;166;226;46m",
+    monokaiOrange: "\x1b[38;2;253;151;31m",
+    monokaiPink: "\x1b[38;2;249;38;114m",
+    monokaiPurple: "\x1b[38;2;174;129;255m",
+    monokaiYellow: "\x1b[38;2;230;219;116m",
     orange: "\x1b[38;5;208m",
     pink: "\x1b[38;5;213m",
     plum: "\x1b[38;5;177m",
@@ -46,15 +53,19 @@ const ANSI = {
 const ROOT_ACCENT = "red";
 // Mirrors apps/vex-cli/theme.yaml until theme loading becomes configurable.
 const USER_ACCENTS = [
-    "gold",
+    "monokaiPink",
+    "monokaiYellow",
+    "monokaiGreen",
+    "monokaiBlue",
+    "monokaiPurple",
+    "monokaiOrange",
     "mint",
-    "pink",
-    "sky",
-    "orange",
+    "coral",
+    "gold",
     "lime",
     "plum",
-    "coral",
-    "white",
+    "sky",
+    "chartreuse",
 ];
 const TARGET_ACCENTS = ["steel", "azure", "indigo", "teal", "lavender"];
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -1597,14 +1608,18 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         serverID: channel.serverID,
         serverName: server?.name,
     });
-    const members = await client.channels
-        .userList(channel.channelID)
-        .catch(() => []);
-    state.userAccentMap = buildRoomUserAccentMap(members);
+    const [members, history] = await Promise.all([
+        client.channels.userList(channel.channelID).catch(() => []),
+        client.messages.retrieveGroup(channel.channelID),
+    ]);
+    state.userAccentMap = buildRoomUserAccentMap([
+        ...members,
+        ...history.map((message) => message.authorID),
+        client.me.user().userID,
+    ]);
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
     console.log("");
-    const history = await client.messages.retrieveGroup(channel.channelID);
     if (history.length === 0) {
         console.log(color("dim", "No local history yet."));
     } else {
@@ -1753,6 +1768,9 @@ async function chat(ctx, args) {
                     inviteID,
                 });
             }
+        }
+        if (!route.isDm && message.group === state.target?.id) {
+            rememberRoomUserAccent(state, authorID);
         }
         renderChatLine(
             rl,
@@ -2725,17 +2743,39 @@ function userAccentFor(state, userID) {
     return state?.userAccentMap?.get(userID) ?? userAccent(userID);
 }
 
-function buildRoomUserAccentMap(users) {
-    const peers = users
-        .filter((user) => user?.userID)
-        .map((user) => user.userID)
-        .sort((a, b) => hashID(a) - hashID(b) || a.localeCompare(b));
-    return new Map(
-        peers.map((userID, index) => [
-            userID,
-            USER_ACCENTS[index % USER_ACCENTS.length],
-        ]),
+function rememberRoomUserAccent(state, userID) {
+    if (!userID) return;
+    state.userAccentMap = buildRoomUserAccentMap([
+        ...(state.userAccentMap?.keys() ?? []),
+        userID,
+    ]);
+}
+
+function buildRoomUserAccentMap(usersOrIDs) {
+    const peers = [...new Set(usersOrIDs.map(userIDFrom).filter(Boolean))].sort(
+        (a, b) => hashID(a) - hashID(b) || a.localeCompare(b),
     );
+    const used = new Set();
+    return new Map(
+        peers.map((userID) => [userID, uniqueUserAccent(userID, used)]),
+    );
+}
+
+function userIDFrom(value) {
+    if (typeof value === "string") return value;
+    return value?.userID;
+}
+
+function uniqueUserAccent(userID, used) {
+    const preferred = hashID(userID) % USER_ACCENTS.length;
+    for (let offset = 0; offset < USER_ACCENTS.length; offset++) {
+        const accent = USER_ACCENTS[(preferred + offset) % USER_ACCENTS.length];
+        if (!used.has(accent)) {
+            used.add(accent);
+            return accent;
+        }
+    }
+    return USER_ACCENTS[preferred];
 }
 
 function serverAccent(serverID) {

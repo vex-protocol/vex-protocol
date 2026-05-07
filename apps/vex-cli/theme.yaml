@@ -7,15 +7,19 @@ root: red
 ids:
     users:
         palette:
-            - gold
+            - monokaiPink
+            - monokaiYellow
+            - monokaiGreen
+            - monokaiBlue
+            - monokaiPurple
+            - monokaiOrange
             - mint
-            - pink
-            - sky
-            - orange
+            - coral
+            - gold
             - lime
             - plum
-            - coral
-            - white
+            - sky
+            - chartreuse
     targets:
         palette:
             - steel
