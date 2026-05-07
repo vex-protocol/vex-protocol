@@ -1,5 +1,11 @@
 # @vex-chat/cli
 
+## 0.1.2
+
+### Patch Changes
+
+- [`a9653d7`](https://github.com/vex-protocol/vex-protocol/commit/a9653d7b461678aec35e000f539d0d2c13298b73) Thanks [@yuki111888](https://github.com/yuki111888)! - Marks the CLI package private so release automation does not publish it until npm trusted publishing is configured.
+
 ## 0.1.1
 
 ### Patch Changes
