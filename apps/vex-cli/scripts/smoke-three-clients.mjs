@@ -188,9 +188,12 @@ await waitUntil(
 bobChild.stdin.write("\n");
 aliceChild.stdin.write(`/dm ${users[1]} server-dm-inline\n`);
 await waitUntil(
-    () => bobSeen.join("").includes("server-dm-inline"),
+    () => bobSeen.join("").includes("DM message received from @alice"),
     "bob server-scoped dm notice",
 );
+if (bobSeen.join("").includes("server-dm-inline")) {
+    throw new Error("server-scoped DM notice leaked message content");
+}
 
 aliceChild?.stdin?.write("/quit\n");
 bobChild?.stdin?.write("/quit\n");

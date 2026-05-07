@@ -53,11 +53,10 @@ pnpm vex invite redeem <invite-id>
 
 Incoming messages play a small sound by default. Use `--sound off` to disable it, `--sound Glass` for a macOS system sound name, or `--sound /path/to/file.wav` for a custom audio file. `VEX_CHAT_SOUND` works too.
 
-For delivery debugging, run chat with `--debug` and redirect stderr:
+For delivery debugging, run chat with `--debug`:
 
 ```sh
-pnpm --silent vex --debug alice 2> alice-debug.log
+pnpm --silent vex --debug alice
 ```
 
-Debug mode logs CLI send/receive/routing decisions and enables libvex session/mail diagnostics.
-Use `--debug-level trace` only when you also need heartbeat ping/pong details.
+Debug mode writes CLI send/receive/routing decisions to a log file under the CLI data directory. Use `--debug-file ./alice-debug.log` to choose a path. Use `--debug-level trace` only when you also need noisy libvex mail diagnostics.

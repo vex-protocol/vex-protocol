@@ -3,6 +3,7 @@
 import { Client } from "@vex-chat/libvex";
 import { execFile } from "node:child_process";
 import { createWriteStream } from "node:fs";
+import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as fs from "node:fs/promises";
@@ -26,7 +27,6 @@ const ANSI = {
     yellow: "\x1b[33m",
 };
 const STATUS_ACTIVITY_TTL_MS = 5_000;
-const STATUS_BAR_CONTENT_WIDTH = 22;
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -823,11 +823,41 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     const user = await resolveUser(client, resolvedIdentifier);
     names.set(user.userID, user.username);
     markDmRead(state, user.userID);
+    if (state.pendingDmJump?.userID === user.userID) {
+        state.pendingDmJump = null;
+    }
     state.target = { id: user.userID, label: user.username, type: "dm" };
     addWindow(state, state.target);
     await saveTarget(ctx, state.target);
     await enterDm(client, state, user);
     return user;
+}
+
+function bindKeypressShortcuts(ctx, client, state, names, rl) {
+    if (!input.isTTY) return () => {};
+    emitKeypressEvents(input, rl);
+    const onKeypress = (_chunk, key = {}) => {
+        if (key.name !== "tab" || !state.pendingDmJump) return;
+        if ((rl.line ?? "").trim()) return;
+        void jumpToPendingDm(ctx, client, state, names, rl);
+    };
+    input.on("keypress", onKeypress);
+    return () => input.off("keypress", onKeypress);
+}
+
+async function jumpToPendingDm(ctx, client, state, names, rl) {
+    const pending = state.pendingDmJump;
+    if (!pending) return;
+    rl.write(null, { ctrl: true, name: "u" });
+    clearActivePrompt();
+    try {
+        await selectDmInChat(ctx, client, state, names, pending.userID, rl);
+    } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+    } finally {
+        safeSetPrompt(rl, promptFor(state));
+        safePrompt(rl);
+    }
 }
 
 async function enterDm(client, state, user) {
@@ -1397,6 +1427,7 @@ async function chat(ctx, args) {
         buffers: [],
         dms: new Map(),
         host: ctx.clientOptions.host,
+        pendingDmJump: null,
         pendingInvitePrompts: new Set(),
         promptQueue: Promise.resolve(),
         renderedMessageKeys: new Map(),
@@ -1440,7 +1471,6 @@ async function chat(ctx, args) {
                 playIncomingSound(ctx.sound);
                 notifyIncomingDm(
                     await cachedUsername(client, names, message.authorID),
-                    message.message,
                 );
             }
             refreshPrompt(rl, state);
@@ -1461,6 +1491,17 @@ async function chat(ctx, args) {
             author,
             route,
         });
+        if (
+            message.direction === "incoming" &&
+            route.isDm &&
+            !route.isActiveDm
+        ) {
+            playIncomingSound(ctx.sound);
+            notifyIncomingDm(author);
+            renderDmReceiptLine(rl, state, author);
+            refreshPrompt(rl, state);
+            return;
+        }
         const inviteID =
             message.direction === "incoming" && message.decrypted
                 ? extractInviteID(message.message)
@@ -1496,9 +1537,6 @@ async function chat(ctx, args) {
         );
         if (message.direction === "incoming") {
             playIncomingSound(ctx.sound);
-            if (route.isDm && !route.isActiveDm) {
-                notifyIncomingDm(author, message.message);
-            }
         }
         if (inviteID && invitePreview) {
             queueInvitePrompt(ctx, client, state, rl, inviteID, invitePreview);
@@ -1527,6 +1565,13 @@ async function chat(ctx, args) {
     await refreshBuffers(client, state);
 
     rl = createInterface({ input, output, prompt: promptFor(state) });
+    const keypressCleanup = bindKeypressShortcuts(
+        ctx,
+        client,
+        state,
+        names,
+        rl,
+    );
     renderHeader(
         state,
         account,
@@ -1808,6 +1853,7 @@ async function chat(ctx, args) {
         safePrompt(rl);
     }
     rl.close();
+    keypressCleanup();
     await client.close().catch(() => {});
 }
 
@@ -2250,12 +2296,37 @@ async function recordDmActivity(client, state, names, message, route = null) {
         userID,
         username,
     });
+    if (isUnread) {
+        state.pendingDmJump = {
+            lastAt: message.timestamp ?? new Date().toISOString(),
+            userID,
+            username,
+        };
+    }
 }
 
 function markDmRead(state, userID) {
     const existing = state.dms?.get(userID);
     if (!existing) return;
     state.dms.set(userID, { ...existing, unread: 0 });
+    if (state.pendingDmJump?.userID === userID) {
+        const next = nextUnreadDm(state);
+        state.pendingDmJump = next
+            ? {
+                  lastAt: next.lastAt,
+                  userID: next.userID,
+                  username: next.username,
+              }
+            : null;
+    }
+}
+
+function nextUnreadDm(state) {
+    const rows = [...(state.dms?.values() ?? [])].filter(
+        (row) => (row.unread ?? 0) > 0,
+    );
+    rows.sort((a, b) => new Date(b.lastAt ?? 0) - new Date(a.lastAt ?? 0));
+    return rows[0] ?? null;
 }
 
 function isActiveDm(state, userID) {
@@ -2319,6 +2390,18 @@ function renderChatLine(rl, state, line) {
     clearActivePrompt();
     output.write(`${line}\n`);
     restoreActivePrompt(rl, state, activeLine, activeCursor);
+}
+
+function renderDmReceiptLine(rl, state, author) {
+    const jump =
+        state.pendingDmJump?.username === author
+            ? color("dim", " - press Tab to open")
+            : "";
+    renderChatLine(
+        rl,
+        state,
+        `${color("yellow", "system")} DM message received from ${color("magenta", `@${author}`)}${jump}`,
+    );
 }
 
 function restoreActivePrompt(rl, state, line, cursor) {
@@ -2405,10 +2488,7 @@ function statusBar(state) {
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
     const activity = recent ? (status.activity ?? "idle") : "idle";
-    const content = fitDisplayWidth(
-        `${networkIcon(network)} ${formatUnreadCount(unread)} ${activityIcon(activity)} ${activityLabel(activity)}`,
-        STATUS_BAR_CONTENT_WIDTH,
-    );
+    const content = `${networkLabel(network)} ${formatUnreadCount(unread)} ${activityLabel(activity)}`;
     const tone = network === "offline" ? "red" : unread > 0 ? "yellow" : "dim";
     return color(tone, `[${content}]`);
 }
@@ -2449,33 +2529,16 @@ function statusActivity(activity) {
     }
 }
 
-function networkIcon(network) {
+function networkLabel(network) {
     switch (network) {
         case "connecting":
+            return "net";
         case "syncing":
-            return "🟡";
+            return "sync";
         case "offline":
-            return "🔴";
+            return "off";
         default:
-            return "🟢";
-    }
-}
-
-function activityIcon(activity) {
-    switch (activity) {
-        case "checking mail":
-        case "connecting":
-            return "🔄";
-        case "received":
-            return "📥";
-        case "sending":
-            return "📤";
-        case "offline":
-            return "⚠️";
-        case "online":
-            return "✅";
-        default:
-            return "💬";
+            return "on";
     }
 }
 
@@ -2499,30 +2562,9 @@ function activityLabel(activity) {
 }
 
 function formatUnreadCount(unread) {
-    if (unread <= 0) return "✉00";
-    if (unread > 99) return "✉99+";
-    return `✉${String(unread).padStart(2, "0")}`;
-}
-
-function fitDisplayWidth(value, width) {
-    let fitted = "";
-    let used = 0;
-    for (const char of Array.from(value)) {
-        const charWidth = displayWidth(char);
-        if (used + charWidth > width) break;
-        fitted += char;
-        used += charWidth;
-    }
-    return `${fitted}${" ".repeat(Math.max(0, width - used))}`;
-}
-
-function displayWidth(char) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    if (codePoint === 0xfe0f || codePoint === 0xfe0e) return 0;
-    if (codePoint >= 0x0300 && codePoint <= 0x036f) return 0;
-    if (codePoint >= 0x1f000 && codePoint <= 0x1faff) return 2;
-    if (codePoint >= 0x2600 && codePoint <= 0x27bf) return 2;
-    return 1;
+    if (unread <= 0) return "dm00";
+    if (unread > 99) return "dm99+";
+    return `dm${String(unread).padStart(2, "0")}`;
 }
 
 function totalUnreadDms(state) {
@@ -2659,12 +2701,12 @@ function resolveSoundFile(sound) {
     return null;
 }
 
-function notifyIncomingDm(author, message) {
+function notifyIncomingDm(author) {
     if (process.platform !== "darwin") {
         return;
     }
     const title = `DM from ${author}`;
-    const body = truncateNotification(message);
+    const body = "Press Tab in vex to open.";
     execFile(
         "osascript",
         [
@@ -2674,11 +2716,6 @@ function notifyIncomingDm(author, message) {
         { timeout: 1_000 },
         () => {},
     );
-}
-
-function truncateNotification(value) {
-    const clean = String(value).replace(/\s+/g, " ").trim();
-    return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
 }
 
 function truncateInline(value, maxLength) {
@@ -2772,6 +2809,7 @@ function printInteractiveHelp() {
     console.log(`${color("bold", "Chat commands")}
 
 ${color("cyan", "/nav")}                   open a channel or DM
+${color("cyan", "Tab")}                    open the newest unread DM
 ${color("cyan", "/join [server]")}         choose a server, then a channel
 ${color("cyan", "/servers")}               browse your servers and open a channel
 ${color("cyan", "/channels")}              choose a channel
