@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.5.2
+
+### Patch Changes
+
+- [#98](https://github.com/vex-protocol/vex-protocol/pull/98) [`f3faf15`](https://github.com/vex-protocol/vex-protocol/commit/f3faf15c486faef699e0b4e68554b4a774af6066) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes message sends on a closed or closing WebSocket: the client now automatically reconnects with exponential back-off (capped at 30 s) when a send is attempted on a broken connection, so consumers no longer need to call `reconnectWebsocket()` manually after a drop. Concurrent reconnect calls are also deduplicated — only one reconnect runs at a time.
+
 ## 6.5.1
 
 ### Patch Changes
