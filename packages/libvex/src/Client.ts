@@ -1344,6 +1344,8 @@ export class Client {
         retrieve: this.fetchUser.bind(this),
     };
 
+    private autoReconnectEnabled = false;
+
     private readonly cryptoProfile: CryptoProfile;
 
     private readonly database: Storage;
@@ -1390,18 +1392,19 @@ export class Client {
     private readonly notFoundUsers = new Map<string, number>();
 
     private readonly options?: ClientOptions | undefined;
-
     private pingInterval: null | ReturnType<typeof setTimeout> = null;
     /**
      * Bumped when the WebSocket is torn down and re-opened so the previous
      * `postAuth` loop exits instead of overlapping a new one.
      */
     private postAuthVersion = 0;
-
     private readonly prefixes:
         | { HTTP: "http://"; WS: "ws://" }
         | { HTTP: "https://"; WS: "wss://" };
     private reading: boolean = false;
+    private reconnectAttempt = 0;
+    private reconnectPromise: null | Promise<void> = null;
+    private reconnectTimer: null | ReturnType<typeof setTimeout> = null;
     private retentionPurgeDebounce: null | ReturnType<typeof setTimeout> = null;
     private readonly seenMailIDs: Set<string> = new Set();
     private readonly sessionHealBackoffUntil = new Map<string, number>();
@@ -1711,6 +1714,11 @@ export class Client {
      */
     public async close(muteEvent = false): Promise<void> {
         this.manuallyClosing = true;
+        this.autoReconnectEnabled = false;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         this.httpAbortController.abort();
         this.socket.close();
         await this.database.close();
@@ -1776,6 +1784,7 @@ export class Client {
         const { deviceToken } = decodeAxios(ConnectResponseCodec, res.data);
         this.http.defaults.headers.common["X-Device-Token"] = deviceToken;
 
+        this.autoReconnectEnabled = true;
         this.initSocket();
         // Yield the event loop so the WS open callback fires and sends the
         // auth message before OTK generation starts. OTK top-up is best-effort
@@ -1979,45 +1988,20 @@ export class Client {
      * newly-registered second device.
      */
     public async reconnectWebsocket(): Promise<void> {
-        this.postAuthVersion++;
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-            this.pingInterval = null;
+        if (this.isManualCloseInFlight()) {
+            throw new WebSocketNotOpenError(this.socket.readyState);
         }
-        this.socket.close();
-        try {
-            await new Promise<void>((resolve, reject) => {
-                const t = setTimeout(() => {
-                    this.off("connected", onC);
-                    reject(
-                        new Error(
-                            "reconnectWebsocket: timed out waiting for authorized",
-                        ),
-                    );
-                }, 15_000);
-                const onC = () => {
-                    clearTimeout(t);
-                    this.off("connected", onC);
-                    resolve();
-                };
-                this.on("connected", onC);
-                try {
-                    this.initSocket();
-                } catch (err: unknown) {
-                    clearTimeout(t);
-                    this.off("connected", onC);
-                    const e =
-                        err instanceof Error
-                            ? err
-                            : new Error(String(err), { cause: err });
-                    reject(e);
-                }
-            });
-        } catch (e: unknown) {
-            throw e instanceof Error ? e : new Error(String(e), { cause: e });
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
         }
-        await new Promise((r) => setTimeout(r, 0));
-        await this.negotiateOTK();
+        if (this.reconnectPromise) {
+            return this.reconnectPromise;
+        }
+        this.reconnectPromise = this.reconnectWebsocketOnce().finally(() => {
+            this.reconnectPromise = null;
+        });
+        return this.reconnectPromise;
     }
 
     /**
@@ -3323,12 +3307,14 @@ export class Client {
                 }
                 if (!this.manuallyClosing) {
                     this.emitter.emit("disconnect");
+                    this.scheduleReconnect();
                 }
             });
 
             this.socket.on("error", (_error: Error) => {
                 if (!this.manuallyClosing) {
                     this.emitter.emit("disconnect");
+                    this.scheduleReconnect();
                 }
             });
 
@@ -3363,6 +3349,7 @@ export class Client {
                             "Received unauthorized message from server.",
                         );
                     case "authorized":
+                        this.reconnectAttempt = 0;
                         this.emitter.emit("connected");
                         this.postAuth().catch(ignoreSocketTeardown);
                         break;
@@ -4367,6 +4354,48 @@ export class Client {
         }
     }
 
+    private async reconnectWebsocketOnce(): Promise<void> {
+        this.postAuthVersion++;
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
+        this.socket.close();
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const t = setTimeout(() => {
+                    this.off("connected", onC);
+                    reject(
+                        new Error(
+                            "reconnectWebsocket: timed out waiting for authorized",
+                        ),
+                    );
+                }, 15_000);
+                const onC = () => {
+                    clearTimeout(t);
+                    this.off("connected", onC);
+                    resolve();
+                };
+                this.on("connected", onC);
+                try {
+                    this.initSocket();
+                } catch (err: unknown) {
+                    clearTimeout(t);
+                    this.off("connected", onC);
+                    const e =
+                        err instanceof Error
+                            ? err
+                            : new Error(String(err), { cause: err });
+                    reject(e);
+                }
+            });
+        } catch (e: unknown) {
+            throw e instanceof Error ? e : new Error(String(e), { cause: e });
+        }
+        await new Promise((r) => setTimeout(r, 0));
+        await this.negotiateOTK();
+    }
+
     private async redeemInvite(inviteID: string): Promise<Permission> {
         const res = await this.http.patch(
             this.getHost() + "/invite/" + inviteID,
@@ -4601,6 +4630,25 @@ export class Client {
         }
     }
 
+    private scheduleReconnect(): void {
+        if (
+            !this.autoReconnectEnabled ||
+            this.isManualCloseInFlight() ||
+            this.reconnectPromise ||
+            this.reconnectTimer
+        ) {
+            return;
+        }
+        const delayMs = Math.min(30_000, 250 * 2 ** this.reconnectAttempt);
+        this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 8);
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.reconnectWebsocket().catch(() => {
+                this.scheduleReconnect();
+            });
+        }, delayMs);
+    }
+
     private scheduleRetentionPurge(): void {
         if (this.retentionPurgeDebounce) {
             clearTimeout(this.retentionPurgeDebounce);
@@ -4623,7 +4671,8 @@ export class Client {
                 throw new WebSocketNotOpenError(this.socket.readyState);
             }
             if (this.socket.readyState === 2 || this.socket.readyState === 3) {
-                throw new WebSocketNotOpenError(this.socket.readyState);
+                await this.reconnectWebsocket();
+                continue;
             }
             if (elapsed >= maxWaitMs) {
                 throw new WebSocketNotOpenError(this.socket.readyState);
@@ -4644,7 +4693,20 @@ export class Client {
         // discarded callers (`pong`, `ping`) can `.catch(ignore)` the
         // teardown without an unhandled rejection, and real callers
         // can choose to retry on the next reconnect.
-        this.socket.send(XUtils.packMessage(msg, header));
+        const packed = XUtils.packMessage(msg, header);
+        try {
+            this.socket.send(packed);
+        } catch (err: unknown) {
+            if (
+                err instanceof WebSocketNotOpenError &&
+                !this.isManualCloseInFlight()
+            ) {
+                await this.reconnectWebsocket();
+                this.socket.send(packed);
+                return;
+            }
+            throw err;
+        }
     }
 
     private async sendGroupMessage(
