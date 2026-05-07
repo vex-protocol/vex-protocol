@@ -1350,16 +1350,17 @@ export class Client {
 
     private readonly dbPath: string;
 
+    private readonly decryptFailureCounts = new Map<string, number>();
+
     private device?: Device;
 
     private deviceRecords: Record<string, Device> = {};
-
     // ── Event subscription (composition over inheritance) ───────────────
     private readonly emitter = new EventEmitter<ClientEvents>();
+
     private fetchingMail: boolean = false;
 
     private firstMailFetch = true;
-
     private readonly forwarded = new Set<string>();
     private readonly host: string;
     private readonly http: AxiosInstance;
@@ -1367,13 +1368,13 @@ export class Client {
     private readonly httpAbortController = new AbortController();
     private readonly idKeys: KeyPair | null;
     private isAlive: boolean = true;
-    private localMessageRetentionDays: number;
 
+    private localMessageRetentionDays: number;
     private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
         null;
     private readonly mailInterval?: NodeJS.Timeout;
-    private manuallyClosing: boolean = false;
 
+    private manuallyClosing: boolean = false;
     /**
      * Node-only: per-client HTTP(S) agents (see `init()` + `storage/node/http-agents`).
      * Dropped on `close()` so idle keep-alive sockets do not keep the process alive.
@@ -1387,19 +1388,19 @@ export class Client {
     and finally falls back to username. */
     /** Negative cache for user lookups that returned 404. TTL = 30 minutes. */
     private readonly notFoundUsers = new Map<string, number>();
+
     private readonly options?: ClientOptions | undefined;
 
     private pingInterval: null | ReturnType<typeof setTimeout> = null;
-
     /**
      * Bumped when the WebSocket is torn down and re-opened so the previous
      * `postAuth` loop exits instead of overlapping a new one.
      */
     private postAuthVersion = 0;
+
     private readonly prefixes:
         | { HTTP: "http://"; WS: "ws://" }
         | { HTTP: "https://"; WS: "wss://" };
-
     private reading: boolean = false;
     private retentionPurgeDebounce: null | ReturnType<typeof setTimeout> = null;
     private readonly seenMailIDs: Set<string> = new Set();
@@ -2230,8 +2231,25 @@ export class Client {
     }
 
     private acknowledgeInboundMail(mail: MailWS): void {
+        this.decryptFailureCounts.delete(mail.mailID);
         this.seenMailIDs.add(mail.mailID);
         this.sendReceipt(new Uint8Array(mail.nonce));
+    }
+
+    private acknowledgeRepeatedDecryptFailure(
+        mail: MailWS,
+        count: number,
+    ): void {
+        if (count < 2) return;
+        if (libvexDebugDmEnabled()) {
+            debugLibvexDm("readMail: acknowledge repeated decrypt failure", {
+                attempts: count,
+                mailID: mail.mailID,
+                sender: mail.sender,
+                thisDevice: this.getDevice().deviceID,
+            });
+        }
+        this.acknowledgeInboundMail(mail);
     }
 
     private async approveDeviceRequest(requestID: string): Promise<Device> {
@@ -2666,6 +2684,7 @@ export class Client {
     private async deletePermission(permissionID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/permission/" + permissionID);
     }
+
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
@@ -2682,7 +2701,6 @@ export class Client {
         }
         return "";
     }
-
     /**
      * Gets a list of permissions for a server.
      *
@@ -3191,8 +3209,6 @@ export class Client {
         return decodeAxios(UserArrayCodec, res.data);
     }
 
-    // ── Passkeys ────────────────────────────────────────────────────────
-
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
             case "deviceRequest": {
@@ -3260,6 +3276,8 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
+
+    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -4199,10 +4217,13 @@ export class Client {
                         }
 
                         if (!XUtils.bytesEqual(HMAC, header)) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             if (libvexDebugDmEnabled()) {
                                 debugLibvexDm(
                                     "readMail subsequent: abort (HMAC mismatch)",
                                     {
+                                        attempts: failureCount,
                                         mailID: mail.mailID,
                                         sender: mail.sender,
                                         thisDevice: this.getDevice().deviceID,
@@ -4210,10 +4231,16 @@ export class Client {
                                 );
                             }
                             healSession();
-                            this.emitter.emit("retryRequest", {
-                                mailID: mail.mailID,
-                                source: "decrypt_failure",
-                            });
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                            );
                             return;
                         }
 
@@ -4311,11 +4338,19 @@ export class Client {
                             ] = session;
                             this.acknowledgeInboundMail(mail);
                         } else {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             healSession();
-                            this.emitter.emit("retryRequest", {
-                                mailID: mail.mailID,
-                                source: "decrypt_failure",
-                            });
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                            );
                         }
                         break;
                     }
@@ -4333,6 +4368,12 @@ export class Client {
             this.getHost() + "/invite/" + inviteID,
         );
         return decodeAxios(PermissionCodec, res.data);
+    }
+
+    private registerDecryptFailure(mail: MailWS): number {
+        const count = (this.decryptFailureCounts.get(mail.mailID) ?? 0) + 1;
+        this.decryptFailureCounts.set(mail.mailID, count);
+        return count;
     }
 
     private async registerDevice(): Promise<DeviceRegistrationResult | null> {

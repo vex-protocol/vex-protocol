@@ -2,6 +2,7 @@
 
 import { Client } from "@vex-chat/libvex";
 import { execFile } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as fs from "node:fs/promises";
@@ -31,75 +32,92 @@ async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
     let command = positionals.shift() ?? "chat";
     const ctx = await createContext(flags);
-    if (!isCommand(command)) {
-        positionals.unshift(command);
-        command = "chat";
-    }
+    try {
+        if (!isCommand(command)) {
+            positionals.unshift(command);
+            command = "chat";
+        }
 
-    switch (command) {
-        case "auth":
-            await authCommand(ctx, positionals);
-            break;
-        case "register":
-            await register(ctx, positionals);
-            break;
-        case "login":
-            await login(ctx, positionals);
-            break;
-        case "whoami":
-            await whoami(ctx, positionals);
-            break;
-        case "user":
-            await withReadyClient(ctx, positionals, async (client, args) => {
-                const identifier = requireArg(args, 0, "user identifier");
-                const [user, err] = await client.users.retrieve(identifier);
-                if (!user) {
-                    throw new Error(
-                        err?.message ?? `User not found: ${identifier}`,
-                    );
-                }
-                printUser(user);
-            });
-            break;
-        case "dm":
-            await dmCommand(ctx, positionals);
-            break;
-        case "server":
-            await serverCommand(ctx, positionals);
-            break;
-        case "servers":
-            await withReadyClient(ctx, positionals, async (client) => {
-                printServers(await client.servers.retrieve());
-            });
-            break;
-        case "channels":
-            await withReadyClient(ctx, positionals, async (client, args) => {
-                const serverID = requireArg(args, 0, "server id");
-                printChannels(await client.channels.retrieve(serverID));
-            });
-            break;
-        case "channel":
-            await channelCommand(ctx, positionals);
-            break;
-        case "invite":
-            await inviteCommand(ctx, positionals);
-            break;
-        case "group":
-            await groupCommand(ctx, positionals);
-            break;
-        case "send":
-            await sendCommand(ctx, positionals);
-            break;
-        case "chat":
-            await chat(ctx, positionals);
-            break;
-        case "help":
-        case "--help":
-        case "-h":
-            printHelp();
-            break;
-        default:
-            throw new Error(`Unknown command: ${command}`);
+        switch (command) {
+            case "auth":
+                await authCommand(ctx, positionals);
+                break;
+            case "register":
+                await register(ctx, positionals);
+                break;
+            case "login":
+                await login(ctx, positionals);
+                break;
+            case "whoami":
+                await whoami(ctx, positionals);
+                break;
+            case "user":
+                await withReadyClient(
+                    ctx,
+                    positionals,
+                    async (client, args) => {
+                        const identifier = requireArg(
+                            args,
+                            0,
+                            "user identifier",
+                        );
+                        const [user, err] =
+                            await client.users.retrieve(identifier);
+                        if (!user) {
+                            throw new Error(
+                                err?.message ?? `User not found: ${identifier}`,
+                            );
+                        }
+                        printUser(user);
+                    },
+                );
+                break;
+            case "dm":
+                await dmCommand(ctx, positionals);
+                break;
+            case "server":
+                await serverCommand(ctx, positionals);
+                break;
+            case "servers":
+                await withReadyClient(ctx, positionals, async (client) => {
+                    printServers(await client.servers.retrieve());
+                });
+                break;
+            case "channels":
+                await withReadyClient(
+                    ctx,
+                    positionals,
+                    async (client, args) => {
+                        const serverID = requireArg(args, 0, "server id");
+                        printChannels(await client.channels.retrieve(serverID));
+                    },
+                );
+                break;
+            case "channel":
+                await channelCommand(ctx, positionals);
+                break;
+            case "invite":
+                await inviteCommand(ctx, positionals);
+                break;
+            case "group":
+                await groupCommand(ctx, positionals);
+                break;
+            case "send":
+                await sendCommand(ctx, positionals);
+                break;
+            case "chat":
+                await chat(ctx, positionals);
+                break;
+            case "help":
+            case "--help":
+            case "-h":
+                printHelp();
+                break;
+            default:
+                throw new Error(`Unknown command: ${command}`);
+        }
+    } finally {
+        await closeDebugStream(ctx);
     }
 }
 
@@ -156,13 +174,6 @@ async function createContext(flags) {
             process.env.VEX_CHAT_DEBUG,
     );
     const debug = Boolean(flags.debug) || debugLevel !== "off";
-    if (debug && !process.env.LIBVEX_DEBUG_DM) {
-        process.env.LIBVEX_DEBUG_DM = "1";
-    }
-    if (debug && !process.env.LIBVEX_DEBUG_LEVEL) {
-        process.env.LIBVEX_DEBUG_LEVEL =
-            debugLevel === "off" ? "debug" : debugLevel;
-    }
     const local = Boolean(flags.local) || process.env.VEX_CHAT_LOCAL === "1";
     const host = String(
         local
@@ -191,6 +202,27 @@ async function createContext(flags) {
     );
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(dataDir, "db"), { recursive: true, mode: 0o700 });
+    const activeDebugLevel =
+        debug && debugLevel === "off" ? "debug" : debugLevel;
+    const enableLibvexMailDebug =
+        process.env.VEX_CHAT_LIBVEX_DEBUG === "1" ||
+        shouldDebugAtLevel(activeDebugLevel, "trace");
+    if (enableLibvexMailDebug && !process.env.LIBVEX_DEBUG_DM) {
+        process.env.LIBVEX_DEBUG_DM = "1";
+    }
+    if (debug && !process.env.LIBVEX_DEBUG_LEVEL) {
+        process.env.LIBVEX_DEBUG_LEVEL = activeDebugLevel;
+    }
+    const debugFile = debug ? resolveDebugFile(flags, dataDir) : null;
+    if (debugFile) {
+        await fs.mkdir(path.dirname(debugFile), {
+            recursive: true,
+            mode: 0o700,
+        });
+    }
+    const debugStream = debugFile
+        ? createWriteStream(debugFile, { flags: "a", mode: 0o600 })
+        : null;
     const configPath = path.join(dataDir, "config.json");
     return {
         dataDir,
@@ -215,15 +247,27 @@ async function createContext(flags) {
         noHome: Boolean(flags["no-home"]),
         password: flags.password ? String(flags.password) : undefined,
         debug,
-        debugLevel: debug
-            ? debugLevel === "off"
-                ? "debug"
-                : debugLevel
-            : "off",
+        debugFile,
+        debugLevel: debug ? activeDebugLevel : "off",
+        debugStream,
         sound: normalizeSound(
             flags.sound ?? process.env.VEX_CHAT_SOUND ?? "Glass",
         ),
     };
+}
+
+function resolveDebugFile(flags, dataDir) {
+    const explicit = flags["debug-file"] ?? process.env.VEX_CHAT_DEBUG_FILE;
+    if (explicit) {
+        return path.resolve(String(explicit));
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return path.join(dataDir, "logs", `vex-debug-${stamp}.log`);
+}
+
+async function closeDebugStream(ctx) {
+    if (!ctx?.debugStream) return;
+    await new Promise((resolve) => ctx.debugStream.end(resolve));
 }
 
 function normalizeDebugLevel(value) {
@@ -1488,6 +1532,9 @@ async function chat(ctx, args) {
         account,
         state.target ? targetLabel(state.target) : "Chat",
     );
+    if (ctx.debugFile) {
+        console.log(color("dim", `debug log ${ctx.debugFile}`));
+    }
     if (state.target) {
         console.log(
             `${color("dim", state.target.type === "dm" ? "current DM" : "current channel")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`,
@@ -1932,9 +1979,12 @@ function debugLog(ctx, event, data = {}, level = "debug") {
         event,
         time: new Date().toISOString(),
     };
-    process.stderr.write(
-        `[vex-cli:debug] ${JSON.stringify(payload, jsonReplacer)}\n`,
-    );
+    const line = `[vex-cli:debug] ${JSON.stringify(payload, jsonReplacer)}\n`;
+    if (ctx.debugStream) {
+        ctx.debugStream.write(line);
+        return;
+    }
+    process.stderr.write(line);
 }
 
 function shouldDebugAtLevel(current, needed) {
@@ -2708,8 +2758,9 @@ Flags:
   --local                connect to local Spire at 127.0.0.1:16777 over http/ws
   --http                 use http/ws
   --dev-key <key>        send x-dev-api-key
-  --debug                print send/receive/connect diagnostics to stderr
-  --debug-level <level>  debug or trace; trace includes heartbeat ping/pong
+  --debug                write send/receive/connect diagnostics to a log file
+  --debug-file <path>    debug log path, default under the CLI data dir
+  --debug-level <level>  debug or trace; trace includes libvex mail details
   --data-dir <dir>       local CLI account and sqlite storage
   --sound <name-or-path> incoming message sound, default Glass; use off to disable
 
