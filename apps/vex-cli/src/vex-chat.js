@@ -3084,13 +3084,9 @@ Once chat is open, type /help for chat commands.
 function printInteractiveHelp() {
     console.log(`${color("bold", "Chat commands")}
 
-${color("red", "/nav")}                   open a channel or DM
-${color("red", "Tab")}                    open the newest unread DM
 ${color("red", "/join [server]")}         choose a server, then a channel
 ${color("red", "/servers")}               browse your servers and open a channel
 ${color("red", "/channels")}              choose a channel
-${color("red", "/window")}                list open chats
-${color("red", "/window <number>")}       switch to an open chat
 ${color("red", "/user <user>")}           open a DM conversation
 ${color("red", "/inbox")}                 show DMs, unread counts, and recent senders
 ${color("red", "/dm")}                    alias for /inbox
@@ -3100,8 +3096,6 @@ ${color("red", "/to <user>")}             open a DM conversation
 ${color("red", "/invite")}                create an invite for the current server
 ${color("red", "/invite <user>")}         send an invite link by DM
 ${color("red", "/join <invite-link>")}    preview and accept a server invite
-${color("red", "vex://invite/...")}       previews in chat and asks whether to join
-${color("red", "redeem <code>")}          older alias for /join <invite-link>
 ${color("red", "/create")}                create a server and enter #general
 ${color("red", "/members")}               list people in the current channel
 ${color("red", "/accounts")}              list local users
