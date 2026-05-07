@@ -715,6 +715,14 @@ async function joinInviteInChat(ctx, client, state, rawInvite, rl) {
     await redeemInviteInChat(ctx, client, state, inviteID, preview);
 }
 
+async function joinServerOrInviteInChat(ctx, client, state, rawValue, rl) {
+    if (isInviteInput(rawValue)) {
+        await joinInviteInChat(ctx, client, state, rawValue, rl);
+        return;
+    }
+    await selectServerByName(ctx, client, state, rawValue, rl);
+}
+
 async function redeemInviteInChat(ctx, client, state, inviteID, preview) {
     debugLog(ctx, "invite.redeem.start", { inviteID });
     const permission = await client.invites.redeem(inviteID);
@@ -768,7 +776,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             renderChatLine(
                 rl,
                 state,
-                `${color("yellow", "system")} ${formatInvitePreviewLine(preview)} ${color("dim", "- join? y/N")}`,
+                `${color("yellow", "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N")}`,
             );
             const answer = (await askText(rl, `join ${serverName}?`, "N"))
                 .trim()
@@ -1598,7 +1606,7 @@ async function chat(ctx, args) {
             renderChatLine(
                 rl,
                 state,
-                `${color("yellow", "system")} ${color("dim", `invite detected, type redeem ${inviteID} to inspect it`)}`,
+                `${color("yellow", "system")} ${color("dim", `invite detected, type /join ${inviteLink(inviteID)} to inspect it`)}`,
             );
         }
         refreshPrompt(rl, state);
@@ -1677,11 +1685,19 @@ async function chat(ctx, args) {
                     rl,
                 );
             } else if (trimmed.startsWith("/join ")) {
-                await selectServerByName(
+                await joinServerOrInviteInChat(
                     ctx,
                     client,
                     state,
                     trimmed.slice(6).trim(),
+                    rl,
+                );
+            } else if (trimmed.startsWith("join ")) {
+                await joinServerOrInviteInChat(
+                    ctx,
+                    client,
+                    state,
+                    trimmed.slice(5).trim(),
                     rl,
                 );
             } else if (trimmed === "/channels") {
@@ -2233,6 +2249,15 @@ function parseInviteID(value) {
     return match[0];
 }
 
+function isInviteInput(value) {
+    try {
+        parseInviteID(value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function extractInviteID(value) {
     const match = value.match(
         /vex:\/\/invite\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
@@ -2249,6 +2274,50 @@ function replaceInviteLinkWithPreview(message, inviteID, preview) {
 
 function formatInvitePreviewLine(preview) {
     return `${color("yellow", "invite")} ${color("blue", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)}`;
+}
+
+function formatInvitePreviewBox(preview, inviteID) {
+    const serverName = preview.server?.name ?? "Server";
+    const link = inviteLink(inviteID);
+    const rows = [
+        `SERVER INVITE - ${serverName}`,
+        `channels ${plainInviteChannelSummary(preview.channels)}`,
+        `expires  ${formatMessageTime(preview.invite.expiration)}`,
+        `link     ${terminalLink(link, link)}`,
+        `command  /join ${link}`,
+    ];
+    return asciiBox(rows);
+}
+
+function plainInviteChannelSummary(channels) {
+    if (!channels || channels.length === 0) return "none listed";
+    const names = channels
+        .slice(0, 3)
+        .map((channel) => `#${channel.name}`)
+        .join(", ");
+    const extra = channels.length > 3 ? ` +${channels.length - 3} more` : "";
+    return `${names}${extra}`;
+}
+
+function asciiBox(rows) {
+    const width = Math.max(...rows.map((row) => visibleLength(row)));
+    const border = `+${"-".repeat(width + 2)}+`;
+    const body = rows.map(
+        (row) => `| ${row}${" ".repeat(width - visibleLength(row))} |`,
+    );
+    return [border, ...body, border].join("\n");
+}
+
+function visibleLength(value) {
+    return String(value)
+        .replace(/\x1b\]8;;.*?\x07/g, "")
+        .replace(/\x1b\]8;;\x07/g, "")
+        .replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function terminalLink(label, href) {
+    if (process.env.NO_COLOR !== undefined) return label;
+    return `\x1b]8;;${href}\x07${label}\x1b]8;;\x07`;
 }
 
 function escapeRegExp(value) {
@@ -2720,16 +2789,7 @@ function printInvite(invite) {
 }
 
 function printInvitePreview(preview) {
-    console.log(color("bold", "Server invite"));
-    const serverName =
-        preview.server?.name ??
-        "Server details unavailable until Spire is updated";
-    console.log(
-        `${color("blue", serverName)} ${formatInviteChannelSummary(preview.channels)}`,
-    );
-    console.log(
-        `${color("dim", "expires")} ${formatMessageTime(preview.invite.expiration)}`,
-    );
+    console.log(formatInvitePreviewBox(preview, preview.invite.inviteID));
 }
 
 function formatInviteChannelSummary(channels) {
@@ -2887,8 +2947,9 @@ ${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
 ${color("cyan", "/to <user>")}             open a DM conversation
 ${color("cyan", "/invite")}                create an invite for the current server
 ${color("cyan", "/invite <user>")}         send an invite link by DM
+${color("cyan", "/join <invite-link>")}    preview and accept a server invite
 ${color("cyan", "vex://invite/...")}       previews in chat and asks whether to join
-${color("cyan", "redeem <code>")}          preview and accept a server invite
+${color("cyan", "redeem <code>")}          older alias for /join <invite-link>
 ${color("cyan", "/create")}                create a server and enter #general
 ${color("cyan", "/members")}               list people in the current channel
 ${color("cyan", "/accounts")}              list local users
