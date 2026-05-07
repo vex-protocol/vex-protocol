@@ -11,9 +11,13 @@ ids:
     users:
         palette:
             - gold
-            - lime
+            - mint
             - pink
+            - sky
             - orange
+            - lime
+            - plum
+            - coral
             - white
     targets:
         palette:
