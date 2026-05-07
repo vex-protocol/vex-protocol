@@ -3,6 +3,7 @@
 import { Client } from "@vex-chat/libvex";
 import { execFile } from "node:child_process";
 import { createWriteStream } from "node:fs";
+import { createRequire } from "node:module";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -11,6 +12,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { unpack } from "msgpackr";
 
+const require = createRequire(import.meta.url);
+const CLI_VERSION = require("../package.json").version;
 const DEFAULT_HOST = "api.vex.wtf";
 const LOCAL_HOST = "127.0.0.1:16777";
 const COLOR = process.env.NO_COLOR === undefined;
@@ -912,12 +915,6 @@ async function jumpToPendingNotification(ctx, client, state, names, rl) {
 async function enterDm(client, state, user) {
     clearScreen();
     renderHeader(state, client.me.user(), `@${user.username}`);
-    console.log(
-        color(
-            "dim",
-            "/user open DM  /inbox unread  /dm send  /join server  /channels open  /window switch  /help",
-        ),
-    );
     console.log("");
     const history = await client.messages.retrieve(user.userID);
     if (history.length === 0) {
@@ -1465,12 +1462,6 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     });
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
-    console.log(
-        color(
-            "dim",
-            "/join server  /servers browse  /channels open  /window switch  /user open DM  /inbox unread",
-        ),
-    );
     console.log("");
     const history = await client.messages.retrieveGroup(channel.channelID);
     if (history.length === 0) {
@@ -1669,11 +1660,7 @@ async function chat(ctx, args) {
     if (ctx.debugFile) {
         console.log(color("dim", `debug log ${ctx.debugFile}`));
     }
-    if (state.target) {
-        console.log(
-            `${color("dim", state.target.type === "dm" ? "current DM" : "current channel")} ${color(state.target.type === "dm" ? "magenta" : "cyan", targetLabel(state.target))}`,
-        );
-    } else {
+    if (!state.target) {
         console.log(
             color(
                 "yellow",
@@ -2754,16 +2741,20 @@ function renderHeader(state, user, title) {
     const target = state.target
         ? targetLabel(state.target)
         : "no chat selected";
-    console.log(color("reverse", " vex chat "));
+    console.log(formatStartupMark(CLI_VERSION));
     console.log(
         `${color("bold", title)} ${color("dim", "|")} ${color("green", username)} ${color("dim", "on")} ${color("blue", host)} ${color("dim", "|")} ${color(state.target?.type === "dm" ? "magenta" : "cyan", target)}`,
     );
-    console.log(
-        color(
-            "dim",
-            "/nav /join /servers /channels /window /user /inbox /dm /invite redeem /members /help",
-        ),
-    );
+}
+
+function formatStartupMark(version) {
+    return [
+        color("cyan", " _   __ _____ __  __"),
+        color("cyan", "| | / // ___// / / /"),
+        color("cyan", "| |/ // __/ / /_/ / "),
+        color("cyan", "|___//____/ \\____/  ") +
+            ` ${color("dim", `v${version}`)}`,
+    ].join("\n");
 }
 
 function printWhoami(client) {
