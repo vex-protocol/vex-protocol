@@ -1632,6 +1632,7 @@ async function chat(ctx, args) {
     attachDebugClientEvents(ctx, client, `chat:${account.username}`);
     const state = {
         account,
+        avatarMarkers: new Map(),
         buffers: [],
         dms: new Map(),
         host: ctx.clientOptions.host,
@@ -1687,9 +1688,11 @@ async function chat(ctx, args) {
             }
             playIncomingSound(ctx.sound);
             notifyIncomingMessage(author);
+            const avatar = await avatarMarkerForUser(client, state, authorID);
             renderNotificationLine(rl, state, {
                 author,
                 authorID,
+                avatar,
                 isDm: route.isDm,
                 target: route.target,
                 targetID: route.targetObject?.id ?? message.group,
@@ -1723,9 +1726,11 @@ async function chat(ctx, args) {
         ) {
             playIncomingSound(ctx.sound);
             notifyIncomingMessage(author);
+            const avatar = await avatarMarkerForUser(client, state, authorID);
             renderNotificationLine(rl, state, {
                 author,
                 authorID,
+                avatar,
                 isDm: true,
                 target: route.target,
                 targetID: dmPeerID(state, message),
@@ -2702,6 +2707,46 @@ function boldColor(name, value) {
     return `${ANSI.bold}${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
 }
 
+function rgbColor({ b, g, r }, value) {
+    if (!COLOR) return String(value);
+    return `\x1b[38;2;${r};${g};${b}m${String(value)}${ANSI.reset}`;
+}
+
+async function avatarMarkerForUser(client, state, userID) {
+    if (!userID) return "";
+    if (state.avatarMarkers.has(userID)) {
+        return await state.avatarMarkers.get(userID);
+    }
+    const markerPromise = fetchAvatarMarker(client, userID).catch(() => "");
+    state.avatarMarkers.set(userID, markerPromise);
+    const marker = await markerPromise;
+    state.avatarMarkers.set(userID, marker);
+    return marker;
+}
+
+async function fetchAvatarMarker(client, userID) {
+    const res = await client.http.get(`${client.getHost()}/avatar/${userID}`, {
+        responseType: "arraybuffer",
+        validateStatus: (status) => status === 200 || status === 404,
+    });
+    if (res.status !== 200) return "";
+    const bytes = new Uint8Array(res.data);
+    if (bytes.length === 0) return "";
+    return rgbColor(avatarColorFromBytes(bytes), "●");
+}
+
+function avatarColorFromBytes(bytes) {
+    let hash = 0;
+    for (const byte of bytes) {
+        hash = (hash * 33 + byte) >>> 0;
+    }
+    return {
+        b: 96 + ((hash >>> 16) % 160),
+        g: 96 + ((hash >>> 8) % 160),
+        r: 96 + (hash % 160),
+    };
+}
+
 function hashID(value) {
     if (!value) return 0;
     let hash = 0;
@@ -2772,12 +2817,16 @@ function renderChatLine(rl, state, line) {
     restoreActivePrompt(rl, state, activeLine, activeCursor);
 }
 
-function renderNotificationLine(rl, state, { author, authorID, isDm, target }) {
+function renderNotificationLine(
+    rl,
+    state,
+    { author, authorID, avatar, isDm, target },
+) {
     const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
-    const authorText = color(
+    const authorText = `${avatar ? `${avatar} ` : ""}${color(
         userAccent(authorID),
         isDm ? `@${author}` : author,
-    );
+    )}`;
     const targetText = color("dim", target);
     const message = isDm
         ? `DM message received from ${authorText}`
