@@ -1014,7 +1014,15 @@ async function redeemInviteInChat(ctx, client, state, inviteID, preview) {
     }
 }
 
-function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
+function queueInvitePrompt(
+    ctx,
+    client,
+    state,
+    rl,
+    inviteID,
+    preview,
+    sender = null,
+) {
     if (!rl || state.pendingInvitePrompts?.has(inviteID)) return;
     if (!state.pendingInvitePrompts) state.pendingInvitePrompts = new Set();
     state.pendingInvitePrompts.add(inviteID);
@@ -1025,7 +1033,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             renderChatLine(
                 rl,
                 state,
-                `${color(ROOT_ACCENT, "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N  Ctrl-J joins when supported")}`,
+                formatInvitePromptMessage(preview, inviteID, sender),
             );
             state.pendingInviteJoin = { inviteID };
             try {
@@ -1063,7 +1071,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
     return state.promptQueue;
 }
 
-function deferInvitePrompt(state, targetID, inviteID, preview) {
+function deferInvitePrompt(state, targetID, inviteID, preview, sender = null) {
     if (!targetID || !inviteID || !preview) return;
     if (!state.deferredInvitePrompts) state.deferredInvitePrompts = new Map();
     const key = `${targetID}:${inviteID}`;
@@ -1071,6 +1079,7 @@ function deferInvitePrompt(state, targetID, inviteID, preview) {
     state.deferredInvitePrompts.set(key, {
         inviteID,
         preview,
+        sender,
         targetID,
     });
 }
@@ -1089,6 +1098,7 @@ async function flushDeferredInvitePrompts(ctx, client, state, rl, targetID) {
             rl,
             item.inviteID,
             item.preview,
+            item.sender,
         );
     }
 }
@@ -2085,6 +2095,15 @@ async function chat(ctx, args) {
                         route.targetObject?.id ?? dmPeerID(state, message),
                         inviteID,
                         await fetchInvitePreview(client, inviteID),
+                        {
+                            avatar: await avatarMarkerForUser(
+                                client,
+                                state,
+                                authorID,
+                            ),
+                            userID: authorID,
+                            username: author,
+                        },
                     );
                 } catch (err) {
                     debugLog(ctx, "invite.preview.error", {
@@ -2144,6 +2163,15 @@ async function chat(ctx, args) {
                         dmPeerID(state, message),
                         inviteID,
                         await fetchInvitePreview(client, inviteID),
+                        {
+                            avatar: await avatarMarkerForUser(
+                                client,
+                                state,
+                                authorID,
+                            ),
+                            userID: authorID,
+                            username: author,
+                        },
                     );
                 } catch (err) {
                     debugLog(ctx, "invite.preview.error", {
@@ -2207,7 +2235,10 @@ async function chat(ctx, args) {
             playIncomingSound(ctx.sound);
         }
         if (inviteID && invitePreview) {
-            queueInvitePrompt(ctx, client, state, rl, inviteID, invitePreview);
+            queueInvitePrompt(ctx, client, state, rl, inviteID, invitePreview, {
+                userID: authorID,
+                username: author,
+            });
         } else if (inviteID) {
             renderChatLine(
                 rl,
@@ -2940,6 +2971,18 @@ function replaceInviteLinkWithPreview(message, inviteID, preview) {
 
 function formatInvitePreviewLine(preview) {
     return `${color(ROOT_ACCENT, "invite")} ${color(serverAccent(preview.server?.serverID ?? preview.invite?.serverID), preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)}`;
+}
+
+function formatInvitePromptMessage(preview, inviteID, sender = null) {
+    const senderName = sender?.username ?? "someone";
+    const senderText = sender?.userID
+        ? `${sender?.avatar ? `${sender.avatar} ` : ""}${color(userAccent(sender.userID), `@${senderName}`)}`
+        : color(ROOT_ACCENT, senderName);
+    return [
+        `${color(ROOT_ACCENT, "invite")} ${color("dim", "from")} ${senderText}`,
+        formatInvitePreviewBox(preview, inviteID),
+        color("dim", "Want to join? y/N  Ctrl-J joins when supported"),
+    ].join("\n");
 }
 
 function formatInvitePreviewBox(preview, inviteID) {
