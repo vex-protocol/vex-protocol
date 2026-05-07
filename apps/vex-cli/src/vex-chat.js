@@ -26,7 +26,6 @@ const ANSI = {
     reverse: "\x1b[7m",
     yellow: "\x1b[33m",
 };
-const STATUS_ACTIVITY_TTL_MS = 5_000;
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -2495,12 +2494,9 @@ function promptFor(state) {
 
 function statusBar(state) {
     const status = state.status ?? {};
-    const recent =
-        Date.now() - (status.lastActivityAt ?? 0) < STATUS_ACTIVITY_TTL_MS;
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
-    const activity = recent ? (status.activity ?? "idle") : "idle";
-    const content = `${networkLabel(network)} ${formatUnreadCount(unread)} ${activityLabel(activity)}`;
+    const content = `${networkIcon(network)} ${formatUnreadCount(unread)}`;
     const tone = network === "offline" ? "red" : unread > 0 ? "yellow" : "dim";
     return color(tone, `[${content}]`);
 }
@@ -2541,35 +2537,15 @@ function statusActivity(activity) {
     }
 }
 
-function networkLabel(network) {
+function networkIcon(network) {
     switch (network) {
         case "connecting":
-            return "net";
         case "syncing":
-            return "sync";
+            return "🟡";
         case "offline":
-            return "off";
+            return "🔴";
         default:
-            return "on";
-    }
-}
-
-function activityLabel(activity) {
-    switch (activity) {
-        case "checking mail":
-            return "mail";
-        case "connecting":
-            return "conn";
-        case "received":
-            return "recv";
-        case "sending":
-            return "send";
-        case "offline":
-            return "off";
-        case "online":
-            return "on";
-        default:
-            return "idle";
+            return "🟢";
     }
 }
 
