@@ -372,17 +372,27 @@ async function register(ctx, args) {
     const client = await Client.create(privateKey, ctx.clientOptions);
     attachDebugClientEvents(ctx, client, `register:${username}`);
     try {
-        const [, registerErr] = await client.register(username, password);
-        if (registerErr) throw registerErr;
-        await connectAndWait(client, ctx, `register:${username}`);
-        config.accounts[username] = {
-            deviceID: client.me.device().deviceID,
-            privateKey,
-            userID: client.me.user().userID,
-            username,
-        };
-        config.lastUsername = username;
-        await writeConfig(ctx.configPath, config);
+        try {
+            const [, registerErr] = await client.register(username, password);
+            if (registerErr) throw registerErr;
+            await connectAndWait(client, ctx, `register:${username}`);
+        } catch (err) {
+            if (!isDeviceApprovalRequired(err)) throw err;
+            await waitForDeviceApproval(
+                ctx,
+                client,
+                config,
+                username,
+                privateKey,
+                {
+                    challenge: err.challenge,
+                    expiresAt: err.expiresAt,
+                    requestID: err.requestID,
+                },
+            );
+            return;
+        }
+        await persistNewLocalAccount(ctx, config, username, privateKey, client);
         console.log(
             `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
         );
@@ -390,6 +400,25 @@ async function register(ctx, args) {
     } finally {
         await client.close().catch(() => {});
     }
+}
+
+async function persistNewLocalAccount(
+    ctx,
+    config,
+    username,
+    privateKey,
+    client,
+    deviceID = client.me.device().deviceID,
+) {
+    config.accounts[username] = {
+        deviceID,
+        privateKey,
+        userID: client.me.user().userID,
+        username,
+    };
+    config.lastUsername = username;
+    await writeConfig(ctx.configPath, config);
+    return config.accounts[username];
 }
 
 async function login(ctx, args) {
@@ -448,14 +477,13 @@ async function loginWithDeviceApproval(ctx, username) {
         const [, registerErr] = await client.register(username);
         if (!registerErr) {
             await connectAndWait(client, ctx, `login-request:${username}`);
-            config.accounts[username] = {
-                deviceID: client.me.device().deviceID,
-                privateKey,
-                userID: client.me.user().userID,
+            await persistNewLocalAccount(
+                ctx,
+                config,
                 username,
-            };
-            config.lastUsername = username;
-            await writeConfig(ctx.configPath, config);
+                privateKey,
+                client,
+            );
             console.log(
                 `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
             );
@@ -540,19 +568,19 @@ async function waitForDeviceApproval(
             );
             if (authErr) throw authErr;
             await connectAndWait(client, ctx, `login-approved:${username}`);
-            config.accounts[username] = {
-                deviceID: current.approvedDeviceID,
-                privateKey,
-                userID: client.me.user().userID,
+            const account = await persistNewLocalAccount(
+                ctx,
+                config,
                 username,
-            };
-            config.lastUsername = username;
-            await writeConfig(ctx.configPath, config);
+                privateKey,
+                client,
+                current.approvedDeviceID,
+            );
             console.log(
                 `${color(ROOT_ACCENT, "approved")} ${color(userAccent(client.me.user().userID), username)}`,
             );
             printWhoami(client);
-            return;
+            return { account, client, config };
         }
         throw new Error(`Device login ${current.status}.`);
     }
@@ -2643,18 +2671,32 @@ async function authenticateOrRegister(ctx, explicitUsername) {
         const privateKey = Client.generateSecretKey();
         const client = await Client.create(privateKey, ctx.clientOptions);
         attachDebugClientEvents(ctx, client, `register:${entered}`);
-        const [, registerErr] = await client.register(entered);
-        if (registerErr) throw registerErr;
-        await connectAndWait(client, ctx, `register:${entered}`);
-        const account = {
-            deviceID: client.me.device().deviceID,
+        try {
+            const [, registerErr] = await client.register(entered);
+            if (registerErr) throw registerErr;
+            await connectAndWait(client, ctx, `register:${entered}`);
+        } catch (err) {
+            if (!isDeviceApprovalRequired(err)) throw err;
+            return waitForDeviceApproval(
+                ctx,
+                client,
+                config,
+                entered,
+                privateKey,
+                {
+                    challenge: err.challenge,
+                    expiresAt: err.expiresAt,
+                    requestID: err.requestID,
+                },
+            );
+        }
+        const account = await persistNewLocalAccount(
+            ctx,
+            config,
+            entered,
             privateKey,
-            userID: client.me.user().userID,
-            username: entered,
-        };
-        config.accounts[entered] = account;
-        config.lastUsername = entered;
-        await writeConfig(ctx.configPath, config);
+            client,
+        );
         return { account, client, config };
     } finally {
         rl.close();

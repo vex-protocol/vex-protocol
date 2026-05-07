@@ -4551,10 +4551,12 @@ export class Client {
                 if (newDevice && "deviceID" in newDevice) {
                     device = newDevice;
                 } else if (newDevice && "status" in newDevice) {
-                    throw new Error(
-                        "Device registration requires approval from an existing device. requestID=" +
-                            newDevice.requestID,
-                    );
+                    throw new DeviceApprovalRequiredError({
+                        challenge: newDevice.challenge,
+                        expiresAt: newDevice.expiresAt,
+                        requestID: newDevice.requestID,
+                        userID: newDevice.userID ?? null,
+                    });
                 } else {
                     throw new Error("Error registering device.");
                 }
