@@ -29,16 +29,20 @@ const ANSI = {
     reverse: "\x1b[7m",
     white: "\x1b[37m",
     yellow: "\x1b[33m",
-    amber: "\x1b[38;5;214m",
-    blood: "\x1b[38;5;160m",
-    flame: "\x1b[38;5;202m",
-    rose: "\x1b[38;5;204m",
-    violet: "\x1b[38;5;135m",
+    azure: "\x1b[38;5;39m",
+    gold: "\x1b[38;5;220m",
+    indigo: "\x1b[38;5;63m",
+    lavender: "\x1b[38;5;141m",
+    lime: "\x1b[38;5;118m",
+    orange: "\x1b[38;5;208m",
+    pink: "\x1b[38;5;213m",
+    steel: "\x1b[38;5;67m",
+    teal: "\x1b[38;5;44m",
 };
 const ROOT_ACCENT = "red";
 // Mirrors apps/vex-cli/theme.yaml until theme loading becomes configurable.
-const USER_ACCENTS = ["white", "yellow", "green", "cyan", "magenta"];
-const TARGET_ACCENTS = ["blood", "flame", "amber", "rose", "violet"];
+const USER_ACCENTS = ["gold", "lime", "pink", "orange", "white"];
+const TARGET_ACCENTS = ["steel", "azure", "indigo", "teal", "lavender"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -1702,12 +1706,7 @@ async function chat(ctx, args) {
         console.log(color("dim", `debug log ${ctx.debugFile}`));
     }
     if (!state.target) {
-        console.log(
-            color(
-                "yellow",
-                "No chat open yet. Use /join, /channels, /user, or /nav.",
-            ),
-        );
+        printNoChatMessage(state);
     }
     safeSetPrompt(rl, promptFor(state));
     safePrompt(rl);
@@ -1958,12 +1957,7 @@ async function chat(ctx, args) {
                     target: targetLabel(state.target),
                 });
             } else {
-                console.log(
-                    color(
-                        "yellow",
-                        "No chat open. Use /join, /channels, /user, or /nav.",
-                    ),
-                );
+                printNoChatMessage(state);
             }
         } catch (err) {
             debugLog(ctx, "command.error", {
@@ -2654,20 +2648,13 @@ function renderChatLine(rl, state, line) {
     restoreActivePrompt(rl, state, activeLine, activeCursor);
 }
 
-function renderNotificationLine(
-    rl,
-    state,
-    { author, authorID, isDm, target, targetID, targetType },
-) {
+function renderNotificationLine(rl, state, { author, authorID, isDm, target }) {
     const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
     const authorText = color(
         userAccent(authorID),
         isDm ? `@${author}` : author,
     );
-    const targetText = color(
-        targetType === "dm" ? userAccent(targetID) : channelAccent(targetID),
-        target,
-    );
+    const targetText = color("dim", target);
     const message = isDm
         ? `DM message received from ${authorText}`
         : `Channel message received in ${targetText} from ${authorText}`;
@@ -2675,6 +2662,18 @@ function renderNotificationLine(
         rl,
         state,
         `${color(ROOT_ACCENT, "system")} ${message}${jump}`,
+    );
+}
+
+function printNoChatMessage(state) {
+    const hasKnownChats =
+        (state.buffers?.length ?? 0) > 0 || (state.dms?.size ?? 0) > 0;
+    const title = hasKnownChats ? "No chat open." : "No chats yet.";
+    const guidance = hasKnownChats
+        ? "Use /join to enter a server, /channels to pick a channel, or /inbox to open a DM."
+        : "Create a server with /create, join one with /join <invite-link>, or send a DM with /dm <user> <message>.";
+    console.log(
+        `${color(ROOT_ACCENT, "system")} ${color("dim", `${title} ${guidance}`)}`,
     );
 }
 
@@ -2752,8 +2751,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    const targetTone = state.target ? targetAccent(state.target) : ROOT_ACCENT;
-    return `${statusBar(state)} ${selfName(user)} ${color(targetTone, target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${selfName(user)} ${color("dim", target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -2847,9 +2845,8 @@ function renderHeader(state, user, title) {
         ? targetLabel(state.target)
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
-    const targetTone = state.target ? targetAccent(state.target) : ROOT_ACCENT;
     console.log(
-        `${color(targetTone, title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color(targetTone, target)}`,
+        `${color("dim", title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
     );
 }
 
@@ -3068,24 +3065,17 @@ async function historyTargetLabel(client, names, targets, message) {
 
 function formatMessageLine({
     direction,
-    isDm = false,
     message,
     target,
-    targetID,
-    targetType,
     timestamp,
     who,
     whoID,
 }) {
-    const targetColor =
-        targetType === "dm" || isDm
-            ? userAccent(targetID)
-            : channelAccent(targetID);
     const whoText =
         direction === "outgoing"
             ? selfName(who)
             : color(userAccent(whoID), who);
-    return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${whoText}${color("dim", ":")} ${message}`;
+    return `${color("dim", formatMessageTime(timestamp))} ${color("dim", target)} ${whoText}${color("dim", ":")} ${message}`;
 }
 
 function selfName(value) {

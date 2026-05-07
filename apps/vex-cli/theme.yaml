@@ -10,17 +10,17 @@ self:
 ids:
     users:
         palette:
+            - gold
+            - lime
+            - pink
+            - orange
             - white
-            - yellow
-            - green
-            - cyan
-            - magenta
     targets:
         palette:
-            - blood
-            - flame
-            - amber
-            - rose
-            - violet
+            - steel
+            - azure
+            - indigo
+            - teal
+            - lavender
     invites:
         palette: targets

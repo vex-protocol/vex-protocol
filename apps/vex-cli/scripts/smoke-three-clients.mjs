@@ -79,7 +79,7 @@ const aliceReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             aliceSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/nav")) resolve();
+            if (chunk.includes("No chats yet.")) resolve();
         },
     }).catch((err) => {
         throw err;
@@ -93,7 +93,7 @@ const bobReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             bobSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/nav")) resolve();
+            if (chunk.includes("No chats yet.")) resolve();
         },
     }).catch((err) => {
         throw err;
@@ -107,7 +107,7 @@ const caraReady = waitFor((resolve) => {
         },
         onStdout: (chunk) => {
             caraSeen.push(chunk);
-            if (chunk.toLowerCase().includes("/nav")) resolve();
+            if (chunk.includes("No chats yet.")) resolve();
         },
     }).catch((err) => {
         throw err;
