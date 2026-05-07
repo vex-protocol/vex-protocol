@@ -72,7 +72,6 @@ const USER_ACCENTS = [
     "#F5F5F5",
 ];
 const TARGET_ACCENTS = ["#a8c8df", "#d9c2a3", "#2b501d", "#2a075b", "#c5698b"];
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -3502,23 +3501,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${color("dim", target)} ${boldColor(userAccent(state.account?.userID), user)}${color("dim", " >")} `;
-}
-
-function statusBar(state) {
-    const status = state.status ?? {};
-    const unread = totalUnreadDms(state);
-    const network = status.network ?? "online";
-    const content = `${networkIcon(status)}${formatUnreadCount(unread)}`;
-    const tone =
-        network === "offline" || unread > 0
-            ? ROOT_ACCENT
-            : network === "sending" ||
-                network === "syncing" ||
-                network === "connecting"
-              ? "yellow"
-              : "dim";
-    return color(tone, content);
+    return `${color("dim", formatMessageTime(new Date()))} ${color("dim", target)} ${boldColor(userAccent(state.account?.userID), user)}${color("dim", ":")} `;
 }
 
 function bumpActivity(state, activity = "net") {
@@ -3540,15 +3523,6 @@ function bumpActivity(state, activity = "net") {
 function beginSendingStatus(state, rl) {
     bumpActivity(state, "send");
     state.status.pendingSends = (state.status.pendingSends ?? 0) + 1;
-    state.status.spinnerFrame = state.status.spinnerFrame ?? 0;
-    if (!state.status.spinnerTimer && rl) {
-        state.status.spinnerTimer = setInterval(() => {
-            state.status.spinnerFrame =
-                ((state.status.spinnerFrame ?? 0) + 1) % SPINNER_FRAMES.length;
-            refreshPrompt(rl, state);
-        }, 120);
-        state.status.spinnerTimer.unref?.();
-    }
     refreshPrompt(rl, state);
 }
 
@@ -3559,10 +3533,6 @@ function endSendingStatus(state, rl) {
         (state.status.pendingSends ?? 1) - 1,
     );
     if (state.status.pendingSends === 0) {
-        if (state.status.spinnerTimer) {
-            clearInterval(state.status.spinnerTimer);
-            state.status.spinnerTimer = null;
-        }
         bumpActivity(state, "online");
     }
     refreshPrompt(rl, state);
@@ -3586,34 +3556,6 @@ function statusActivity(activity) {
         default:
             return { activity, network: null };
     }
-}
-
-function networkIcon(status) {
-    switch (status.network) {
-        case "sending":
-            return `${SPINNER_FRAMES[(status.spinnerFrame ?? 0) % SPINNER_FRAMES.length]} `;
-        case "connecting":
-        case "syncing":
-            return "🟡";
-        case "offline":
-            return "🔴";
-        default:
-            return "🟢";
-    }
-}
-
-function formatUnreadCount(unread) {
-    if (unread <= 0) return "🔔00";
-    if (unread > 99) return "🔔99+";
-    return `🔔${String(unread).padStart(2, "0")}`;
-}
-
-function totalUnreadDms(state) {
-    let total = 0;
-    for (const item of state.dms?.values() ?? []) {
-        total += item.unread ?? 0;
-    }
-    return total;
 }
 
 function targetLabel(target) {
