@@ -2751,10 +2751,11 @@ function renderHeader(state, user, title) {
 
 function formatStartupMark(version) {
     return [
-        `${color("red", " _   __")} ${color("white", " _____ ")}${color("red", " _  __")}`,
-        `${color("red", "| | / /")} ${color("white", "|  ___|")}${color("red", "| |/ /")}`,
-        `${color("red", "| |/ / ")} ${color("white", "| |__  ")}${color("red", "|   < ")}`,
-        `${color("red", "|___/  ")} ${color("white", "|_____|")}${color("red", "|_|\\_\\")} ${color("dim", `v${version}`)}`,
+        `${color("red", "__     __")} ${color("white", " ______ ")} ${color("red", "__  __")}`,
+        `${color("red", "\\ \\   / /")} ${color("white", "|  ____|")} ${color("red", "\\ \\/ /")}`,
+        `${color("red", " \\ \\ / / ")} ${color("white", "| |__   ")} ${color("red", " >  < ")}`,
+        `${color("red", "  \\ V /  ")} ${color("white", "|  __|  ")} ${color("red", "/ /\\ \\")} ${color("dim", `v${version}`)}`,
+        `${color("red", "   \\_/   ")} ${color("white", "|______|")} ${color("red", "/_/  \\_\\")}`,
     ].join("\n");
 }
 
