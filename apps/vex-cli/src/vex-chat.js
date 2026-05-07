@@ -30,8 +30,10 @@ const ANSI = {
     white: "\x1b[37m",
     yellow: "\x1b[33m",
 };
+const ROOT_ACCENT = "red";
+// Mirrors apps/vex-cli/theme.yaml until theme loading becomes configurable.
 const USER_ACCENTS = ["white", "yellow", "green", "cyan", "magenta"];
-const TARGET_ACCENTS = ["red", "cyan", "yellow", "magenta", "green"];
+const TARGET_ACCENTS = [ROOT_ACCENT, "cyan", "yellow", "magenta", "green"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -344,7 +346,7 @@ async function register(ctx, args) {
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
         console.log(
-            `${color("red", "registered")} ${color("white", username)}`,
+            `${color(ROOT_ACCENT, "registered")} ${selfName(username)}`,
         );
         printWhoami(client);
     } finally {
@@ -373,7 +375,7 @@ async function login(ctx, args) {
         };
         config.lastUsername = username;
         await writeConfig(ctx.configPath, config);
-        console.log(`${color("red", "logged in")} ${color("white", username)}`);
+        console.log(`${color(ROOT_ACCENT, "logged in")} ${selfName(username)}`);
         printWhoami(client);
     } finally {
         await client.close().catch(() => {});
@@ -434,7 +436,7 @@ async function listAccounts(ctx) {
         const marker = name === config.lastUsername ? "*" : " ";
         const account = config.accounts[name];
         console.log(
-            `${color(marker === "*" ? "red" : "dim", marker)} ${color("white", name)} ${color("dim", `user=${account.userID}`)} ${color("dim", `device=${account.deviceID}`)}`,
+            `${color(marker === "*" ? ROOT_ACCENT : "dim", marker)} ${color(userAccent(account.userID), name)} ${color("dim", `user=${account.userID}`)} ${color("dim", `device=${account.deviceID}`)}`,
         );
     }
 }
@@ -449,7 +451,10 @@ async function useAccount(ctx, args) {
     }
     config.lastUsername = username;
     await writeConfig(ctx.configPath, config);
-    console.log(`${color("red", "using")} ${color("white", username)}`);
+    const account = config.accounts[username];
+    console.log(
+        `${color(ROOT_ACCENT, "using")} ${color(userAccent(account.userID), username)}`,
+    );
 }
 
 async function dmCommand(ctx, args) {
@@ -476,7 +481,7 @@ async function dmCommand(ctx, args) {
         const user = await resolveUser(client, identifier);
         await client.messages.send(user.userID, message);
         console.log(
-            `${color("red", "sent dm to")} ${color("white", user.username)}`,
+            `${color(ROOT_ACCENT, "sent dm to")} ${color(userAccent(user.userID), user.username)}`,
         );
     });
 }
@@ -493,14 +498,14 @@ async function serverCommand(ctx, args) {
             if (!name) throw new Error("Usage: vex-chat server create <name>");
             const server = await client.servers.create(name);
             console.log(
-                `${color("red", "created server")} ${color("white", server.name)} ${color("dim", server.serverID)}`,
+                `${color(ROOT_ACCENT, "created server")} ${color(serverAccent(server.serverID), server.name)} ${color("dim", server.serverID)}`,
             );
             printChannels(await client.channels.retrieve(server.serverID));
             return;
         }
         if (sub === "delete") {
             await client.servers.delete(requireArg(rest, 0, "server id"));
-            console.log(color("red", "server deleted"));
+            console.log(color(ROOT_ACCENT, "server deleted"));
             return;
         }
         throw new Error(
@@ -543,7 +548,7 @@ async function channelCommand(ctx, args) {
             if (!name) throw new Error("Channel name is required.");
             const channel = await client.channels.create(name, serverID);
             console.log(
-                `${color("red", "created channel")} ${color("red", `#${channel.name}`)} ${color("dim", channel.channelID)}`,
+                `${color(ROOT_ACCENT, "created channel")} ${color(channelAccent(channel), `#${channel.name}`)} ${color("dim", channel.channelID)}`,
             );
             return;
         }
@@ -565,7 +570,7 @@ async function inviteCommand(ctx, args) {
             }
             for (const invite of invites) {
                 console.log(
-                    `${color("red", inviteLink(invite.inviteID))} ${color("dim", `server=${invite.serverID}`)} ${color("dim", `expires=${invite.expires}`)}`,
+                    `${color(inviteAccent(invite.inviteID), inviteLink(invite.inviteID))} ${color("dim", `server=${invite.serverID}`)} ${color("dim", `expires=${invite.expires}`)}`,
                 );
             }
             return;
@@ -581,7 +586,7 @@ async function inviteCommand(ctx, args) {
             const inviteID = parseInviteID(requireArg(rest, 0, "invite id"));
             const permission = await client.invites.redeem(inviteID);
             console.log(
-                `${color("red", "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`,
+                `${color(ROOT_ACCENT, "redeemed invite")} ${color("dim", `for ${permission.resourceType} ${permission.resourceID}`)}`,
             );
             return;
         }
@@ -616,7 +621,7 @@ async function sendCommand(ctx, args) {
         if (!message) throw new Error("Message text is required.");
         await client.messages.group(channelID, message);
         console.log(
-            `${color("red", "sent group message to")} ${color("red", channelID)}`,
+            `${color(ROOT_ACCENT, "sent group message to")} ${color(channelAccent(channelID), channelID)}`,
         );
     });
 }
@@ -631,7 +636,7 @@ async function useChannel(ctx, args) {
         config.lastServer = channel.serverID;
         await writeConfig(ctx.configPath, config);
         console.log(
-            `${color("red", "using")} ${color("red", `#${channel.name}`)} ${color("dim", channel.channelID)}`,
+            `${color(ROOT_ACCENT, "using")} ${color(channelAccent(channel), `#${channel.name}`)} ${color("dim", channel.channelID)}`,
         );
     });
 }
@@ -652,7 +657,7 @@ async function createServerInChat(ctx, client, state, name, rl) {
     config.lastServer = server.serverID;
     await writeConfig(ctx.configPath, config);
     console.log(
-        `${color("red", "created server")} ${color("white", server.name)}`,
+        `${color(ROOT_ACCENT, "created server")} ${color(serverAccent(server.serverID), server.name)}`,
     );
     await refreshBuffers(client, state);
     if (channel) {
@@ -691,7 +696,7 @@ async function createInviteInteractive(ctx, client, state, args, rl) {
             targetUserID: user.userID,
         });
         console.log(
-            `${color("red", "sent invite to")} ${color("white", user.username)}`,
+            `${color(ROOT_ACCENT, "sent invite to")} ${color(userAccent(user.userID), user.username)}`,
         );
         return;
     }
@@ -749,7 +754,7 @@ async function redeemInviteInChat(ctx, client, state, inviteID, preview) {
                   .retrieve(permission.resourceID)
                   .catch(() => []);
     console.log(
-        `${color("red", "joined")} ${color("white", server?.name ?? "server")}`,
+        `${color(ROOT_ACCENT, "joined")} ${color(serverAccent(server?.serverID), server?.name ?? "server")}`,
     );
     debugLog(ctx, "invite.redeem.ok", {
         channelIDs: channels.map((item) => item.channelID),
@@ -789,7 +794,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             renderChatLine(
                 rl,
                 state,
-                `${color("red", "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N  Ctrl-J joins when supported")}`,
+                `${color(ROOT_ACCENT, "system")} invite received\n${formatInvitePreviewBox(preview, inviteID)}\n${color("dim", "join? y/N  Ctrl-J joins when supported")}`,
             );
             state.pendingInviteJoin = { inviteID };
             try {
@@ -801,7 +806,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
                     renderChatLine(
                         rl,
                         state,
-                        `${color("red", "system")} ${color("dim", "invite dismissed")}`,
+                        `${color(ROOT_ACCENT, "system")} ${color("dim", "invite dismissed")}`,
                     );
                     return;
                 }
@@ -817,7 +822,7 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             renderChatLine(
                 rl,
                 state,
-                `${color("red", "system")} ${color("red", err instanceof Error ? err.message : String(err))}`,
+                `${color(ROOT_ACCENT, "system")} ${color(ROOT_ACCENT, err instanceof Error ? err.message : String(err))}`,
             );
         })
         .finally(() => {
@@ -991,7 +996,7 @@ async function listDmRows(client, state, names) {
 function renderDmChoice(row) {
     const unread =
         row.unread > 0
-            ? color("red", `${row.unread} unread`)
+            ? color(ROOT_ACCENT, `${row.unread} unread`)
             : color("dim", "read");
     const when = row.lastAt
         ? color("dim", formatMessageTime(row.lastAt))
@@ -1049,7 +1054,7 @@ async function sendDmInChat(
     renderChatLine(
         rl,
         state,
-        `${color("red", "system")} ${color("white", `DM sent to ${user.username}`)}`,
+        `${color(ROOT_ACCENT, "system")} ${color(userAccent(user.userID), `DM sent to ${user.username}`)}`,
     );
 }
 
@@ -1127,8 +1132,10 @@ async function selectServerByName(ctx, client, state, query, rl) {
 }
 
 async function navigateInChat(ctx, client, state, names, rl) {
-    console.log(`${color("red", "1")}. ${color("white", "channel")}`);
-    console.log(`${color("red", "2")}. ${color("white", "direct message")}`);
+    console.log(`${color(ROOT_ACCENT, "1")}. ${color("white", "channel")}`);
+    console.log(
+        `${color(ROOT_ACCENT, "2")}. ${color("white", "direct message")}`,
+    );
     const answer = await askText(rl, "open");
     if (answer === "1" || answer.toLowerCase() === "channel") {
         await selectChannelInChat(ctx, client, state, rl);
@@ -1155,7 +1162,7 @@ async function chooseServer(client, rl) {
         return null;
     }
     return chooseItem(rl, "server", servers, (server) =>
-        color("red", server.name),
+        color(serverAccent(server.serverID), server.name),
     );
 }
 
@@ -1205,7 +1212,7 @@ async function chooseChannelFromServer(client, server, rl) {
                           "dim",
                           ` - ${members} member${members === 1 ? "" : "s"}`,
                       );
-            return `${color("red", `#${channel.name}`)}${memberText}`;
+            return `${color(channelAccent(channel), `#${channel.name}`)}${memberText}`;
         },
         {
             defaultIndex: defaultChannelIndex(
@@ -1270,7 +1277,7 @@ async function chooseItem(rl, label, items, render, options = {}) {
     for (let i = 0; i < items.length; i++) {
         const marker = i === defaultIndex ? "*" : " ";
         console.log(
-            `${color(marker === "*" ? "red" : "dim", marker)} ${color("red", i + 1)}. ${render(items[i])}`,
+            `${color(marker === "*" ? ROOT_ACCENT : "dim", marker)} ${color(ROOT_ACCENT, i + 1)}. ${render(items[i])}`,
         );
     }
     const answer = await askText(
@@ -1344,7 +1351,7 @@ function printWindows(state) {
         const buffer = state.buffers[i];
         const marker = buffer.id === state.target?.id ? "*" : " ";
         console.log(
-            `${color(marker === "*" ? "red" : "dim", marker)} ${color("red", i + 1)}. ${color(targetAccent(buffer), targetLabel(buffer))}`,
+            `${color(marker === "*" ? ROOT_ACCENT : "dim", marker)} ${color(ROOT_ACCENT, i + 1)}. ${color(targetAccent(buffer), targetLabel(buffer))}`,
         );
     }
 }
@@ -1359,7 +1366,7 @@ async function switchBuffer(ctx, client, state, number) {
     }
     const buffer = state.buffers[number - 1];
     if (!buffer) {
-        console.log(color("red", `No window ${number}.`));
+        console.log(color(ROOT_ACCENT, `No window ${number}.`));
         printWindows(state);
         return;
     }
@@ -1394,11 +1401,16 @@ async function printMembers(client, state) {
         return;
     }
     console.log(
-        `${color("bold", "Members in")} ${color("red", targetLabel(state.target))}`,
+        `${color("bold", "Members in")} ${color(targetAccent(state.target), targetLabel(state.target))}`,
     );
+    const selfID = client.me.user().userID;
     for (const user of users) {
+        const username =
+            user.userID === selfID
+                ? selfName(user.username)
+                : color(userAccent(user.userID), user.username);
         console.log(
-            `  ${color(userAccent(user.userID), user.username)} ${color("dim", `(${shortID(user.userID)})`)}`,
+            `  ${username} ${color("dim", `(${shortID(user.userID)})`)}`,
         );
     }
 }
@@ -1433,7 +1445,17 @@ async function openServerSelector(ctx, client, state, rl) {
                 channels.length === 1
                     ? "1 channel"
                     : `${channels.length} channels`;
-            return `${color(server.serverID === state.target?.serverID ? "white" : "red", `${marker}${server.name}`)} ${color("dim", channelText)}`;
+            const serverText =
+                server.serverID === state.target?.serverID
+                    ? boldColor(
+                          serverAccent(server.serverID),
+                          `${marker}${server.name}`,
+                      )
+                    : color(
+                          serverAccent(server.serverID),
+                          `${marker}${server.name}`,
+                      );
+            return `${serverText} ${color("dim", channelText)}`;
         },
     );
     if (!selected) return;
@@ -1638,7 +1660,7 @@ async function chat(ctx, args) {
             renderChatLine(
                 rl,
                 state,
-                `${color("red", "system")} ${color("dim", `invite detected, type /join ${inviteLink(inviteID)} to inspect it`)}`,
+                `${color(ROOT_ACCENT, "system")} ${color("dim", `invite detected, type /join ${inviteLink(inviteID)} to inspect it`)}`,
             );
         }
         refreshPrompt(rl, state);
@@ -2301,7 +2323,7 @@ function replaceInviteLinkWithPreview(message, inviteID, preview) {
 }
 
 function formatInvitePreviewLine(preview) {
-    return `${color("red", "invite")} ${color("white", preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)}`;
+    return `${color(ROOT_ACCENT, "invite")} ${color(serverAccent(preview.server?.serverID ?? preview.invite?.serverID), preview.server?.name ?? "server")} ${formatInviteChannelSummary(preview.channels)} ${color("dim", `expires ${formatMessageTime(preview.invite.expiration)}`)}`;
 }
 
 function formatInvitePreviewBox(preview, inviteID) {
@@ -2584,7 +2606,7 @@ function channelAccent(channel) {
     const id =
         typeof channel === "string"
             ? channel
-            : (channel?.serverID ?? channel?.id ?? channel?.channelID);
+            : (channel?.id ?? channel?.channelID ?? channel?.serverID);
     return serverAccent(id);
 }
 
@@ -2592,6 +2614,11 @@ function targetAccent(target) {
     if (!target) return "red";
     if (target.type === "dm") return userAccent(target.id);
     return channelAccent(target);
+}
+
+function inviteAccent(inviteID) {
+    if (!inviteID) return ROOT_ACCENT;
+    return paletteAccent(inviteID, TARGET_ACCENTS);
 }
 
 async function saveTarget(ctx, target) {
@@ -2639,7 +2666,11 @@ function renderNotificationLine(
     const message = isDm
         ? `DM message received from ${authorText}`
         : `Channel message received in ${targetText} from ${authorText}`;
-    renderChatLine(rl, state, `${color("red", "system")} ${message}${jump}`);
+    renderChatLine(
+        rl,
+        state,
+        `${color(ROOT_ACCENT, "system")} ${message}${jump}`,
+    );
 }
 
 function restoreActivePrompt(rl, state, line, cursor) {
@@ -2716,7 +2747,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    const targetTone = state.target ? targetAccent(state.target) : "red";
+    const targetTone = state.target ? targetAccent(state.target) : ROOT_ACCENT;
     return `${statusBar(state)} ${selfName(user)} ${color(targetTone, target)}${color("dim", " >")} `;
 }
 
@@ -2725,7 +2756,7 @@ function statusBar(state) {
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
     const content = `${networkIcon(network)} ${formatUnreadCount(unread)}`;
-    const tone = network === "offline" || unread > 0 ? "red" : "dim";
+    const tone = network === "offline" || unread > 0 ? ROOT_ACCENT : "dim";
     return color(tone, `[${content}]`);
 }
 
@@ -2811,38 +2842,38 @@ function renderHeader(state, user, title) {
         ? targetLabel(state.target)
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
-    const targetTone = state.target ? targetAccent(state.target) : "red";
+    const targetTone = state.target ? targetAccent(state.target) : ROOT_ACCENT;
     console.log(
-        `${color(targetTone, title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color("red", host)} ${color("dim", "|")} ${color(targetTone, target)}`,
+        `${color(targetTone, title)} ${color("dim", "|")} ${selfName(username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color(targetTone, target)}`,
     );
 }
 
 function formatStartupMark(version) {
     return [
-        color("red", "██╗      ██╗ ████████╗ ██╗    ██╗"),
-        color("red", "██║      ██║ ██╔═════╝ ╚██╗  ██╔╝"),
-        color("red", "██║      ██║ ██║        ╚██╗██╔╝ "),
-        color("red", "╚██╗    ██╔╝ ██████╗     ╚███╔╝  "),
-        color("red", " ╚██╗  ██╔╝  ██╔══╝      ██╔██╗  "),
-        color("red", "  ╚██╗██╔╝   ██║        ██╔╝╚██╗ "),
-        `${color("red", "   ╚███╔╝    ████████╗ ██╔╝  ╚██╗")} ${color("dim", `v${version}`)}`,
-        color("red", "    ╚══╝     ╚═══════╝ ╚═╝    ╚═╝"),
+        color(ROOT_ACCENT, "██╗      ██╗ ████████╗ ██╗    ██╗"),
+        color(ROOT_ACCENT, "██║      ██║ ██╔═════╝ ╚██╗  ██╔╝"),
+        color(ROOT_ACCENT, "██║      ██║ ██║        ╚██╗██╔╝ "),
+        color(ROOT_ACCENT, "╚██╗    ██╔╝ ██████╗     ╚███╔╝  "),
+        color(ROOT_ACCENT, " ╚██╗  ██╔╝  ██╔══╝      ██╔██╗  "),
+        color(ROOT_ACCENT, "  ╚██╗██╔╝   ██║        ██╔╝╚██╗ "),
+        `${color(ROOT_ACCENT, "   ╚███╔╝    ████████╗ ██╔╝  ╚██╗")} ${color("dim", `v${version}`)}`,
+        color(ROOT_ACCENT, "    ╚══╝     ╚═══════╝ ╚═╝    ╚═╝"),
     ].join("\n");
 }
 
 function printWhoami(client) {
     const user = client.me.user();
     const device = client.me.device();
-    console.log(`${color("red", "username")} ${user.username}`);
-    console.log(`${color("red", "user    ")} ${user.userID}`);
-    console.log(`${color("red", "device  ")} ${device.deviceID}`);
-    console.log(`${color("red", "name    ")} ${device.name}`);
-    console.log(`${color("red", "login   ")} ${device.lastLogin}`);
+    console.log(`${color(ROOT_ACCENT, "username")} ${selfName(user.username)}`);
+    console.log(`${color(ROOT_ACCENT, "user    ")} ${user.userID}`);
+    console.log(`${color(ROOT_ACCENT, "device  ")} ${device.deviceID}`);
+    console.log(`${color(ROOT_ACCENT, "name    ")} ${device.name}`);
+    console.log(`${color(ROOT_ACCENT, "login   ")} ${device.lastLogin}`);
 }
 
 function printUser(user) {
     console.log(
-        `${color("white", user.username)} ${color("dim", "user=")}${user.userID} ${color("dim", "signKey=")}${user.signKey}`,
+        `${color(userAccent(user.userID), user.username)} ${color("dim", "user=")}${user.userID} ${color("dim", "signKey=")}${user.signKey}`,
     );
 }
 
@@ -2852,7 +2883,7 @@ function printServers(servers) {
         return;
     }
     for (const server of servers) {
-        console.log(color("white", server.name));
+        console.log(color(serverAccent(server.serverID), server.name));
     }
 }
 
@@ -2863,14 +2894,16 @@ function printChannels(channels) {
     }
     for (const channel of channels) {
         console.log(
-            `${color("red", `#${channel.name}`)} ${color("dim", channel.channelID)} ${color("dim", `server=${channel.serverID}`)}`,
+            `${color(channelAccent(channel), `#${channel.name}`)} ${color("dim", channel.channelID)} ${color("dim", `server=${channel.serverID}`)}`,
         );
     }
 }
 
 function printInvite(invite) {
     const link = inviteLink(invite.inviteID);
-    console.log(`${color("red", "invite")} ${color("white", link)}`);
+    console.log(
+        `${color(ROOT_ACCENT, "invite")} ${color(inviteAccent(invite.inviteID), terminalLink(link, link))}`,
+    );
     console.log(
         `${color("dim", "expires")} ${invite.expiration ?? invite.expires}`,
     );
@@ -2889,10 +2922,10 @@ function formatInviteChannelSummary(channels) {
     }
     const names = channels
         .slice(0, 3)
-        .map((channel) => `#${channel.name}`)
+        .map((channel) => color(channelAccent(channel), `#${channel.name}`))
         .join(", ");
     const extra = channels.length > 3 ? ` +${channels.length - 3} more` : "";
-    return color("red", `- ${names}${extra}`);
+    return `- ${names}${color("dim", extra)}`;
 }
 
 function playIncomingSound(sound) {
@@ -3051,7 +3084,7 @@ function formatMessageLine({
 }
 
 function selfName(value) {
-    return boldColor("red", value);
+    return boldColor(ROOT_ACCENT, value);
 }
 
 function formatMessageTime(timestamp) {
@@ -3096,23 +3129,23 @@ Once chat is open, type /help for chat commands.
 function printInteractiveHelp() {
     console.log(`${color("bold", "Chat commands")}
 
-${color("red", "/join [server]")}         choose a server, then a channel
-${color("red", "/servers")}               browse your servers and open a channel
-${color("red", "/channels")}              choose a channel
-${color("red", "/user <user>")}           open a DM conversation
-${color("red", "/inbox")}                 show DMs, unread counts, and recent senders
-${color("red", "/dm")}                    alias for /inbox
-${color("red", "/dm <user>")}             open a DM conversation
-${color("red", "/dm <user> <message>")}   send a DM without leaving the current chat
-${color("red", "/to <user>")}             open a DM conversation
-${color("red", "/invite")}                create an invite for the current server
-${color("red", "/invite <user>")}         send an invite link by DM
-${color("red", "/join <invite-link>")}    preview and accept a server invite
-${color("red", "/create")}                create a server and enter #general
-${color("red", "/members")}               list people in the current channel
-${color("red", "/accounts")}              list local users
-${color("red", "/whoami")}                show your login
-${color("red", "/quit")}                  leave chat
+${color(ROOT_ACCENT, "/join [server]")}         enter a server's #general
+${color(ROOT_ACCENT, "/servers")}               browse your servers
+${color(ROOT_ACCENT, "/channels")}              choose a channel
+${color(ROOT_ACCENT, "/user <user>")}           open a DM conversation
+${color(ROOT_ACCENT, "/inbox")}                 show DMs, unread counts, and recent senders
+${color(ROOT_ACCENT, "/dm")}                    alias for /inbox
+${color(ROOT_ACCENT, "/dm <user>")}             open a DM conversation
+${color(ROOT_ACCENT, "/dm <user> <message>")}   send a DM without leaving the current chat
+${color(ROOT_ACCENT, "/to <user>")}             open a DM conversation
+${color(ROOT_ACCENT, "/invite")}                create an invite for the current server
+${color(ROOT_ACCENT, "/invite <user>")}         send an invite link by DM
+${color(ROOT_ACCENT, "/join <invite-link>")}    preview and accept a server invite
+${color(ROOT_ACCENT, "/create")}                create a server and enter #general
+${color(ROOT_ACCENT, "/members")}               list people in the current channel
+${color(ROOT_ACCENT, "/accounts")}              list local users
+${color(ROOT_ACCENT, "/whoami")}                show your login
+${color(ROOT_ACCENT, "/quit")}                  leave chat
 
 Plain text sends to the current channel or DM.`);
 }
@@ -3123,7 +3156,10 @@ main()
     })
     .catch((err) => {
         console.error(
-            color("red", err instanceof Error ? err.message : String(err)),
+            color(
+                ROOT_ACCENT,
+                err instanceof Error ? err.message : String(err),
+            ),
         );
         process.exit(1);
     });

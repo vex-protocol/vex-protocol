@@ -1,0 +1,26 @@
+# Vex CLI theme contract.
+#
+# The current runtime keeps these values as constants in src/vex-chat.js. This
+# file is the portable shape for importing/swapping themes once we add theme
+# loading.
+root: red
+self:
+    accent: root
+    style: bold
+ids:
+    users:
+        palette:
+            - white
+            - yellow
+            - green
+            - cyan
+            - magenta
+    targets:
+        palette:
+            - root
+            - cyan
+            - yellow
+            - magenta
+            - green
+    invites:
+        palette: targets
