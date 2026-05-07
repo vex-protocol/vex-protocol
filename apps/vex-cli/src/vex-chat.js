@@ -24,7 +24,7 @@ const ANSI = {
     reverse: "\x1b[7m",
     yellow: "\x1b[33m",
 };
-const STATUS_SPINNER = ["-", "\\", "|", "/"];
+const STATUS_ACTIVITY_TTL_MS = 5_000;
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -746,7 +746,7 @@ async function enterDm(client, state, user) {
     console.log(
         color(
             "dim",
-            "/user open DM  /dms list  /dm send  /join server  /channels open  /window switch  /help",
+            "/user open DM  /inbox unread  /dm send  /join server  /channels open  /window switch  /help",
         ),
     );
     console.log("");
@@ -760,17 +760,17 @@ async function enterDm(client, state, user) {
     console.log("");
 }
 
-async function openDmSelector(ctx, client, state, names, rl) {
+async function openInbox(ctx, client, state, names, rl) {
     const rows = await listDmRows(client, state, names);
     if (rows.length === 0) {
         console.log(
-            color("dim", "No DMs yet. Use /user <username> to open one."),
+            color("dim", "Inbox empty. Use /user <username> to open a DM."),
         );
         return null;
     }
     const selected = await chooseItem(
         rl,
-        "DM",
+        "inbox",
         rows,
         (row) => renderDmChoice(row),
         {
@@ -822,7 +822,7 @@ function renderDmChoice(row) {
     const unread =
         row.unread > 0
             ? color("yellow", `${row.unread} unread`)
-            : color("dim", "read");
+            : color("green", "read");
     const when = row.lastAt
         ? color("dim", formatMessageTime(row.lastAt))
         : color("dim", "no recent messages");
@@ -1278,7 +1278,7 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     console.log(
         color(
             "dim",
-            "/join server  /servers browse  /channels open  /window switch  /user open DM  /dms list  /dm send",
+            "/join server  /servers browse  /channels open  /window switch  /user open DM  /inbox unread",
         ),
     );
     console.log("");
@@ -1310,9 +1310,9 @@ async function chat(ctx, args) {
         renderedMessageKeys: new Map(),
         serverMemberCache: new Map(),
         status: {
-            activity: "connect",
+            activity: "starting",
             lastActivityAt: Date.now(),
-            spinnerIndex: 0,
+            network: "connecting",
         },
         target: config.lastTarget ?? null,
     };
@@ -1523,12 +1523,7 @@ async function chat(ctx, args) {
                 const name = trimmed.slice(15).trim();
                 await createServerInChat(ctx, client, state, name, rl);
             } else if (trimmed === "/dm") {
-                console.log(
-                    color(
-                        "dim",
-                        "Use /user <username> to open a DM, or /dm <username> <message> to send.",
-                    ),
-                );
+                await openInbox(ctx, client, state, names, rl);
             } else if (trimmed.startsWith("/dm ")) {
                 const [identifier, ...messageParts] = splitWords(
                     trimmed.slice(4),
@@ -1605,8 +1600,8 @@ async function chat(ctx, args) {
                 console.log(
                     color("dim", "Use /nav, then choose a channel or DM."),
                 );
-            } else if (trimmed === "/dms") {
-                await openDmSelector(ctx, client, state, names, rl);
+            } else if (trimmed === "/inbox" || trimmed === "/dms") {
+                await openInbox(ctx, client, state, names, rl);
             } else if (trimmed === "redeem" || trimmed === "/redeem") {
                 await joinInviteInChat(ctx, client, state, "", rl);
             } else if (trimmed.startsWith("redeem ")) {
@@ -2282,28 +2277,55 @@ function promptFor(state) {
 
 function statusBar(state) {
     const status = state.status ?? {};
-    const active = Date.now() - (status.lastActivityAt ?? 0) < 2_500;
-    const spinner = active
-        ? STATUS_SPINNER[status.spinnerIndex % STATUS_SPINNER.length]
-        : " ";
+    const recent =
+        Date.now() - (status.lastActivityAt ?? 0) < STATUS_ACTIVITY_TTL_MS;
     const unread = totalUnreadDms(state);
-    const parts = [
-        `${spinner} ${active ? (status.activity ?? "net") : "idle"}`,
-    ];
+    const network = status.network ?? "online";
+    const parts = [network];
     if (unread > 0) {
-        parts.push(`dm ${unread}`);
+        parts.push(`${unread} unread`);
     }
-    return color(unread > 0 ? "yellow" : "dim", `[${parts.join(" | ")}]`);
+    if (recent && status.activity) {
+        parts.push(status.activity);
+    }
+    const tone = network === "offline" ? "red" : unread > 0 ? "yellow" : "dim";
+    return color(tone, `[${parts.join(" | ")}]`);
 }
 
 function bumpActivity(state, activity = "net") {
     if (!state.status) {
-        state.status = { activity, lastActivityAt: 0, spinnerIndex: 0 };
+        state.status = {
+            activity: "",
+            lastActivityAt: 0,
+            network: "online",
+        };
     }
-    state.status.activity = activity;
+    const mapped = statusActivity(activity);
+    state.status.activity = mapped.activity;
+    if (mapped.network) {
+        state.status.network = mapped.network;
+    }
     state.status.lastActivityAt = Date.now();
-    state.status.spinnerIndex =
-        (state.status.spinnerIndex + 1) % STATUS_SPINNER.length;
+}
+
+function statusActivity(activity) {
+    switch (activity) {
+        case "connect":
+            return { activity: "connecting", network: "connecting" };
+        case "online":
+        case "ready":
+            return { activity: "online", network: "online" };
+        case "offline":
+            return { activity: "offline", network: "offline" };
+        case "mail":
+            return { activity: "checking mail", network: "syncing" };
+        case "recv":
+            return { activity: "received", network: "online" };
+        case "send":
+            return { activity: "sending", network: "online" };
+        default:
+            return { activity, network: null };
+    }
 }
 
 function totalUnreadDms(state) {
@@ -2340,7 +2362,7 @@ function renderHeader(state, user, title) {
     console.log(
         color(
             "dim",
-            "/nav /join /servers /channels /window /user /dms /dm /invite redeem /members /help",
+            "/nav /join /servers /channels /window /user /inbox /dm /invite redeem /members /help",
         ),
     );
 }
@@ -2558,7 +2580,8 @@ ${color("cyan", "/channels")}              choose a channel
 ${color("cyan", "/window")}                list open chats
 ${color("cyan", "/window <number>")}       switch to an open chat
 ${color("cyan", "/user <user>")}           open a DM conversation
-${color("cyan", "/dms")}                   show DMs, unread counts, and recent senders
+${color("cyan", "/inbox")}                 show DMs, unread counts, and recent senders
+${color("cyan", "/dm")}                    alias for /inbox
 ${color("cyan", "/dm <user>")}             open a DM conversation
 ${color("cyan", "/dm <user> <message>")}   send a DM and open that conversation
 ${color("cyan", "/to <user>")}             open a DM conversation

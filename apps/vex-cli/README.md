@@ -21,7 +21,8 @@ Inside the app:
 - `/window` lists open chats
 - `/window <number>` switches to an open chat
 - `/user <username-or-user-id>` opens a DM conversation
-- `/dms` shows DMs, unread counts, and recent senders
+- `/inbox` shows DMs, unread counts, and recent senders
+- `/dm` also opens the inbox
 - `/dm <username-or-user-id>` opens a DM conversation
 - `/dm <username-or-user-id> <message>` sends a DM and opens that conversation
 - `/to <username-or-user-id>` opens a DM conversation

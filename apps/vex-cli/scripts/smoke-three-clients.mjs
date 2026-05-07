@@ -122,12 +122,15 @@ await waitUntil(
 );
 aliceChild.stdin.write(`/dm ${users[1]} hello-bob\n`);
 await waitUntil(() => bobSeen.join("").includes("hello-bob"), "bob dm");
-bobChild.stdin.write("/dms\n");
+bobChild.stdin.write("/inbox\n");
 await waitUntil(
     () => bobSeen.join("").includes(`@${users[0]}`),
     "bob dms list",
 );
-await waitUntil(() => bobSeen.join("").includes("DM number"), "bob dms prompt");
+await waitUntil(
+    () => bobSeen.join("").includes("inbox number"),
+    "bob inbox prompt",
+);
 bobChild.stdin.write("\n");
 
 aliceChild.stdin.write("/create server smoke\n");
