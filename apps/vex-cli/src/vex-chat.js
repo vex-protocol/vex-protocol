@@ -1061,6 +1061,37 @@ function queueInvitePrompt(ctx, client, state, rl, inviteID, preview) {
             state.pendingInvitePrompts.delete(inviteID);
             refreshPrompt(rl, state);
         });
+    return state.promptQueue;
+}
+
+function deferInvitePrompt(state, targetID, inviteID, preview) {
+    if (!targetID || !inviteID || !preview) return;
+    if (!state.deferredInvitePrompts) state.deferredInvitePrompts = new Map();
+    const key = `${targetID}:${inviteID}`;
+    if (state.deferredInvitePrompts.has(key)) return;
+    state.deferredInvitePrompts.set(key, {
+        inviteID,
+        preview,
+        targetID,
+    });
+}
+
+async function flushDeferredInvitePrompts(ctx, client, state, rl, targetID) {
+    if (!state.deferredInvitePrompts || !targetID) return;
+    const prompts = [...state.deferredInvitePrompts.values()].filter(
+        (item) => item.targetID === targetID,
+    );
+    for (const item of prompts) {
+        state.deferredInvitePrompts.delete(`${item.targetID}:${item.inviteID}`);
+        await queueInvitePrompt(
+            ctx,
+            client,
+            state,
+            rl,
+            item.inviteID,
+            item.preview,
+        );
+    }
 }
 
 async function fetchInvitePreview(client, inviteID) {
@@ -1097,6 +1128,7 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     addWindow(state, state.target);
     await saveTarget(ctx, state, state.target);
     await enterDm(client, state, user);
+    await flushDeferredInvitePrompts(ctx, client, state, rl, user.userID);
     return user;
 }
 
@@ -1993,6 +2025,7 @@ async function chat(ctx, args) {
         account,
         avatarMarkers: new Map(),
         buffers: [],
+        deferredInvitePrompts: new Map(),
         deviceRequests: new Map(),
         dms: new Map(),
         host: ctx.clientOptions.host,
@@ -2043,6 +2076,24 @@ async function chat(ctx, args) {
                 : null;
         const authorID = message.authorID;
         if (message.direction === "incoming" && !route.render) {
+            const inviteID = message.decrypted
+                ? extractInviteID(message.message)
+                : null;
+            if (inviteID) {
+                try {
+                    deferInvitePrompt(
+                        state,
+                        route.targetObject?.id ?? dmPeerID(state, message),
+                        inviteID,
+                        await fetchInvitePreview(client, inviteID),
+                    );
+                } catch (err) {
+                    debugLog(ctx, "invite.preview.error", {
+                        error: err,
+                        inviteID,
+                    });
+                }
+            }
             if (route.targetObject) {
                 setPendingJump(state, route.targetObject, message.timestamp);
             }
@@ -2084,6 +2135,24 @@ async function chat(ctx, args) {
             route.isDm &&
             !route.isActiveDm
         ) {
+            const inviteID = message.decrypted
+                ? extractInviteID(message.message)
+                : null;
+            if (inviteID) {
+                try {
+                    deferInvitePrompt(
+                        state,
+                        dmPeerID(state, message),
+                        inviteID,
+                        await fetchInvitePreview(client, inviteID),
+                    );
+                } catch (err) {
+                    debugLog(ctx, "invite.preview.error", {
+                        error: err,
+                        inviteID,
+                    });
+                }
+            }
             playIncomingSound(ctx.sound);
             notifyIncomingMessage(author);
             const avatar = await avatarMarkerForUser(client, state, authorID);
