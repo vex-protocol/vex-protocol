@@ -9,6 +9,7 @@
     "scripts": {
         "vex": "node src/vex-chat.js",
         "start": "node src/vex-chat.js",
+        "dev": "node scripts/dev-watch.mjs",
         "diagnose": "node scripts/diagnose-three-clients.mjs",
         "smoke": "node scripts/smoke-three-clients.mjs"
     },
