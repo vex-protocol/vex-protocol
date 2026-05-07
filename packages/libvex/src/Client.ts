@@ -3474,7 +3474,11 @@ export class Client {
         if (this.isManualCloseInFlight()) {
             return;
         }
-        if (message.direction === "outgoing" && !message.forward) {
+        if (
+            message.direction === "outgoing" &&
+            !message.forward &&
+            message.group === null
+        ) {
             void this.forward(message);
         }
 
@@ -4660,17 +4664,32 @@ export class Client {
         );
         const msgBytes = XUtils.decodeUTF8(payload);
         const myUserID = this.getUser().userID;
-        // Fan-out only to *other* server members. The current account's other
-        // devices receive the same group mail via `forward()` on the outgoing
-        // `message` event (see `onInternalMessage`). Including our own devices
-        // here races X3DH/ephemeral state and often fails silently — which
-        // matched reports of flaky early group messages and missing delivery
-        // while DMs (which never self-target) behaved better.
         const peerUserIDs = [...new Set(userList.map((u) => u.userID))].filter(
             (id) => id !== myUserID,
         );
+        const targetDevices = new Map<string, Device>();
 
-        if (peerUserIDs.length === 0) {
+        if (peerUserIDs.length > 0) {
+            const peerDevices = await this.getMultiUserDeviceList(peerUserIDs);
+            if (peerDevices.length === 0) {
+                throw new Error(
+                    "No devices registered for other channel members — cannot send group message.",
+                );
+            }
+            for (const device of peerDevices) {
+                targetDevices.set(device.deviceID, device);
+            }
+        }
+
+        const ownDevices = await this.fetchUserDeviceListWithBackoff(
+            myUserID,
+            "own",
+        );
+        for (const device of ownDevices) {
+            targetDevices.set(device.deviceID, device);
+        }
+
+        if (targetDevices.size === 0) {
             const dev = this.getDevice();
             const nonce = xMakeNonce();
             this.emitter.emit("message", {
@@ -4690,21 +4709,17 @@ export class Client {
             return;
         }
 
-        const devices = await this.getMultiUserDeviceList(peerUserIDs);
-        if (devices.length === 0) {
-            throw new Error(
-                "No devices registered for other channel members — cannot send group message.",
-            );
-        }
-
-        const stableDevices = [...devices].sort((a, b) =>
+        const stableDevices = [...targetDevices.values()].sort((a, b) =>
             a.deviceID.localeCompare(b.deviceID, "en"),
         );
 
         let failCount = 0;
         let lastErr: unknown;
         for (const device of stableDevices) {
-            const ownerRecord = this.userRecords[device.owner];
+            const ownerRecord =
+                device.owner === myUserID
+                    ? this.getUser()
+                    : this.userRecords[device.owner];
             if (!ownerRecord) {
                 failCount += 1;
                 continue;
