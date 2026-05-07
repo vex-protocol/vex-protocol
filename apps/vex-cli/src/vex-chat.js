@@ -31,6 +31,7 @@ const ANSI = {
     yellow: "\x1b[33m",
 };
 const USER_ACCENTS = ["white", "yellow", "green", "cyan", "magenta"];
+const TARGET_ACCENTS = ["red", "cyan", "yellow", "magenta", "green"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));
@@ -1112,10 +1113,10 @@ async function selectServerByName(ctx, client, state, query, rl) {
               servers,
               query,
               (item) => item.name,
-              (item) => color("red", item.name),
+              (item) => color(serverAccent(item.serverID), item.name),
           )
         : await chooseItem(rl, "server", servers, (item) =>
-              color("red", item.name),
+              color(serverAccent(item.serverID), item.name),
           );
     if (!server) return null;
     const channel = await defaultChannelFromServer(client, server);
@@ -1255,7 +1256,7 @@ function channelSearchText(channel) {
 
 function renderChannelChoice(channel) {
     const server = channel.serverName ? `${channel.serverName}/` : "";
-    return color("red", `${server}#${channel.name}`);
+    return color(channelAccent(channel), `${server}#${channel.name}`);
 }
 
 function normalizeSearch(value) {
@@ -1343,7 +1344,7 @@ function printWindows(state) {
         const buffer = state.buffers[i];
         const marker = buffer.id === state.target?.id ? "*" : " ";
         console.log(
-            `${color(marker === "*" ? "red" : "dim", marker)} ${color("red", i + 1)}. ${color("red", targetLabel(buffer))}`,
+            `${color(marker === "*" ? "red" : "dim", marker)} ${color("red", i + 1)}. ${color(targetAccent(buffer), targetLabel(buffer))}`,
         );
     }
 }
@@ -1550,6 +1551,8 @@ async function chat(ctx, args) {
                 authorID,
                 isDm: route.isDm,
                 target: route.target,
+                targetID: route.targetObject?.id ?? message.group,
+                targetType: route.targetObject?.type,
             });
             refreshPrompt(rl, state);
             return;
@@ -1584,6 +1587,8 @@ async function chat(ctx, args) {
                 authorID,
                 isDm: true,
                 target: route.target,
+                targetID: dmPeerID(state, message),
+                targetType: "dm",
             });
             refreshPrompt(rl, state);
             return;
@@ -1620,6 +1625,8 @@ async function chat(ctx, args) {
                 timestamp: message.timestamp,
                 who: author,
                 whoID: authorID,
+                targetID: route.targetObject?.id ?? message.group,
+                targetType: route.targetObject?.type,
             }),
         );
         if (message.direction === "incoming") {
@@ -2545,13 +2552,41 @@ function color(name, value) {
     return `${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
 }
 
-function userAccent(userID) {
-    if (!userID) return "white";
+function hashID(value) {
+    if (!value) return 0;
     let hash = 0;
-    for (const char of String(userID)) {
+    for (const char of String(value)) {
         hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
     }
-    return USER_ACCENTS[hash % USER_ACCENTS.length];
+    return hash;
+}
+
+function paletteAccent(value, palette) {
+    return palette[hashID(value) % palette.length];
+}
+
+function userAccent(userID) {
+    if (!userID) return "white";
+    return paletteAccent(userID, USER_ACCENTS);
+}
+
+function serverAccent(serverID) {
+    if (!serverID) return "red";
+    return paletteAccent(serverID, TARGET_ACCENTS);
+}
+
+function channelAccent(channel) {
+    const id =
+        typeof channel === "string"
+            ? channel
+            : (channel?.serverID ?? channel?.id ?? channel?.channelID);
+    return serverAccent(id);
+}
+
+function targetAccent(target) {
+    if (!target) return "red";
+    if (target.type === "dm") return userAccent(target.id);
+    return channelAccent(target);
 }
 
 async function saveTarget(ctx, target) {
@@ -2582,15 +2617,23 @@ function renderChatLine(rl, state, line) {
     restoreActivePrompt(rl, state, activeLine, activeCursor);
 }
 
-function renderNotificationLine(rl, state, { author, authorID, isDm, target }) {
+function renderNotificationLine(
+    rl,
+    state,
+    { author, authorID, isDm, target, targetID, targetType },
+) {
     const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
     const authorText = color(
         userAccent(authorID),
         isDm ? `@${author}` : author,
     );
+    const targetText = color(
+        targetType === "dm" ? userAccent(targetID) : channelAccent(targetID),
+        target,
+    );
     const message = isDm
         ? `DM message received from ${authorText}`
-        : `Channel message received in ${color("red", target)} from ${authorText}`;
+        : `Channel message received in ${targetText} from ${authorText}`;
     renderChatLine(rl, state, `${color("red", "system")} ${message}${jump}`);
 }
 
@@ -2668,7 +2711,8 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${color("white", user)} ${color("red", target)}${color("dim", " >")} `;
+    const targetTone = state.target ? targetAccent(state.target) : "red";
+    return `${statusBar(state)} ${color("white", user)} ${color(targetTone, target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -2762,8 +2806,9 @@ function renderHeader(state, user, title) {
         ? targetLabel(state.target)
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
+    const targetTone = state.target ? targetAccent(state.target) : "red";
     console.log(
-        `${color("white", title)} ${color("dim", "|")} ${color("white", username)} ${color("dim", "on")} ${color("red", host)} ${color("dim", "|")} ${color("red", target)}`,
+        `${color(targetTone, title)} ${color("dim", "|")} ${color("white", username)} ${color("dim", "on")} ${color("red", host)} ${color("dim", "|")} ${color(targetTone, target)}`,
     );
 }
 
@@ -2922,6 +2967,12 @@ async function printMessages(client, messages, options = {}) {
                 isDm: !message.group,
                 message: message.message,
                 target,
+                targetID:
+                    message.group ||
+                    (message.direction === "outgoing"
+                        ? message.readerID
+                        : message.authorID),
+                targetType: message.group ? "channel" : "dm",
                 timestamp: message.timestamp,
                 who,
                 whoID: message.authorID,
@@ -2977,12 +3028,17 @@ function formatMessageLine({
     isDm = false,
     message,
     target,
+    targetID,
+    targetType,
     timestamp,
     who,
     whoID,
 }) {
     const whoColor = direction === "outgoing" ? "white" : userAccent(whoID);
-    const targetColor = "red";
+    const targetColor =
+        targetType === "dm" || isDm
+            ? userAccent(targetID)
+            : channelAccent(targetID);
     return `${color("dim", formatMessageTime(timestamp))} ${color(targetColor, target)} ${color(whoColor, who)}${color("dim", ":")} ${message}`;
 }
 
