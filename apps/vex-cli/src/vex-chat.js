@@ -1525,12 +1525,8 @@ async function printMembers(client, state) {
     console.log(
         `${color("bold", "Members in")} ${color(targetAccent(state.target), targetLabel(state.target))}`,
     );
-    state.userAccentMap = buildRoomUserAccentMap(users);
     for (const user of users) {
-        const username = color(
-            userAccentFor(state, user.userID),
-            user.username,
-        );
+        const username = color(userAccent(user.userID), user.username);
         console.log(
             `  ${username} ${color("dim", `(${shortID(user.userID)})`)}`,
         );
@@ -1608,15 +1604,7 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         serverID: channel.serverID,
         serverName: server?.name,
     });
-    const [members, history] = await Promise.all([
-        client.channels.userList(channel.channelID).catch(() => []),
-        client.messages.retrieveGroup(channel.channelID),
-    ]);
-    state.userAccentMap = buildRoomUserAccentMap([
-        ...members,
-        ...history.map((message) => message.authorID),
-        client.me.user().userID,
-    ]);
+    const history = await client.messages.retrieveGroup(channel.channelID);
     clearScreen();
     renderHeader(state, client.me.user(), state.target.label);
     console.log("");
@@ -1627,7 +1615,6 @@ async function enterChannel(ctx, client, state, channel, server = null) {
         await printMessages(client, history.slice(-30), {
             names: historyNameCache(client.me.user()),
             targetLabel: targetLabel(state.target),
-            userAccents: state.userAccentMap,
         });
     }
     console.log("");
@@ -1661,7 +1648,6 @@ async function chat(ctx, args) {
             network: "connecting",
         },
         target: config.lastTarget ?? null,
-        userAccentMap: new Map(),
     };
     if (state.target?.type === "dm") {
         addWindow(state, state.target);
@@ -1769,9 +1755,6 @@ async function chat(ctx, args) {
                 });
             }
         }
-        if (!route.isDm && message.group === state.target?.id) {
-            rememberRoomUserAccent(state, authorID);
-        }
         renderChatLine(
             rl,
             state,
@@ -1781,7 +1764,6 @@ async function chat(ctx, args) {
                 message: renderedMessage,
                 target: route.target,
                 timestamp: message.timestamp,
-                userAccents: state.userAccentMap,
                 who: author,
                 whoID: authorID,
                 targetID: route.targetObject?.id ?? message.group,
@@ -2738,46 +2720,6 @@ function userAccent(userID) {
     return paletteAccent(userID, USER_ACCENTS);
 }
 
-function userAccentFor(state, userID) {
-    if (!userID) return "white";
-    return state?.userAccentMap?.get(userID) ?? userAccent(userID);
-}
-
-function rememberRoomUserAccent(state, userID) {
-    if (!userID) return;
-    state.userAccentMap = buildRoomUserAccentMap([
-        ...(state.userAccentMap?.keys() ?? []),
-        userID,
-    ]);
-}
-
-function buildRoomUserAccentMap(usersOrIDs) {
-    const peers = [...new Set(usersOrIDs.map(userIDFrom).filter(Boolean))].sort(
-        (a, b) => hashID(a) - hashID(b) || a.localeCompare(b),
-    );
-    const used = new Set();
-    return new Map(
-        peers.map((userID) => [userID, uniqueUserAccent(userID, used)]),
-    );
-}
-
-function userIDFrom(value) {
-    if (typeof value === "string") return value;
-    return value?.userID;
-}
-
-function uniqueUserAccent(userID, used) {
-    const preferred = hashID(userID) % USER_ACCENTS.length;
-    for (let offset = 0; offset < USER_ACCENTS.length; offset++) {
-        const accent = USER_ACCENTS[(preferred + offset) % USER_ACCENTS.length];
-        if (!used.has(accent)) {
-            used.add(accent);
-            return accent;
-        }
-    }
-    return USER_ACCENTS[preferred];
-}
-
 function serverAccent(serverID) {
     if (!serverID) return "red";
     return paletteAccent(serverID, TARGET_ACCENTS);
@@ -2833,7 +2775,7 @@ function renderChatLine(rl, state, line) {
 function renderNotificationLine(rl, state, { author, authorID, isDm, target }) {
     const jump = state.pendingJump ? color("dim", " - press Tab to open") : "";
     const authorText = color(
-        userAccentFor(state, authorID),
+        userAccent(authorID),
         isDm ? `@${author}` : author,
     );
     const targetText = color("dim", target);
@@ -2933,7 +2875,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${boldColor(userAccentFor(state, state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${boldColor(userAccent(state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -3070,7 +3012,7 @@ function renderHeader(state, user, title) {
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
     console.log(
-        `${color("dim", title)} ${color("dim", "|")} ${boldColor(userAccentFor(state, user?.userID ?? state.account?.userID), username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
+        `${color("dim", title)} ${color("dim", "|")} ${boldColor(userAccent(user?.userID ?? state.account?.userID), username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
     );
 }
 
@@ -3222,7 +3164,6 @@ async function printMessages(client, messages, options = {}) {
     }
     const names = options.names ?? historyNameCache(client.me.user());
     const targets = options.targets ?? new Map();
-    const userAccents = options.userAccents ?? null;
     for (const message of messages) {
         const target =
             options.targetLabel ??
@@ -3241,7 +3182,6 @@ async function printMessages(client, messages, options = {}) {
                         : message.authorID),
                 targetType: message.group ? "channel" : "dm",
                 timestamp: message.timestamp,
-                userAccents,
                 who,
                 whoID: message.authorID,
             }),
@@ -3296,11 +3236,10 @@ function formatMessageLine({
     message,
     target,
     timestamp,
-    userAccents,
     who,
     whoID,
 }) {
-    const whoText = color(userAccents?.get(whoID) ?? userAccent(whoID), who);
+    const whoText = color(userAccent(whoID), who);
     return `${color("dim", formatMessageTime(timestamp))} ${color("dim", target)} ${whoText}${color("dim", ":")} ${message}`;
 }
 
