@@ -30,9 +30,15 @@ const ANSI = {
     white: "\x1b[37m",
     yellow: "\x1b[33m",
     azure: "\x1b[38;5;39m",
+    brightWhite: "\x1b[38;2;245;245;245m",
     chartreuse: "\x1b[38;5;154m",
     coral: "\x1b[38;5;203m",
+    cream: "\x1b[38;2;217;194;163m",
+    fireRed: "\x1b[38;2;231;0;0m",
+    forestGreen: "\x1b[38;2;43;80;29m",
     gold: "\x1b[38;5;220m",
+    iceBlue: "\x1b[38;2;168;200;223m",
+    incineratorGreen: "\x1b[38;2;145;230;67m",
     indigo: "\x1b[38;5;63m",
     lavender: "\x1b[38;5;141m",
     lime: "\x1b[38;5;118m",
@@ -43,31 +49,29 @@ const ANSI = {
     monokaiPink: "\x1b[38;2;249;38;114m",
     monokaiPurple: "\x1b[38;2;174;129;255m",
     monokaiYellow: "\x1b[38;2;230;219;116m",
+    nightBlack: "\x1b[38;2;10;10;10m",
     orange: "\x1b[38;5;208m",
+    peachPink: "\x1b[38;2;197;105;139m",
     pink: "\x1b[38;5;213m",
     plum: "\x1b[38;5;177m",
+    royalPurple: "\x1b[38;2;42;7;91m",
     sky: "\x1b[38;5;117m",
     steel: "\x1b[38;5;67m",
     teal: "\x1b[38;5;44m",
 };
-const ROOT_ACCENT = "red";
+const ROOT_ACCENT = "#E70000";
 // Mirrors apps/vex-cli/theme.yaml until theme loading becomes configurable.
 const USER_ACCENTS = [
-    "monokaiPink",
-    "monokaiYellow",
-    "monokaiGreen",
-    "monokaiBlue",
-    "monokaiPurple",
-    "monokaiOrange",
-    "mint",
-    "coral",
-    "gold",
-    "lime",
-    "plum",
-    "sky",
-    "chartreuse",
+    "#E70000",
+    "#91e643",
+    "#a8c8df",
+    "#c5698b",
+    "#d9c2a3",
+    "#2a075b",
+    "#2b501d",
+    "#F5F5F5",
 ];
-const TARGET_ACCENTS = ["steel", "azure", "indigo", "teal", "lavender"];
+const TARGET_ACCENTS = ["#a8c8df", "#d9c2a3", "#2b501d", "#2a075b", "#c5698b"];
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 async function main() {
@@ -2699,17 +2703,25 @@ async function serverHasUser(client, serverID, userID) {
 
 function color(name, value) {
     if (!COLOR) return String(value);
-    return `${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
+    return `${colorCode(name)}${String(value)}${ANSI.reset}`;
 }
 
 function boldColor(name, value) {
     if (!COLOR) return String(value);
-    return `${ANSI.bold}${ANSI[name] ?? ""}${String(value)}${ANSI.reset}`;
+    return `${ANSI.bold}${colorCode(name)}${String(value)}${ANSI.reset}`;
 }
 
 function rgbColor({ b, g, r }, value) {
     if (!COLOR) return String(value);
     return `\x1b[38;2;${r};${g};${b}m${String(value)}${ANSI.reset}`;
+}
+
+function colorCode(name) {
+    if (typeof name === "string" && /^#[0-9a-f]{6}$/i.test(name)) {
+        const { b, g, r } = hexToRgb(name);
+        return `\x1b[38;2;${r};${g};${b}m`;
+    }
+    return ANSI[name] ?? "";
 }
 
 async function avatarMarkerForUser(client, state, userID) {
@@ -2748,12 +2760,12 @@ function avatarColorFromBytes(bytes) {
 }
 
 function hashID(value) {
-    if (!value) return 0;
-    let hash = 0;
+    let hash = 2166136261;
     for (const char of String(value)) {
-        hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
     }
-    return hash;
+    return hash >>> 0;
 }
 
 function paletteAccent(value, palette) {
@@ -2762,7 +2774,48 @@ function paletteAccent(value, palette) {
 
 function userAccent(userID) {
     if (!userID) return "white";
-    return paletteAccent(userID, USER_ACCENTS);
+    const hash = hashID(userID);
+    const first = USER_ACCENTS[hash % USER_ACCENTS.length];
+    const second =
+        USER_ACCENTS[(hash >>> 8) % USER_ACCENTS.length] ??
+        USER_ACCENTS[(hash + 1) % USER_ACCENTS.length];
+    const amount = 0.18 + ((hash >>> 16) % 48) / 100;
+    const mixed = mixHex(first, second === first ? "#F5F5F5" : second, amount);
+    return ensureReadableHex(mixed);
+}
+
+function hexToRgb(hex) {
+    const value = hex.replace("#", "");
+    return {
+        b: Number.parseInt(value.slice(4, 6), 16),
+        g: Number.parseInt(value.slice(2, 4), 16),
+        r: Number.parseInt(value.slice(0, 2), 16),
+    };
+}
+
+function rgbToHex({ b, g, r }) {
+    const toHex = (value) =>
+        Math.max(0, Math.min(255, Math.round(value)))
+            .toString(16)
+            .padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function mixHex(first, second, amount) {
+    const a = hexToRgb(first);
+    const b = hexToRgb(second);
+    return rgbToHex({
+        b: a.b + (b.b - a.b) * amount,
+        g: a.g + (b.g - a.g) * amount,
+        r: a.r + (b.r - a.r) * amount,
+    });
+}
+
+function ensureReadableHex(hex) {
+    const rgb = hexToRgb(hex);
+    const luminance = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
+    if (luminance >= 95) return hex;
+    return mixHex(hex, "#F5F5F5", 0.35);
 }
 
 function serverAccent(serverID) {
