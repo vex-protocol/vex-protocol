@@ -430,11 +430,15 @@ async function login(ctx, args) {
 async function loginWithDeviceApproval(ctx, username) {
     const config = await readConfig(ctx.configPath);
     if (config.accounts[username]) {
-        config.lastUsername = username;
-        await writeConfig(ctx.configPath, config);
-        console.log(
-            `${color(ROOT_ACCENT, "using")} ${color(userAccent(config.accounts[username].userID), username)}`,
-        );
+        const { client } = await authenticate(ctx, username);
+        try {
+            console.log(
+                `${color(ROOT_ACCENT, "using")} ${color(userAccent(client.me.user().userID), username)}`,
+            );
+            printWhoami(client);
+        } finally {
+            await client.close().catch(() => {});
+        }
         return;
     }
 
@@ -2485,8 +2489,14 @@ async function authenticate(ctx, explicitUsername) {
     }
     const client = await Client.create(account.privateKey, ctx.clientOptions);
     attachDebugClientEvents(ctx, client, `auth:${username}`);
-    const deviceErr = account.deviceID
-        ? await client.loginWithDeviceKey(account.deviceID)
+    const deviceID = await resolveStoredDeviceID(
+        ctx,
+        client,
+        account,
+        username,
+    );
+    const deviceErr = deviceID
+        ? await client.loginWithDeviceKey(deviceID)
         : new Error("missing device id");
     if (deviceErr && ctx.password) {
         const loginResult = await client.login(username, ctx.password);
@@ -2497,7 +2507,32 @@ async function authenticate(ctx, explicitUsername) {
             `Device-key login failed for ${username}: ${deviceErr.message}. Retry with --password.`,
         );
     }
+    if (deviceID) {
+        account.deviceID = deviceID;
+    }
+    account.userID = client.me.user().userID;
+    account.username = client.me.user().username ?? username;
+    config.accounts[username] = account;
+    await writeConfig(ctx.configPath, config);
     return { account, client, config };
+}
+
+async function resolveStoredDeviceID(ctx, client, account, username) {
+    if (account.deviceID) return account.deviceID;
+    const signKey = client.getKeys().public;
+    const device = await client.devices.retrieve(signKey).catch((err) => {
+        debugLog(ctx, "auth.deviceMigration.error", {
+            error: err,
+            username,
+        });
+        return null;
+    });
+    if (!device?.deviceID) return null;
+    debugLog(ctx, "auth.deviceMigration.ok", {
+        deviceID: device.deviceID,
+        username,
+    });
+    return device.deviceID;
 }
 
 async function authenticateOrRegister(ctx, explicitUsername) {
@@ -3339,14 +3374,14 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${boldColor(userAccent(state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${color("dim", target)} ${boldColor(userAccent(state.account?.userID), user)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
     const status = state.status ?? {};
     const unread = totalUnreadDms(state);
     const network = status.network ?? "online";
-    const content = `${networkIcon(status)} ${formatUnreadCount(unread)}`;
+    const content = `${networkIcon(status)}${formatUnreadCount(unread)}`;
     const tone =
         network === "offline" || unread > 0
             ? ROOT_ACCENT
@@ -3355,7 +3390,7 @@ function statusBar(state) {
                 network === "connecting"
               ? "yellow"
               : "dim";
-    return color(tone, `[${content}]`);
+    return color(tone, content);
 }
 
 function bumpActivity(state, activity = "net") {
@@ -3428,9 +3463,7 @@ function statusActivity(activity) {
 function networkIcon(status) {
     switch (status.network) {
         case "sending":
-            return SPINNER_FRAMES[
-                (status.spinnerFrame ?? 0) % SPINNER_FRAMES.length
-            ];
+            return `${SPINNER_FRAMES[(status.spinnerFrame ?? 0) % SPINNER_FRAMES.length]} `;
         case "connecting":
         case "syncing":
             return "🟡";
