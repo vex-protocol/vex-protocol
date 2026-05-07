@@ -2847,7 +2847,7 @@ function refreshPrompt(rl, state) {
 function promptFor(state) {
     const user = state.account?.username ?? "vex";
     const target = state.target ? targetLabel(state.target) : "no-channel";
-    return `${statusBar(state)} ${color(userAccent(state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
+    return `${statusBar(state)} ${color(userAccentFor(state, state.account?.userID), user)} ${color("dim", target)}${color("dim", " >")} `;
 }
 
 function statusBar(state) {
@@ -2942,7 +2942,7 @@ function renderHeader(state, user, title) {
         : "no chat selected";
     console.log(formatStartupMark(CLI_VERSION));
     console.log(
-        `${color("dim", title)} ${color("dim", "|")} ${color(userAccent(user?.userID ?? state.account?.userID), username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
+        `${color("dim", title)} ${color("dim", "|")} ${color(userAccentFor(state, user?.userID ?? state.account?.userID), username)} ${color("dim", "on")} ${color(ROOT_ACCENT, host)} ${color("dim", "|")} ${color("dim", target)}`,
     );
 }
 
