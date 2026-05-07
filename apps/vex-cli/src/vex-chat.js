@@ -752,8 +752,8 @@ async function channelCommand(ctx, args) {
             return;
         }
         if (sub === "history") {
-            const channelID =
-                rest[0] ?? (await readConfig(ctx.configPath)).lastChannel;
+            const accountState = accountUiState(meta.config, meta.account);
+            const channelID = rest[0] ?? accountState.lastChannel;
             if (!channelID)
                 throw new Error(
                     "Missing channel id. Use vex channel use <channel-id> or pass one.",
@@ -830,12 +830,12 @@ async function groupCommand(ctx, args) {
 }
 
 async function sendCommand(ctx, args) {
-    await withReadyClient(ctx, args, async (client, rest) => {
-        const config = await readConfig(ctx.configPath);
+    await withReadyClient(ctx, args, async (client, rest, meta) => {
+        const accountState = accountUiState(meta.config, meta.account);
         let channelID = rest[0];
         let messageParts = rest.slice(1);
-        if (messageParts.length === 0 && config.lastChannel) {
-            channelID = config.lastChannel;
+        if (messageParts.length === 0 && accountState.lastChannel) {
+            channelID = accountState.lastChannel;
             messageParts = rest;
         }
         if (!channelID)
@@ -853,13 +853,19 @@ async function sendCommand(ctx, args) {
 
 async function useChannel(ctx, args) {
     const channelID = requireArg(args, 0, "channel id");
-    await withReadyClient(ctx, [], async (client) => {
+    await withReadyClient(ctx, [], async (client, _rest, meta) => {
         const channel = await client.channels.retrieveByID(channelID);
         if (!channel) throw new Error(`Channel not found: ${channelID}`);
-        const config = await readConfig(ctx.configPath);
-        config.lastChannel = channel.channelID;
-        config.lastServer = channel.serverID;
-        await writeConfig(ctx.configPath, config);
+        await saveAccountUiState(ctx, meta.account, {
+            lastChannel: channel.channelID,
+            lastServer: channel.serverID,
+            lastTarget: {
+                id: channel.channelID,
+                label: `#${channel.name}`,
+                serverID: channel.serverID,
+                type: "channel",
+            },
+        });
         console.log(
             `${color(ROOT_ACCENT, "using")} ${color(channelAccent(channel), `#${channel.name}`)} ${color("dim", channel.channelID)}`,
         );
@@ -878,9 +884,9 @@ async function createServerInChat(ctx, client, state, name, rl) {
         serverID: server.serverID,
         serverName: server.name,
     });
-    const config = await readConfig(ctx.configPath);
-    config.lastServer = server.serverID;
-    await writeConfig(ctx.configPath, config);
+    await saveAccountUiState(ctx, state.account, {
+        lastServer: server.serverID,
+    });
     console.log(
         `${color(ROOT_ACCENT, "created server")} ${color(serverAccent(server.serverID), server.name)}`,
     );
@@ -892,10 +898,11 @@ async function createServerInChat(ctx, client, state, name, rl) {
 
 async function createInviteInteractive(ctx, client, state, args, rl) {
     const config = await readConfig(ctx.configPath);
+    const accountState = accountUiState(config, state.account);
     let serverID =
         state.target?.type === "channel" && state.target.serverID
             ? state.target.serverID
-            : config.lastServer;
+            : accountState.lastServer;
     if (!serverID) {
         const server = await chooseServer(client, rl);
         if (!server) return;
@@ -1088,7 +1095,7 @@ async function selectDmInChat(ctx, client, state, names, identifier, rl) {
     }
     state.target = { id: user.userID, label: user.username, type: "dm" };
     addWindow(state, state.target);
-    await saveTarget(ctx, state.target);
+    await saveTarget(ctx, state, state.target);
     await enterDm(client, state, user);
     return user;
 }
@@ -1199,9 +1206,20 @@ async function restoreInitialTarget(ctx, client, state, names) {
                 type: "dm",
             };
             addWindow(state, state.target);
-            await saveTarget(ctx, state.target);
+            await saveTarget(ctx, state, state.target);
             await enterDm(client, state, user);
             return true;
+        }
+        if (
+            !state.buffers.some(
+                (buffer) =>
+                    buffer.type === "channel" && buffer.id === target.id,
+            )
+        ) {
+            debugLog(ctx, "target.restore.skip.inaccessible", { target });
+            state.target = null;
+            await saveTarget(ctx, state, null);
+            return false;
         }
         const channel = await client.channels.retrieveByID(target.id);
         if (!channel) return false;
@@ -1228,7 +1246,7 @@ async function restoreInitialTarget(ctx, client, state, names) {
             target,
         });
         state.target = null;
-        await saveTarget(ctx, null);
+        await saveTarget(ctx, state, null);
         return false;
     }
 }
@@ -1937,7 +1955,7 @@ async function enterChannel(ctx, client, state, channel, server = null) {
     ) {
         state.pendingJump = null;
     }
-    await saveTarget(ctx, state.target);
+    await saveTarget(ctx, state, state.target);
     debugLog(ctx, "channel.enter", {
         channelID: channel.channelID,
         channelName: channel.name,
@@ -1970,6 +1988,7 @@ async function chat(ctx, args) {
         username,
     );
     attachDebugClientEvents(ctx, client, `chat:${account.username}`);
+    const accountState = accountUiState(config, account);
     const state = {
         account,
         avatarMarkers: new Map(),
@@ -1989,7 +2008,7 @@ async function chat(ctx, args) {
             lastActivityAt: Date.now(),
             network: "connecting",
         },
-        target: config.lastTarget ?? null,
+        target: accountState.lastTarget ?? null,
     };
     if (state.target?.type === "dm") {
         addWindow(state, state.target);
@@ -2464,10 +2483,10 @@ async function chat(ctx, args) {
 
 async function withReadyClient(ctx, args, fn) {
     const username = (ctx.username ?? undefined) || undefined;
-    const { client } = await authenticate(ctx, username);
+    const { account, client, config } = await authenticate(ctx, username);
     try {
         await connectAndWait(client, ctx, `command:${username ?? "current"}`);
-        await fn(client, args);
+        await fn(client, args, { account, config });
     } finally {
         await client.close().catch(() => {});
     }
@@ -3239,12 +3258,52 @@ function inviteAccent(inviteID) {
     return paletteAccent(inviteID, TARGET_ACCENTS);
 }
 
-async function saveTarget(ctx, target) {
-    const config = await readConfig(ctx.configPath);
-    config.lastTarget = target;
+async function saveTarget(ctx, state, target) {
+    state.target = target;
+    await saveAccountUiState(ctx, state.account, targetToAccountUi(target));
+}
+
+function targetToAccountUi(target) {
+    const patch = { lastTarget: target };
     if (target?.type === "channel") {
-        config.lastChannel = target.id;
-        if (target.serverID) config.lastServer = target.serverID;
+        patch.lastChannel = target.id;
+        if (target.serverID) patch.lastServer = target.serverID;
+    }
+    return patch;
+}
+
+function accountUiState(config, account) {
+    if (!account) return {};
+    const key = account.username?.toLowerCase();
+    const stored = key ? config.accounts?.[key]?.ui : null;
+    if (!stored || typeof stored !== "object") return {};
+    return {
+        lastChannel:
+            typeof stored.lastChannel === "string"
+                ? stored.lastChannel
+                : undefined,
+        lastServer:
+            typeof stored.lastServer === "string"
+                ? stored.lastServer
+                : undefined,
+        lastTarget: isTarget(stored.lastTarget) ? stored.lastTarget : null,
+    };
+}
+
+async function saveAccountUiState(ctx, account, patch) {
+    const config = await readConfig(ctx.configPath);
+    const key = account?.username?.toLowerCase();
+    if (!key || !config.accounts[key]) return;
+    const current = accountUiState(config, config.accounts[key]);
+    config.accounts[key] = {
+        ...config.accounts[key],
+        ui: {
+            ...current,
+            ...patch,
+        },
+    };
+    if (patch.lastTarget === null) {
+        config.accounts[key].ui.lastTarget = null;
     }
     await writeConfig(ctx.configPath, config);
 }
