@@ -1,6 +1,7 @@
 {
     "name": "@vex-chat/cli",
     "version": "0.1.1",
+    "private": true,
     "description": "Terminal client for vex-chat.",
     "type": "module",
     "bin": {
