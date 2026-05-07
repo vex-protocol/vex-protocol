@@ -100,7 +100,7 @@ export const globalLimiter = rateLimit({
  * Strict auth endpoint limiter. Applied per-route to /auth, /register,
  * and /auth/device.
  *
- * 2,500 failed attempts per 15 minutes per IP. Successful logins don't
+ * 50 failed attempts per 15 minutes per IP. Successful logins don't
  * count (`skipSuccessfulRequests`), so a normal user doesn't lock
  * themselves out by fat-fingering a password once. Blocks brute force
  * (CWE-307) without harming UX.
@@ -108,7 +108,7 @@ export const globalLimiter = rateLimit({
 export const authLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 2_500,
+    limit: 50,
     skip: devApiKeySkipsRateLimits,
     skipSuccessfulRequests: true,
     standardHeaders: "draft-7",
@@ -121,14 +121,13 @@ export const authLimiter = rateLimit({
  * upload attempts per minute so an attacker can't force spire to
  * spend CPU/IO on repeated large-body parses.
  *
- * 10,000 uploads per minute per IP — high enough for bursty clients
- * and automation while keeping a hard per-host guardrail before
- * multipart parsing.
+ * 200 uploads per minute per IP — generous for a chat client (rapid-
+ * fire image attachments) but tight enough to shield the disk.
  */
 export const uploadLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 10_000,
+    limit: 200,
     skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 60 * 1000,
