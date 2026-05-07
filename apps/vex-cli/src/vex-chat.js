@@ -3085,10 +3085,11 @@ function selfName(value) {
 function formatMessageTime(timestamp) {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return timestamp;
-    return date.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    const hours = date.getHours();
+    const hour = hours % 12 || 12;
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    const meridiem = hours >= 12 ? "p" : "a";
+    return `${String(hour).padStart(2, "0")}:${minute}${meridiem}`;
 }
 
 function printHelp() {
