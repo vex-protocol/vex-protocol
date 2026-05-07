@@ -29,11 +29,16 @@ const ANSI = {
     reverse: "\x1b[7m",
     white: "\x1b[37m",
     yellow: "\x1b[33m",
+    amber: "\x1b[38;5;214m",
+    blood: "\x1b[38;5;160m",
+    flame: "\x1b[38;5;202m",
+    rose: "\x1b[38;5;204m",
+    violet: "\x1b[38;5;135m",
 };
 const ROOT_ACCENT = "red";
 // Mirrors apps/vex-cli/theme.yaml until theme loading becomes configurable.
 const USER_ACCENTS = ["white", "yellow", "green", "cyan", "magenta"];
-const TARGET_ACCENTS = [ROOT_ACCENT, "cyan", "yellow", "magenta", "green"];
+const TARGET_ACCENTS = ["blood", "flame", "amber", "rose", "violet"];
 
 async function main() {
     const { flags, positionals } = parseArgs(process.argv.slice(2));

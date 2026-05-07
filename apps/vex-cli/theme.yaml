@@ -17,10 +17,10 @@ ids:
             - magenta
     targets:
         palette:
-            - root
-            - cyan
-            - yellow
-            - magenta
-            - green
+            - blood
+            - flame
+            - amber
+            - rose
+            - violet
     invites:
         palette: targets
