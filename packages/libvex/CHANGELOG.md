@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.5.5
+
+### Patch Changes
+
+- [#102](https://github.com/vex-protocol/vex-protocol/pull/102) [`e96dc23`](https://github.com/vex-protocol/vex-protocol/commit/e96dc230dcc53cd2cc011a34ac9b5be83aa02e22) Thanks [@yuki111888](https://github.com/yuki111888)! - Verify X3DH key bundle signed prekeys and one-time prekeys before deriving a new session.
+
 ## 6.5.4
 
 ### Patch Changes
