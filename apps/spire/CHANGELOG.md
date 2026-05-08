@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.10.1
+
+### Patch Changes
+
+- [#100](https://github.com/vex-protocol/vex-protocol/pull/100) [`dfbb3ad`](https://github.com/vex-protocol/vex-protocol/commit/dfbb3ada7e44d0fb1e2a2cf3436c6dad9343d88e) Thanks [@yuki111888](https://github.com/yuki111888)! - Raises the global per-IP rate limit from 3,000 to 150,000 requests per 15 minutes to accommodate high-throughput clients. Operators running earlier versions who saw legitimate clients hitting rate-limit errors should upgrade.
+
 ## 1.10.0
 
 ### Minor Changes
