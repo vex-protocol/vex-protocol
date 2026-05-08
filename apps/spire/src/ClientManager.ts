@@ -108,11 +108,29 @@ export class ClientManager extends EventEmitter {
         return this.device;
     }
 
+    public getDeviceID(): null | string {
+        if (this.failed) {
+            return null;
+        }
+        return this.device?.deviceID ?? null;
+    }
+
     public getUser(): UserRecord {
         if (!this.authed || !this.user) {
             throw new Error("You must be authed before getting user info.");
         }
         return this.user;
+    }
+
+    public getUserID(): null | string {
+        if (this.failed || !this.authed || !this.user) {
+            return null;
+        }
+        return this.user.userID;
+    }
+
+    public hasFailed(): boolean {
+        return this.failed;
     }
 
     public send(msg: BaseMsg, header?: Uint8Array) {

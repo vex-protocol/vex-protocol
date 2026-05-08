@@ -877,6 +877,9 @@ export class Database extends EventEmitter {
             .selectAll()
             .where("recipient", "=", deviceID)
             .where("time", ">=", cutoff)
+            .orderBy("time", "asc")
+            .orderBy("sender", "asc")
+            .orderBy("mailType", "asc")
             .execute();
         const rows: MailSQL[] = rawRows.map(toMailSQL);
 
