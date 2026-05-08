@@ -132,3 +132,24 @@ export const uploadLimiter = rateLimit({
     standardHeaders: "draft-7",
     windowMs: 60 * 1000,
 });
+
+/**
+ * Key-bundle retrieval dispenses OTKs, so it gets its own tighter bucket keyed
+ * by authenticated caller and target device. This makes OTK-drain attempts hit
+ * a per-pair budget without penalizing unrelated senders.
+ */
+export const keyBundleLimiter = rateLimit({
+    keyGenerator: (req) => {
+        const caller =
+            req.user?.userID ??
+            ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "");
+        const target =
+            typeof req.params["id"] === "string" ? req.params["id"] : "unknown";
+        return `${caller}:${target}`;
+    },
+    legacyHeaders: false,
+    limit: 30,
+    skip: devApiKeySkipsRateLimits,
+    standardHeaders: "draft-7",
+    windowMs: 15 * 60 * 1000,
+});

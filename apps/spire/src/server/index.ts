@@ -42,7 +42,7 @@ import {
     hasPermission,
     userHasPermission,
 } from "./permissions.ts";
-import { globalLimiter } from "./rateLimit.ts";
+import { globalLimiter, keyBundleLimiter } from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -620,18 +620,23 @@ export const initApp = (
         }
     });
 
-    api.post("/device/:id/keyBundle", protect, async (req, res) => {
-        try {
-            const keyBundle = await db.getKeyBundle(getParam(req, "id"));
-            if (keyBundle) {
-                res.send(msgpack.encode(keyBundle));
-            } else {
-                res.sendStatus(404);
+    api.post(
+        "/device/:id/keyBundle",
+        protect,
+        keyBundleLimiter,
+        async (req, res) => {
+            try {
+                const keyBundle = await db.getKeyBundle(getParam(req, "id"));
+                if (keyBundle) {
+                    res.send(msgpack.encode(keyBundle));
+                } else {
+                    res.sendStatus(404);
+                }
+            } catch {
+                res.sendStatus(500);
             }
-        } catch {
-            res.sendStatus(500);
-        }
-    });
+        },
+    );
 
     api.post("/device/:id/mail", protect, async (req, res) => {
         const deviceDetails = req.device;

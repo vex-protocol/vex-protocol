@@ -18,6 +18,7 @@ export default defineConfig({
                         "src/__tests__/codec.test.ts",
                         "src/__tests__/ratchet.test.ts",
                         "src/__tests__/retention.test.ts",
+                        "src/__tests__/verifyKeyBundle.test.ts",
                     ],
                     name: "unit",
                     testTimeout: 10_000,
