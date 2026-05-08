@@ -1,5 +1,13 @@
 # @vex-chat/libvex
 
+## 6.5.4
+
+### Patch Changes
+
+- [#111](https://github.com/vex-protocol/vex-protocol/pull/111) [`73720f1`](https://github.com/vex-protocol/vex-protocol/commit/73720f1fed87420e6febad5cad75332ac6604f79) Thanks [@yuki111888](https://github.com/yuki111888)! - Recover realtime WebSocket connections when the underlying socket reaches CLOSING or CLOSED without a reliable close event.
+
+- [#107](https://github.com/vex-protocol/vex-protocol/pull/107) [`5eb8454`](https://github.com/vex-protocol/vex-protocol/commit/5eb8454225d23068b0e3e3f78142d17f51efc7b5) Thanks [@yuki111888](https://github.com/yuki111888)! - Verify X3DH key bundle signed prekeys and one-time prekeys before deriving a new session.
+
 ## 6.5.3
 
 ### Patch Changes

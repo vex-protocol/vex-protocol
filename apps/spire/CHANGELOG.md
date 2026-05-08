@@ -1,5 +1,13 @@
 # @vex-chat/spire
 
+## 1.10.3
+
+### Patch Changes
+
+- [#107](https://github.com/vex-protocol/vex-protocol/pull/107) [`5eb8454`](https://github.com/vex-protocol/vex-protocol/commit/5eb8454225d23068b0e3e3f78142d17f51efc7b5) Thanks [@yuki111888](https://github.com/yuki111888)! - Reject inbound mail whose sender, author, recipient, or reader metadata does not match the authenticated device and recipient owner.
+
+- [#107](https://github.com/vex-protocol/vex-protocol/pull/107) [`5eb8454`](https://github.com/vex-protocol/vex-protocol/commit/5eb8454225d23068b0e3e3f78142d17f51efc7b5) Thanks [@yuki111888](https://github.com/yuki111888)! - Revalidate device tokens against current device state, make mail retention configurable, and rate-limit key-bundle retrieval.
+
 ## 1.10.2
 
 ### Patch Changes
