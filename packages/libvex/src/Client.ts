@@ -352,18 +352,6 @@ import { uuidToUint8 } from "./utils/uint8uuid.js";
 const _protocolMsgRegex = /��\w+:\w+��/g;
 
 /**
- * Permission is a permission to a resource.
- *
- * Common fields:
- * - `permissionID`: unique permission row ID
- * - `userID`: user receiving this grant
- * - `resourceID`: target server/channel/etc.
- * - `resourceType`: type string for the resource
- * - `powerLevel`: authorization level
- */
-export type { Permission } from "@vex-chat/types";
-
-/**
  * @ignore
  */
 export interface Channels {
@@ -378,27 +366,6 @@ export interface Channels {
     /** Lists users currently visible in a channel. */
     userList: (channelID: string) => Promise<User[]>;
 }
-
-/**
- * Device record associated with a user account.
- *
- * Common fields:
- * - `deviceID`: unique device identifier
- * - `owner`: owning user ID
- * - `signKey`: signing public key
- * - `name`: user-facing device name
- * - `lastLogin`: last login timestamp string
- * - `deleted`: soft-delete flag
- */
-export type { Device } from "@vex-chat/types";
-
-/**
- * Public passkey record returned by `client.passkeys.list()` and
- * `client.passkeys.finishRegistration()`. Server-private fields
- * (credential ID, public key, COSE algorithm, signature counter) are
- * never exposed.
- */
-export type { Passkey } from "@vex-chat/types";
 
 /**
  * ClientOptions are the options you can pass into the client.
@@ -437,7 +404,40 @@ export interface ClientOptions {
     unsafeHttp?: boolean;
 }
 
+/**
+ * Permission is a permission to a resource.
+ *
+ * Common fields:
+ * - `permissionID`: unique permission row ID
+ * - `userID`: user receiving this grant
+ * - `resourceID`: target server/channel/etc.
+ * - `resourceType`: type string for the resource
+ * - `powerLevel`: authorization level
+ */
+export type { Permission } from "@vex-chat/types";
+
 export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
+
+/**
+ * Device record associated with a user account.
+ *
+ * Common fields:
+ * - `deviceID`: unique device identifier
+ * - `owner`: owning user ID
+ * - `signKey`: signing public key
+ * - `name`: user-facing device name
+ * - `lastLogin`: last login timestamp string
+ * - `deleted`: soft-delete flag
+ */
+export type { Device } from "@vex-chat/types";
+
+/**
+ * Public passkey record returned by `client.passkeys.list()` and
+ * `client.passkeys.finishRegistration()`. Server-private fields
+ * (credential ID, public key, COSE algorithm, signature counter) are
+ * never exposed.
+ */
+export type { Passkey } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -558,6 +558,29 @@ export interface Files {
 }
 
 /**
+ * @ignore
+ */
+export interface Invites {
+    /** Creates an invite for a server and duration. */
+    create: (serverID: string, duration: string) => Promise<Invite>;
+    /** Redeems an invite and returns the created permission grant. */
+    redeem: (inviteID: string) => Promise<Permission>;
+    /** Lists active invites for a server. */
+    retrieve: (serverID: string) => Promise<Invite[]>;
+}
+
+/**
+ * Keys are a pair of ed25519 public and private keys,
+ * encoded as hex strings.
+ */
+export interface Keys {
+    /** Secret Ed25519 key as hex. Store securely. */
+    private: string;
+    /** Public Ed25519 key as hex. */
+    public: string;
+}
+
+/**
  * Channel is a chat channel on a server.
  *
  * Common fields:
@@ -581,29 +604,6 @@ export type { Server } from "@vex-chat/types";
  * Combined server + channels payload used for fast UI bootstrap.
  */
 export type { ServerChannelBootstrap } from "@vex-chat/types";
-
-/**
- * @ignore
- */
-export interface Invites {
-    /** Creates an invite for a server and duration. */
-    create: (serverID: string, duration: string) => Promise<Invite>;
-    /** Redeems an invite and returns the created permission grant. */
-    redeem: (inviteID: string) => Promise<Permission>;
-    /** Lists active invites for a server. */
-    retrieve: (serverID: string) => Promise<Invite[]>;
-}
-
-/**
- * Keys are a pair of ed25519 public and private keys,
- * encoded as hex strings.
- */
-export interface Keys {
-    /** Secret Ed25519 key as hex. Store securely. */
-    private: string;
-    /** Public Ed25519 key as hex. */
-    public: string;
-}
 
 /**
  * @ignore
@@ -752,6 +752,59 @@ export interface RetryRequest {
     mailID: string;
     /** Origin of the retry signal. */
     source: "decrypt_failure" | "server_notify";
+}
+
+function compareInboxEntries(
+    a: [Uint8Array, MailWS, string],
+    b: [Uint8Array, MailWS, string],
+): number {
+    const timeCmp = a[2].localeCompare(b[2]);
+    if (timeCmp !== 0) {
+        return timeCmp;
+    }
+
+    const aMail = a[1];
+    const bMail = b[1];
+    if (aMail.sender !== bMail.sender) {
+        return aMail.sender.localeCompare(bMail.sender, "en");
+    }
+
+    const typeCmp = aMail.mailType - bMail.mailType;
+    if (typeCmp !== 0) {
+        return typeCmp;
+    }
+
+    if (
+        aMail.mailType === MailType.subsequent &&
+        bMail.mailType === MailType.subsequent
+    ) {
+        const aHeader = tryDecodeRatchetHeader(aMail.extra);
+        const bHeader = tryDecodeRatchetHeader(bMail.extra);
+        if (aHeader && bHeader) {
+            const dhCmp = XUtils.encodeHex(aHeader.dhPub).localeCompare(
+                XUtils.encodeHex(bHeader.dhPub),
+                "en",
+            );
+            if (dhCmp !== 0) {
+                return dhCmp;
+            }
+            const pnCmp = aHeader.pn - bHeader.pn;
+            if (pnCmp !== 0) {
+                return pnCmp;
+            }
+            return aHeader.n - bHeader.n;
+        }
+    }
+
+    return aMail.nonce.toString().localeCompare(bMail.nonce.toString(), "en");
+}
+
+function tryDecodeRatchetHeader(extra: Uint8Array) {
+    try {
+        return decodeRatchetHeader(extra);
+    } catch {
+        return null;
+    }
 }
 
 /** Zod schema matching the {@link Message} interface for forwarded-message decode. */
@@ -3007,7 +3060,7 @@ export class Client {
             const rawInbox = z
                 .array(mailInboxEntry)
                 .parse(msgpack.decode(mailBuffer));
-            const inbox = rawInbox.sort((a, b) => b[2].localeCompare(a[2]));
+            const inbox = rawInbox.sort(compareInboxEntries);
 
             if (libvexDebugDmEnabled()) {
                 const did = (() => {
@@ -3052,8 +3105,9 @@ export class Client {
                     fetchErr,
                 );
             }
+        } finally {
+            this.fetchingMail = false;
         }
-        this.fetchingMail = false;
     }
 
     private async getMessageHistory(userID: string): Promise<Message[]> {
@@ -3210,7 +3264,6 @@ export class Client {
             }
             case "mail":
                 await this.getMail();
-                this.fetchingMail = false;
                 break;
             case "permission":
                 this.emitter.emit(
@@ -3647,7 +3700,6 @@ export class Client {
             try {
                 await this.getMail();
                 count++;
-                this.fetchingMail = false;
 
                 if (count > 10) {
                     void this.negotiateOTK();
@@ -4227,7 +4279,9 @@ export class Client {
                                     },
                                 );
                             }
-                            healSession();
+                            if (failureCount >= 2) {
+                                healSession();
+                            }
                             if (failureCount === 1) {
                                 this.emitter.emit("retryRequest", {
                                     mailID: mail.mailID,

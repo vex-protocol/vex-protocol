@@ -39,6 +39,7 @@ const WS_DELIVERY_ENV = "SPIRE_STRESS_WS_DELIVERY_MS";
 const WS_REQUIRED_RATIO_ENV = "SPIRE_STRESS_WS_REQUIRED_RATIO";
 const WS_CI_OFF_ENV = "SPIRE_STRESS_WS_CI";
 const WS_CI_FACTOR_ENV = "SPIRE_STRESS_WS_CI_FACTOR";
+const WS_SCALE_ENV = "SPIRE_STRESS_WS_SCALE";
 const WS_SAMPLES_ENV = "SPIRE_STRESS_WS_SAMPLES";
 
 const DEFAULT_WS_DELIVERY_MS = 25_000;
@@ -49,6 +50,9 @@ const DEFAULT_WS_DELIVERY_MS = 25_000;
  */
 export function postBurstWsTimeoutMs(totalClients: number): number {
     const base = rawWsDeliveryFloorMs();
+    if (process.env[WS_SCALE_ENV]?.trim() === "0") {
+        return withStressWsCiBudget(base);
+    }
     const scaled = 28_000 + Math.max(0, Math.min(32, totalClients - 1)) * 4_500;
     return withStressWsCiBudget(Math.max(base, scaled));
 }
@@ -463,7 +467,13 @@ async function verifyDmRingWsDelivery(
                 },
             },
         );
-        await waitDm;
+        try {
+            await waitDm;
+        } catch {
+            // Recorded above as a WS delivery facet miss. Keep the stress run
+            // moving so later walls/scenarios show whether this is isolated or
+            // sustained degradation.
+        }
     }
 }
 
@@ -542,7 +552,6 @@ async function verifyGroupAllClientsWsDelivery(
                 touchCtx(phase, burst, senderIndex),
                 err,
             );
-            throw err;
         }
     }
 }
