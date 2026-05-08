@@ -83,14 +83,14 @@ const keyByIp = (req: Request): string => ipKeyGenerator(req.ip ?? "");
 /**
  * Global per-IP limiter. Applied app-wide via `api.use(globalLimiter)`.
  *
- * 3000 requests per 15 minutes per client IP. A human chatting via a
- * browser or the libvex client won't come close; a single-host DoS
- * gets throttled quickly.
+ * 150,000 requests per 15 minutes per client IP. This leaves room for
+ * high-throughput clients and algorithmic applications while still
+ * putting a ceiling on runaway single-host traffic.
  */
 export const globalLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
-    limit: 3000,
+    limit: 150_000,
     skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
