@@ -3291,6 +3291,27 @@ export class Client {
         }
     }
 
+    private handleTerminalSocketState(reason: string): boolean {
+        const { readyState } = this.socket;
+        if (readyState !== 2 && readyState !== 3) {
+            return false;
+        }
+        if (this.isManualCloseInFlight()) {
+            return true;
+        }
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
+        debugLibvexDm("websocket-terminal-state", {
+            readyState,
+            reason,
+        });
+        this.emitter.emit("disconnect");
+        this.scheduleReconnect();
+        return true;
+    }
+
     // ── Passkeys ────────────────────────────────────────────────────────
 
     /**
@@ -3348,6 +3369,7 @@ export class Client {
                     this.socket.send(new TextEncoder().encode(authMsg));
                 } catch (err: unknown) {
                     if (err instanceof WebSocketNotOpenError) {
+                        this.handleTerminalSocketState("auth-open");
                         return;
                     }
                     throw err;
@@ -3581,6 +3603,9 @@ export class Client {
     }
 
     private ping() {
+        if (this.handleTerminalSocketState("ping")) {
+            return;
+        }
         if (!this.isAlive) {
             // Previous ping went unanswered — the WebSocket is half-open
             // (e.g., the network stack silently dropped the flow without a
@@ -3599,6 +3624,7 @@ export class Client {
             } catch {
                 // socket may already be CLOSING/CLOSED; ignore.
             }
+            this.scheduleReconnect();
             return;
         }
         this.setAlive(false);
