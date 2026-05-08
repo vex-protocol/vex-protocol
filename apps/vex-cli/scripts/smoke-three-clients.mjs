@@ -1,9 +1,12 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "../../..");
+const execFileAsync = promisify(execFile);
+const cliEntry = path.join(root, "apps/vex-cli/src/vex-chat.js");
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "vex-cli-smoke-"));
 const devKey = process.env.DEV_API_KEY ?? "vex-cli-smoke";
 const targetArgs = process.env.VEX_CHAT_HOST
@@ -18,21 +21,19 @@ const common = [
     dataDir,
 ];
 
+await buildWorkspaceDeps();
+
 function run(args, opts = {}) {
     return new Promise((resolve, reject) => {
-        const child = spawn(
-            "pnpm",
-            ["--filter", "@vex-chat/cli", "start", "--", ...common, ...args],
-            {
-                cwd: root,
-                env: {
-                    ...process.env,
-                    DEV_API_KEY: devKey,
-                    NODE_ENV: process.env.NODE_ENV ?? "test",
-                },
-                stdio: opts.stdio ?? ["pipe", "pipe", "pipe"],
+        const child = spawn(process.execPath, [cliEntry, ...common, ...args], {
+            cwd: root,
+            env: {
+                ...process.env,
+                DEV_API_KEY: devKey,
+                NODE_ENV: process.env.NODE_ENV ?? "test",
             },
-        );
+            stdio: opts.stdio ?? ["pipe", "pipe", "pipe"],
+        });
         let stdout = "";
         let stderr = "";
         child.stdout?.on("data", (chunk) => {
@@ -56,6 +57,23 @@ function run(args, opts = {}) {
         });
         opts.onChild?.(child);
     });
+}
+
+async function buildWorkspaceDeps() {
+    await execFileAsync(
+        "pnpm",
+        [
+            "--filter",
+            "@vex-chat/types",
+            "--filter",
+            "@vex-chat/crypto",
+            "--filter",
+            "@vex-chat/libvex",
+            "--if-present",
+            "build",
+        ],
+        { cwd: root, env: process.env },
+    );
 }
 
 const suffix = Date.now().toString(36);
@@ -114,6 +132,7 @@ const caraReady = waitFor((resolve) => {
     });
 });
 await Promise.all([aliceReady, bobReady, caraReady]);
+await sleep(500);
 
 bobChild.stdin.write(`/dm ${users[0]}\n`);
 await waitUntil(
@@ -244,4 +263,8 @@ async function waitUntil(predicate, label) {
             `bob: ${bobSeen.join("").slice(-500)}\n` +
             `cara: ${caraSeen.join("").slice(-500)}`,
     );
+}
+
+async function sleep(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
 }
