@@ -112,6 +112,12 @@ jobs:
               shell: bash
               run: sleep 8
 
+            - name: Run vex-cli smoke test
+              if: matrix.crypto == 'tweetnacl'
+              env:
+                  DEV_API_KEY: ${{ env.DEV_API_KEY }}
+              run: pnpm --filter @vex-chat/cli smoke
+
             - name: Run integration CLI (all scenarios, one stack)
               shell: bash
               working-directory: apps/spire

@@ -8,7 +8,8 @@
 [![Type Coverage](https://img.shields.io/badge/dynamic/json?style=flat-square&label=type-coverage&prefix=%E2%89%A5&suffix=%25&query=$.typeCoverage.atLeast&url=https://raw.githubusercontent.com/vex-protocol/vex-protocol/master/packages/libvex/package.json&color=3178c6&logo=typescript)](https://github.com/plantain-00/type-coverage)
 [![Node](https://img.shields.io/node/v/@vex-chat/libvex?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
-[![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/libvex)](https://socket.dev/npm/package/@vex-chat/libvex)
+[![npm audit](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/npm-audit.yml?branch=master&style=flat-square&logo=npm&label=npm%20audit)](https://github.com/vex-protocol/vex-protocol/actions/workflows/npm-audit.yml)
+[![Socket](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/socket.yml?branch=master&style=flat-square&label=Socket)](https://github.com/vex-protocol/vex-protocol/actions/workflows/socket.yml)
 
 Reference TypeScript client for the [Vex](https://vex.wtf) protocol. Use it to build a chat client, a bot, or between two clients that need encrypted comms via [spire](https://github.com/vex-protocol/vex-protocol/tree/master/apps/spire) server.
 

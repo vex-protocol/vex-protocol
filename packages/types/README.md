@@ -9,7 +9,8 @@
 [![Node](https://img.shields.io/node/v/@vex-chat/types?style=flat-square&color=339933&logo=nodedotjs)](./package.json)
 [![Bundle](https://deno.bundlejs.com/badge?q=@vex-chat/types&treeshake=[*])](https://bundlejs.com/?q=@vex-chat/types&treeshake=[*])
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/vex-protocol?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
-[![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/types)](https://socket.dev/npm/package/@vex-chat/types)
+[![npm audit](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/npm-audit.yml?branch=master&style=flat-square&logo=npm&label=npm%20audit)](https://github.com/vex-protocol/vex-protocol/actions/workflows/npm-audit.yml)
+[![Socket](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/socket.yml?branch=master&style=flat-square&label=Socket)](https://github.com/vex-protocol/vex-protocol/actions/workflows/socket.yml)
 
 Wire protocol types for the [Vex](https://vex.wtf) encrypted chat platform. Used by both the server and client so they speak the same shapes.
 
