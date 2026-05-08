@@ -2,8 +2,7 @@ name: Spire integration CLI
 
 # Headless Spire integration tests (`integration:cli`): one Docker Compose stack
 # per crypto profile; all scenarios run in series on that instance (fresh 4-client
-# harness each scenario — lighter on GHA runners). FIPS integration is tracked
-# separately in VEX-113 while that profile's realtime path is unstable.
+# harness each scenario — lighter on GHA runners). Two jobs (tweetnacl + fips).
 
 on:
     pull_request:
@@ -26,7 +25,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                crypto: [tweetnacl]
+                crypto: [tweetnacl, fips]
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
