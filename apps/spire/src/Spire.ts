@@ -412,10 +412,7 @@ export class Spire extends EventEmitter {
                     );
 
                     client.on("fail", () => {
-                        const idx = this.clients.indexOf(client);
-                        if (idx !== -1) {
-                            this.clients.splice(idx, 1);
-                        }
+                        this.removeClient(client);
                     });
 
                     client.on("authed", () => {
@@ -989,31 +986,54 @@ export class Spire extends EventEmitter {
         data?: unknown,
         deviceID?: string,
     ): void {
-        // Snapshot the array so that a synchronous `fail` → splice inside
-        // client.send() doesn't corrupt the iteration.
+        const msg: NotifyMsg = {
+            data,
+            event,
+            transmissionID,
+            type: "notify",
+        };
+
+        // Snapshot the array so that a synchronous fail/prune inside send
+        // cannot corrupt the iteration. Each client is isolated so one stale
+        // manager cannot abort delivery to later recipients.
         const snapshot = this.clients.slice();
         for (const client of snapshot) {
-            if (deviceID) {
-                if (client.getDevice().deviceID === deviceID) {
-                    const msg: NotifyMsg = {
-                        data,
-                        event,
-                        transmissionID,
-                        type: "notify",
-                    };
+            try {
+                if (client.hasFailed()) {
+                    this.removeClient(client);
+                    continue;
+                }
+
+                if (deviceID) {
+                    const currentDeviceID = client.getDeviceID();
+                    if (currentDeviceID === null) {
+                        this.removeClient(client);
+                        continue;
+                    }
+                    if (currentDeviceID === deviceID) {
+                        client.send(msg);
+                    }
+                    continue;
+                }
+
+                const currentUserID = client.getUserID();
+                if (currentUserID === null) {
+                    this.removeClient(client);
+                    continue;
+                }
+                if (currentUserID === userID) {
                     client.send(msg);
                 }
-            } else {
-                if (client.getUser().userID === userID) {
-                    const msg: NotifyMsg = {
-                        data,
-                        event,
-                        transmissionID,
-                        type: "notify",
-                    };
-                    client.send(msg);
-                }
+            } catch (_err: unknown) {
+                this.removeClient(client);
             }
+        }
+    }
+
+    private removeClient(client: ClientManager): void {
+        const idx = this.clients.indexOf(client);
+        if (idx !== -1) {
+            this.clients.splice(idx, 1);
         }
     }
 

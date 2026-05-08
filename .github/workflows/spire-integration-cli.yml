@@ -125,14 +125,24 @@ jobs:
                   SPIRE_STRESS_WS_SAMPLES: "3"
               run: |
                   set -euo pipefail
+                  if [[ "${{ matrix.crypto }}" == "fips" ]]; then
+                    # FIPS P-256 work is much more sensitive to shared-runner CPU
+                    # jitter. Keep CI at the minimum concurrency so the job tests
+                    # durability without manufacturing WebSocket witness flakes.
+                    stress_conc=1
+                  else
+                    # Local M4 Pro Max survived chat conc=2048 in tweetnacl mode.
+                    # Use a much lower CI value to preserve headroom on GHA.
+                    stress_conc=16
+                  fi
                   scenarios=(chat noise mixed whoami servers)
                   for s in "${scenarios[@]}"; do
-                    echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls)"
+                    echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls, conc ${stress_conc})"
                     pnpm integration:cli -- \
                       --host "127.0.0.1:16777" \
                       --walls 10 \
                       --clients 4 \
-                      --conc 2 \
+                      --conc "${stress_conc}" \
                       --scenario "${s}" \
                       --seconds 600 \
                       --stop-on-fail

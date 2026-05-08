@@ -5,9 +5,10 @@
  */
 
 import type { SpireOptions } from "../Spire.ts";
-import type { PreKeysWS } from "@vex-chat/types";
+import type { MailWS, PreKeysWS } from "@vex-chat/types";
 
 import { XUtils } from "@vex-chat/crypto";
+import { MailType } from "@vex-chat/types";
 
 import * as uuid from "uuid";
 import { describe, expect, it, vi } from "vitest";
@@ -142,6 +143,81 @@ describe("Database", () => {
                         try {
                             const result = await provider.getPreKeys(deviceID);
                             expect(result).toBeNull();
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
+
+    describe("retrieveMail", () => {
+        it("returns queued mail in send order for logged-out batch drains", async () => {
+            expect.assertions(1);
+
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const mail = (
+                                mailID: string,
+                                time: string,
+                                nonce: string,
+                            ) => ({
+                                authorID: userID,
+                                cipher: "01",
+                                extra: "02",
+                                forward: 0,
+                                group: null,
+                                header: "03",
+                                mailID,
+                                mailType: MailType.initial,
+                                nonce,
+                                readerID: userID,
+                                recipient: deviceID,
+                                sender: "sender-a",
+                                time,
+                            });
+
+                            await provider["db"]
+                                .insertInto("mail")
+                                .values([
+                                    mail(
+                                        "00000000-0000-0000-0000-000000000003",
+                                        "2026-05-07T12:00:02.000Z",
+                                        "06",
+                                    ),
+                                    mail(
+                                        "00000000-0000-0000-0000-000000000001",
+                                        "2026-05-07T12:00:00.000Z",
+                                        "04",
+                                    ),
+                                    mail(
+                                        "00000000-0000-0000-0000-000000000002",
+                                        "2026-05-07T12:00:01.000Z",
+                                        "05",
+                                    ),
+                                ])
+                                .execute();
+
+                            const result =
+                                await provider.retrieveMail(deviceID);
+                            expect(
+                                result.map(
+                                    ([, body]: [Uint8Array, MailWS, string]) =>
+                                        body.mailID,
+                                ),
+                            ).toEqual([
+                                "00000000-0000-0000-0000-000000000001",
+                                "00000000-0000-0000-0000-000000000002",
+                                "00000000-0000-0000-0000-000000000003",
+                            ]);
                             await provider.close();
                             resolve();
                         } catch (e: unknown) {
