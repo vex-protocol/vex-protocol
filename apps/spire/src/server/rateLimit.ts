@@ -141,7 +141,8 @@ export const uploadLimiter = rateLimit({
 export const keyBundleLimiter = rateLimit({
     keyGenerator: (req) => {
         const caller =
-            req.user?.userID ?? req.ip ?? req.socket.remoteAddress ?? "unknown";
+            req.user?.userID ??
+            ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "");
         const target =
             typeof req.params["id"] === "string" ? req.params["id"] : "unknown";
         return `${caller}:${target}`;
