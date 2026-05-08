@@ -1,5 +1,13 @@
 # @vex-chat/spire
 
+## 1.10.2
+
+### Patch Changes
+
+- [#104](https://github.com/vex-protocol/vex-protocol/pull/104) [`fe757b2`](https://github.com/vex-protocol/vex-protocol/commit/fe757b2eecefa0dd30f03fe8781c38f97d5d43ba) Thanks [@yuki111888](https://github.com/yuki111888)! - Device tokens for deleted or revoked devices are now rejected at the middleware layer. Spire re-validates each `x-device-token` against the live database row and drops any token whose device no longer exists or whose signing key has rotated, closing a window where deleted-device tokens remained accepted until server restart.
+
+- [#106](https://github.com/vex-protocol/vex-protocol/pull/106) [`a2901bd`](https://github.com/vex-protocol/vex-protocol/commit/a2901bd654c992c2e45d88bab8116babf5505eda) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes FIPS-mode realtime delivery spottiness by making Spire WebSocket fanout tolerant of stale clients and making libvex drain mailbox batches in send order. Mail fetches are now serialized by a single owner, and ratchet session healing waits for repeated decrypt failures instead of resetting a live session on the first mismatch.
+
 ## 1.10.1
 
 ### Patch Changes

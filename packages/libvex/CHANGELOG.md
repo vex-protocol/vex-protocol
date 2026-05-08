@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.5.3
+
+### Patch Changes
+
+- [#106](https://github.com/vex-protocol/vex-protocol/pull/106) [`a2901bd`](https://github.com/vex-protocol/vex-protocol/commit/a2901bd654c992c2e45d88bab8116babf5505eda) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes FIPS-mode realtime delivery spottiness by making Spire WebSocket fanout tolerant of stale clients and making libvex drain mailbox batches in send order. Mail fetches are now serialized by a single owner, and ratchet session healing waits for repeated decrypt failures instead of resetting a live session on the first mismatch.
+
 ## 6.5.2
 
 ### Patch Changes
