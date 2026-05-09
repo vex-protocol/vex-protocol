@@ -19,6 +19,8 @@ catalogMode: strict
 minimumReleaseAge: 10080
 
 minimumReleaseAgeExclude:
+    - fast-uri
+    - fast-xml-builder
     - "@vex-chat/crypto"
     - "@vex-chat/libvex"
     - "@vex-chat/spire"
