@@ -1,0 +1,40 @@
+name: PR Policy
+
+on:
+    pull_request:
+        branches: [master, development]
+
+permissions:
+    contents: read
+
+jobs:
+    branch-flow:
+        name: branch flow
+        runs-on: ubuntu-latest
+        steps:
+            - name: Validate PR base/head
+              shell: bash
+              env:
+                  BASE_REF: ${{ github.base_ref }}
+                  HEAD_REF: ${{ github.head_ref }}
+              run: |
+                  set -euo pipefail
+
+                  if [[ "${BASE_REF}" == "development" ]]; then
+                      exit 0
+                  fi
+
+                  if [[ "${BASE_REF}" == "master" ]]; then
+                      case "${HEAD_REF}" in
+                          development|changeset-release/master|hotfix/*)
+                              exit 0
+                              ;;
+                          *)
+                              echo "::error::Open feature PRs against development. Master only accepts development, changeset-release/master, or hotfix/* branches."
+                              exit 1
+                              ;;
+                      esac
+                  fi
+
+                  echo "::error::Unsupported PR base branch: ${BASE_REF}"
+                  exit 1
