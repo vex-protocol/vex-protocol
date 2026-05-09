@@ -61,8 +61,9 @@ jobs:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
                   prompt: |
                       You are a release engineer for the `vex-protocol` monorepo.
-                      It contains four published packages:
+                      It contains five published packages:
 
+                      - `apps/vex-cli`   → @vex-chat/cli    (terminal client)
                       - `packages/types`  → @vex-chat/types  (wire protocol types)
                       - `packages/crypto` → @vex-chat/crypto (crypto primitives)
                       - `packages/libvex` → @vex-chat/libvex (SDK)
