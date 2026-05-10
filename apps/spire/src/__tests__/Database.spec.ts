@@ -230,4 +230,67 @@ describe("Database", () => {
             });
         });
     });
+
+    describe("notification subscriptions", () => {
+        it("upserts and filters Expo push subscriptions by event", async () => {
+            expect.assertions(5);
+
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const created =
+                                await provider.saveNotificationSubscription({
+                                    channel: "expo",
+                                    deviceID,
+                                    events: ["mail"],
+                                    platform: "ios",
+                                    token: "ExponentPushToken[test]",
+                                    userID,
+                                });
+                            expect(created.events).toEqual(["mail"]);
+                            expect(created.enabled).toBe(true);
+
+                            const mailSubs =
+                                await provider.retrieveNotificationSubscriptions(
+                                    { deviceID, event: "mail", userID },
+                                );
+                            expect(mailSubs).toHaveLength(1);
+
+                            const deviceSubs =
+                                await provider.retrieveNotificationSubscriptions(
+                                    {
+                                        deviceID,
+                                        event: "deviceRequest",
+                                        userID,
+                                    },
+                                );
+                            expect(deviceSubs).toHaveLength(0);
+
+                            const updated =
+                                await provider.saveNotificationSubscription({
+                                    channel: "expo",
+                                    deviceID,
+                                    events: ["deviceRequest"],
+                                    platform: "ios",
+                                    token: "ExponentPushToken[test]",
+                                    userID,
+                                });
+                            expect(updated.subscriptionID).toBe(
+                                created.subscriptionID,
+                            );
+
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
 });

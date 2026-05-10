@@ -4,7 +4,7 @@
  * Commercial licenses available at vex.wtf
  */
 
-import type { ActionToken, BaseMsg, NotifyMsg, User } from "@vex-chat/types";
+import type { ActionToken, BaseMsg, User } from "@vex-chat/types";
 import type { IncomingMessage, Server } from "http";
 
 import { EventEmitter } from "events";
@@ -39,6 +39,7 @@ import { z } from "zod/v4";
 
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
+import { NotificationService } from "./NotificationService.ts";
 import { initApp, protect } from "./server/index.ts";
 import {
     MailIngressValidationError,
@@ -98,6 +99,13 @@ const deviceVerifyPayload = z.object({
 const mailPostPayload = z.object({
     header: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
     mail: MailWSSchema,
+});
+
+const notificationSubscribePayload = z.object({
+    channel: z.literal("expo"),
+    events: z.array(z.string().min(1)).default(["mail"]),
+    platform: z.enum(["android", "ios", "web"]).optional(),
+    token: z.string().min(1),
 });
 
 const directories = ["files", "avatars", "emoji"];
@@ -189,6 +197,7 @@ export class Spire extends EventEmitter {
         { deviceID: string; nonce: string; time: number }
     >();
     private mailPruneInterval: null | ReturnType<typeof setInterval> = null;
+    private notifications: NotificationService;
     private queuedRequestIncrements = 0;
 
     private requestsTotal = 0;
@@ -228,6 +237,11 @@ export class Spire extends EventEmitter {
         this.api.set("trust proxy", 1);
 
         this.db = new Database(options);
+        this.notifications = new NotificationService(
+            this.db,
+            this.clients,
+            this.removeClient.bind(this),
+        );
         this.db.on("ready", () => {
             this.dbReady = true;
             void this.db.pruneExpiredMail().catch(() => {
@@ -801,6 +815,67 @@ export class Spire extends EventEmitter {
             );
         });
 
+        this.api.post(
+            "/device/:id/notifications/subscriptions",
+            protect,
+            async (req, res) => {
+                const device = req.device;
+                if (!device) {
+                    res.sendStatus(401);
+                    return;
+                }
+                if (device.deviceID !== getParam(req, "id")) {
+                    res.sendStatus(403);
+                    return;
+                }
+
+                const parsed = notificationSubscribePayload.safeParse(req.body);
+                if (!parsed.success) {
+                    res.status(400).json({
+                        error: "Invalid notification subscription payload",
+                        issues: parsed.error.issues,
+                    });
+                    return;
+                }
+
+                const subscription = await this.db.saveNotificationSubscription(
+                    {
+                        channel: parsed.data.channel,
+                        deviceID: device.deviceID,
+                        events: parsed.data.events,
+                        platform: parsed.data.platform ?? null,
+                        token: parsed.data.token,
+                        userID: getUser(req).userID,
+                    },
+                );
+
+                res.status(201).json(subscription);
+            },
+        );
+
+        this.api.delete(
+            "/device/:id/notifications/subscriptions/:subscriptionID",
+            protect,
+            async (req, res) => {
+                const device = req.device;
+                if (!device) {
+                    res.sendStatus(401);
+                    return;
+                }
+                if (device.deviceID !== getParam(req, "id")) {
+                    res.sendStatus(403);
+                    return;
+                }
+
+                const removed = await this.db.removeNotificationSubscription({
+                    deviceID: device.deviceID,
+                    subscriptionID: getParam(req, "subscriptionID"),
+                    userID: getUser(req).userID,
+                });
+                res.sendStatus(removed ? 204 : 404);
+            },
+        );
+
         this.api.post("/auth", authLimiter, async (req, res) => {
             const parsed = authPayload.safeParse(req.body);
             if (!parsed.success) {
@@ -1000,48 +1075,13 @@ export class Spire extends EventEmitter {
         data?: unknown,
         deviceID?: string,
     ): void {
-        const msg: NotifyMsg = {
+        this.notifications.notify({
             data,
             event,
             transmissionID,
-            type: "notify",
-        };
-
-        // Snapshot the array so that a synchronous fail/prune inside send
-        // cannot corrupt the iteration. Each client is isolated so one stale
-        // manager cannot abort delivery to later recipients.
-        const snapshot = this.clients.slice();
-        for (const client of snapshot) {
-            try {
-                if (client.hasFailed()) {
-                    this.removeClient(client);
-                    continue;
-                }
-
-                if (deviceID) {
-                    const currentDeviceID = client.getDeviceID();
-                    if (currentDeviceID === null) {
-                        this.removeClient(client);
-                        continue;
-                    }
-                    if (currentDeviceID === deviceID) {
-                        client.send(msg);
-                    }
-                    continue;
-                }
-
-                const currentUserID = client.getUserID();
-                if (currentUserID === null) {
-                    this.removeClient(client);
-                    continue;
-                }
-                if (currentUserID === userID) {
-                    client.send(msg);
-                }
-            } catch (_err: unknown) {
-                this.removeClient(client);
-            }
-        }
+            userID,
+            ...(deviceID ? { deviceID } : {}),
+        });
     }
 
     private removeClient(client: ClientManager): void {
