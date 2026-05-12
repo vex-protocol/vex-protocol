@@ -130,6 +130,28 @@ export interface InternalUserRecord extends UserRecord {
     hashAlgo: string;
 }
 
+export interface NotificationSubscription {
+    channel: "expo";
+    createdAt: string;
+    deviceID: string;
+    enabled: boolean;
+    events: string[];
+    platform: null | string;
+    subscriptionID: string;
+    token: string;
+    updatedAt: string;
+    userID: string;
+}
+
+export interface SaveNotificationSubscriptionInput {
+    channel: "expo";
+    deviceID: string;
+    events: string[];
+    platform?: null | string;
+    token: string;
+    userID: string;
+}
+
 export class Database extends EventEmitter {
     private static readonly EMOJI_LIST_CACHE_TTL_MS = 10_000;
 
@@ -726,6 +748,21 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    public async removeNotificationSubscription(args: {
+        deviceID: string;
+        subscriptionID: string;
+        userID: string;
+    }): Promise<boolean> {
+        const result = await this.db
+            .deleteFrom("notification_subscriptions")
+            .where("subscriptionID", "=", args.subscriptionID)
+            .where("deviceID", "=", args.deviceID)
+            .where("userID", "=", args.userID)
+            .executeTakeFirst();
+
+        return Number(result.numDeletedRows) > 0;
+    }
+
     /**
      * Retrives a list of users that should be notified when a specific resourceID
      * experiences changes.
@@ -905,6 +942,30 @@ export class Database extends EventEmitter {
         const allMail = rows.map(fixMail);
 
         return allMail;
+    }
+
+    public async retrieveNotificationSubscriptions(args: {
+        deviceID?: string;
+        event: string;
+        userID: string;
+    }): Promise<NotificationSubscription[]> {
+        let query = this.db
+            .selectFrom("notification_subscriptions")
+            .selectAll()
+            .where("userID", "=", args.userID)
+            .where("enabled", "=", 1);
+
+        if (args.deviceID) {
+            query = query.where("deviceID", "=", args.deviceID);
+        }
+
+        const rows = await query.execute();
+        return rows
+            .map(toNotificationSubscription)
+            .filter(
+                (sub) =>
+                    sub.events.includes("*") || sub.events.includes(args.event),
+            );
     }
 
     /**
@@ -1180,6 +1241,62 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    public async saveNotificationSubscription(
+        input: SaveNotificationSubscriptionInput,
+    ): Promise<NotificationSubscription> {
+        const now = new Date().toISOString();
+        const existing = await this.db
+            .selectFrom("notification_subscriptions")
+            .selectAll()
+            .where("channel", "=", input.channel)
+            .where("deviceID", "=", input.deviceID)
+            .where("token", "=", input.token)
+            .executeTakeFirst();
+
+        const events = encodeNotificationEvents(input.events);
+        if (existing) {
+            await this.db
+                .updateTable("notification_subscriptions")
+                .set({
+                    enabled: 1,
+                    events,
+                    platform: input.platform ?? null,
+                    updatedAt: now,
+                    userID: input.userID,
+                })
+                .where("subscriptionID", "=", existing.subscriptionID)
+                .execute();
+            return {
+                ...toNotificationSubscription(existing),
+                enabled: true,
+                events: decodeNotificationEvents(events),
+                platform: input.platform ?? null,
+                updatedAt: now,
+                userID: input.userID,
+            };
+        }
+
+        const row = {
+            channel: input.channel,
+            createdAt: now,
+            deviceID: input.deviceID,
+            enabled: 1,
+            events,
+            platform: input.platform ?? null,
+            subscriptionID: crypto.randomUUID(),
+            token: input.token,
+            updatedAt: now,
+            userID: input.userID,
+        };
+
+        await this.db
+            .insertInto("notification_subscriptions")
+            .values(row)
+            .execute();
+
+        return toNotificationSubscription(row);
+    }
+
     public async saveOTK(
         userID: string,
         deviceID: string,
@@ -1262,6 +1379,28 @@ export async function verifyPassword(
     return { needsRehash: valid, valid };
 }
 
+function decodeNotificationEvents(events: string): string[] {
+    try {
+        const parsed: unknown = JSON.parse(events);
+        if (
+            Array.isArray(parsed) &&
+            parsed.every((event) => typeof event === "string")
+        ) {
+            return parsed.length > 0 ? [...new Set(parsed)] : ["mail"];
+        }
+    } catch {
+        // Fall through to the safe default.
+    }
+    return ["mail"];
+}
+
+function encodeNotificationEvents(events: string[]): string {
+    const unique = [...new Set(events.map((event) => event.trim()))].filter(
+        (event) => event.length > 0,
+    );
+    return JSON.stringify(unique.length > 0 ? unique : ["mail"]);
+}
+
 // Mirrors `Spire.normalizeRegistrationUsername` — kept in sync so a
 // caller invoking `createUser` directly (e.g. tests, future internal
 // flows) gets the same lowercase canonicalization the public
@@ -1311,6 +1450,26 @@ function toMailSQL(row: {
         forward: Boolean(row.forward),
         mailType: parseMailType(row.mailType),
         time: row.time,
+    };
+}
+
+function toNotificationSubscription(row: {
+    channel: string;
+    createdAt: string;
+    deviceID: string;
+    enabled: number;
+    events: string;
+    platform: null | string;
+    subscriptionID: string;
+    token: string;
+    updatedAt: string;
+    userID: string;
+}): NotificationSubscription {
+    return {
+        ...row,
+        channel: "expo",
+        enabled: Boolean(row.enabled),
+        events: decodeNotificationEvents(row.events),
     };
 }
 

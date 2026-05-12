@@ -90,8 +90,10 @@ export type NewFile = Insertable<FilesTable>;
 
 export type NewInvite = Insertable<InvitesTable>;
 export type NewMail = Insertable<MailTable>;
-export type NewOneTimeKey = Insertable<OneTimeKeysTable>;
+export type NewNotificationSubscription =
+    Insertable<NotificationSubscriptionsTable>;
 
+export type NewOneTimeKey = Insertable<OneTimeKeysTable>;
 export type NewPasskey = Insertable<PasskeysTable>;
 export type NewPermission = Insertable<PermissionsTable>;
 export type NewPreKey = Insertable<PreKeysTable>;
@@ -99,6 +101,23 @@ export type NewPreKey = Insertable<PreKeysTable>;
 export type NewServer = Insertable<ServersTable>;
 export type NewServiceMetric = Insertable<ServiceMetricsTable>;
 export type NewUser = Insertable<UsersTable>;
+export type NotificationSubscriptionRow =
+    Selectable<NotificationSubscriptionsTable>;
+
+export interface NotificationSubscriptionsTable {
+    channel: string;
+    createdAt: string;
+    deviceID: string;
+    enabled: number;
+    events: string;
+    platform: null | string;
+    subscriptionID: string;
+    token: string;
+    updatedAt: string;
+    userID: string;
+}
+export type NotificationSubscriptionUpdate =
+    Updateable<NotificationSubscriptionsTable>;
 export type OneTimeKeyRow = Selectable<OneTimeKeysTable>;
 
 export interface OneTimeKeysTable {
@@ -153,6 +172,7 @@ export interface ServerDatabase {
     files: FilesTable;
     invites: InvitesTable;
     mail: MailTable;
+    notification_subscriptions: NotificationSubscriptionsTable;
     oneTimeKeys: OneTimeKeysTable;
     passkeys: PasskeysTable;
     permissions: PermissionsTable;

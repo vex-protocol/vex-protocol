@@ -5,11 +5,12 @@
  */
 
 import type { ClientManager } from "../ClientManager.ts";
+import type { Database } from "../Database.ts";
 import type { BaseMsg } from "@vex-chat/types";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { Spire } from "../Spire.ts";
+import { NotificationService } from "../NotificationService.ts";
 
 interface FakeClient {
     getDeviceID: () => null | string;
@@ -18,21 +19,17 @@ interface FakeClient {
     send: (msg: BaseMsg) => void;
 }
 
-type NotifyFn = (
-    userID: string,
-    event: string,
-    transmissionID: string,
-    data?: unknown,
-    deviceID?: string,
-) => void;
-
 function createSpireHarness(clients: FakeClient[]) {
-    const spire = Object.create(Spire.prototype) as {
-        clients: ClientManager[];
-        notify: NotifyFn;
+    const db = {
+        retrieveNotificationSubscriptions: vi.fn(() => Promise.resolve([])),
+    } as unknown as Database;
+    const managers = clients as unknown as ClientManager[];
+    const removeClient = (client: ClientManager) => {
+        const idx = managers.indexOf(client);
+        if (idx >= 0) managers.splice(idx, 1);
     };
-    spire.clients = clients as unknown as ClientManager[];
-    return spire;
+    const notifications = new NotificationService(db, managers, removeClient);
+    return { clients: managers, notifications };
 }
 
 function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -56,19 +53,23 @@ describe("Spire notify fanout", () => {
         const other = fakeClient({
             getDeviceID: vi.fn(() => "device-c"),
         });
-        const spire = createSpireHarness([stale, recipient, other]);
+        const { clients, notifications } = createSpireHarness([
+            stale,
+            recipient,
+            other,
+        ]);
 
-        spire.notify(
-            "user-b",
-            "mail",
-            "00000000-0000-0000-0000-000000000001",
-            null,
-            "device-b",
-        );
+        notifications.notify({
+            data: null,
+            deviceID: "device-b",
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000001",
+            userID: "user-b",
+        });
 
         expect(recipient.send).toHaveBeenCalledTimes(1);
         expect(other.send).not.toHaveBeenCalled();
-        expect(spire.clients).toEqual([recipient, other]);
+        expect(clients).toEqual([recipient, other]);
     });
 
     it("continues user fanout after a client inspection throws", () => {
@@ -83,16 +84,20 @@ describe("Spire notify fanout", () => {
         const other = fakeClient({
             getUserID: vi.fn(() => "user-c"),
         });
-        const spire = createSpireHarness([broken, recipient, other]);
+        const { clients, notifications } = createSpireHarness([
+            broken,
+            recipient,
+            other,
+        ]);
 
-        spire.notify(
-            "user-b",
-            "device_pending_enrollment",
-            "00000000-0000-0000-0000-000000000002",
-        );
+        notifications.notify({
+            event: "device_pending_enrollment",
+            transmissionID: "00000000-0000-0000-0000-000000000002",
+            userID: "user-b",
+        });
 
         expect(recipient.send).toHaveBeenCalledTimes(1);
         expect(other.send).not.toHaveBeenCalled();
-        expect(spire.clients).toEqual([recipient, other]);
+        expect(clients).toEqual([recipient, other]);
     });
 });
