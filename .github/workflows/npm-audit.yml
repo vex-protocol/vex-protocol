@@ -1,6 +1,8 @@
 name: npm audit
 
 on:
+    pull_request:
+        branches: [master, development]
     push:
         branches: [master]
     workflow_dispatch:
