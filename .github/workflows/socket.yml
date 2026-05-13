@@ -1,6 +1,8 @@
 name: Socket
 
 on:
+    pull_request:
+        branches: [master, development]
     push:
         branches: [master]
     workflow_dispatch:
@@ -11,6 +13,9 @@ permissions:
 jobs:
     scan:
         name: Socket scan
+        if: |
+            github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
         runs-on: ubuntu-latest
         steps:
             - name: Harden Runner

@@ -2,7 +2,7 @@ name: Build
 
 on:
     pull_request:
-        branches: [master]
+        branches: [master, development]
     push:
         branches: [master]
     workflow_dispatch:
@@ -103,4 +103,4 @@ jobs:
                   github.event_name == 'pull_request' &&
                   github.actor != 'dependabot[bot]' &&
                   !startsWith(github.event.pull_request.head.ref, 'changeset-release/')
-              run: pnpm exec changeset status --since=origin/master
+              run: pnpm exec changeset status --since=origin/${{ github.base_ref }}
