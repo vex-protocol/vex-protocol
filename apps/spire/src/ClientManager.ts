@@ -178,7 +178,16 @@ export class ClientManager extends EventEmitter {
     }
 
     private async handleReceipt(msg: ReceiptMsg) {
-        await this.db.deleteMail(msg.nonce, this.getDevice().deviceID);
+        const deviceID = this.getDeviceID();
+        if (!this.authed || deviceID === null) {
+            this.sendErr(msg.transmissionID, "You are not authenticated.");
+            return;
+        }
+        try {
+            await this.db.deleteMail(msg.nonce, deviceID);
+        } catch (err: unknown) {
+            this.sendErr(msg.transmissionID, String(err));
+        }
     }
 
     private initListeners() {
