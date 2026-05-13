@@ -5,10 +5,10 @@
  */
 
 import type { ClientManager } from "../ClientManager.ts";
-import type { Database } from "../Database.ts";
+import type { Database, NotificationSubscription } from "../Database.ts";
 import type { BaseMsg } from "@vex-chat/types";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationService } from "../NotificationService.ts";
 
@@ -19,9 +19,29 @@ interface FakeClient {
     send: (msg: BaseMsg) => void;
 }
 
-function createSpireHarness(clients: FakeClient[]) {
+const subscription: NotificationSubscription = {
+    channel: "expo",
+    createdAt: "2026-05-12T00:00:00.000Z",
+    deviceID: "device-b",
+    enabled: true,
+    events: ["mail"],
+    platform: "android",
+    subscriptionID: "sub-b",
+    token: "ExponentPushToken[test]",
+    updatedAt: "2026-05-12T00:00:00.000Z",
+    userID: "user-b",
+};
+
+function createSpireHarness(
+    clients: FakeClient[],
+    subscriptions: NotificationSubscription[] = [],
+    removeNotificationSubscription = vi.fn(() => Promise.resolve(true)),
+) {
     const db = {
-        retrieveNotificationSubscriptions: vi.fn(() => Promise.resolve([])),
+        removeNotificationSubscription,
+        retrieveNotificationSubscriptions: vi.fn(() =>
+            Promise.resolve(subscriptions),
+        ),
     } as unknown as Database;
     const managers = clients as unknown as ClientManager[];
     const removeClient = (client: ClientManager) => {
@@ -29,7 +49,12 @@ function createSpireHarness(clients: FakeClient[]) {
         if (idx >= 0) managers.splice(idx, 1);
     };
     const notifications = new NotificationService(db, managers, removeClient);
-    return { clients: managers, notifications };
+    return {
+        clients: managers,
+        db,
+        notifications,
+        removeNotificationSubscription,
+    };
 }
 
 function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -42,7 +67,20 @@ function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     };
 }
 
+function pendingReceiptCount(service: NotificationService): number {
+    return (
+        service as unknown as {
+            pendingReceipts: Map<string, unknown>;
+        }
+    ).pendingReceipts.size;
+}
+
 describe("Spire notify fanout", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
     it("continues device fanout after pruning a stale client", () => {
         const stale = fakeClient({
             getDeviceID: vi.fn(() => null),
@@ -99,5 +137,135 @@ describe("Spire notify fanout", () => {
         expect(recipient.send).toHaveBeenCalledTimes(1);
         expect(other.send).not.toHaveBeenCalled();
         expect(clients).toEqual([recipient, other]);
+    });
+
+    it("checks Expo receipts and removes unregistered devices", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: [{ id: "receipt-a", status: "ok" }],
+                    }),
+                ok: true,
+            })
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: {
+                            "receipt-a": {
+                                details: { error: "DeviceNotRegistered" },
+                                message: "device is not registered",
+                                status: "error",
+                            },
+                        },
+                    }),
+                ok: true,
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db, removeNotificationSubscription } = createSpireHarness(
+            [],
+            [subscription],
+        );
+        const service = new NotificationService(db, [], () => {}, {
+            receiptDelayMs: 1,
+        });
+
+        service.notify({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000003",
+            userID: subscription.userID,
+        });
+
+        await vi.advanceTimersByTimeAsync(1);
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+        expect(fetchMock.mock.calls[1]?.[0]).toBe(
+            "https://exp.host/--/api/v2/push/getReceipts",
+        );
+        expect(removeNotificationSubscription).toHaveBeenCalledWith({
+            deviceID: subscription.deviceID,
+            subscriptionID: subscription.subscriptionID,
+            userID: subscription.userID,
+        });
+    });
+
+    it("does not leave stale pending receipts after receipt lookup failure", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: [{ id: "receipt-a", status: "ok" }],
+                    }),
+                ok: true,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [subscription]);
+        const service = new NotificationService(db, [], () => {}, {
+            receiptDelayMs: 1,
+        });
+
+        service.notify({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000004",
+            userID: subscription.userID,
+        });
+
+        await vi.advanceTimersByTimeAsync(1);
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(pendingReceiptCount(service)).toBe(0);
+        });
+    });
+
+    it("awaits ticket error cleanup so rejection stays on notifyPush", async () => {
+        const cleanupError = new Error("database unavailable");
+        const removeNotificationSubscription = vi.fn(() =>
+            Promise.reject(cleanupError),
+        );
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [
+                        {
+                            details: { error: "DeviceNotRegistered" },
+                            message: "device is not registered",
+                            status: "error",
+                        },
+                    ],
+                }),
+            ok: true,
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness(
+            [],
+            [subscription],
+            removeNotificationSubscription,
+        );
+        const service = new NotificationService(db, [], () => {});
+
+        await expect(
+            service["notifyPush"]({
+                deviceID: subscription.deviceID,
+                event: "mail",
+                transmissionID: "00000000-0000-0000-0000-000000000005",
+                userID: subscription.userID,
+            }),
+        ).rejects.toThrow(cleanupError);
     });
 });
