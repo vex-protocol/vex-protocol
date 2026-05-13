@@ -232,6 +232,43 @@ describe("Spire notify fanout", () => {
         });
     });
 
+    it("sends Android Expo pushes on the mobile push channel", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [{ id: "receipt-a", status: "ok" }],
+                }),
+            ok: true,
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [subscription]);
+        const service = new NotificationService(db, [], () => {});
+
+        await service["notifyPush"]({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000006",
+            userID: subscription.userID,
+        });
+
+        const init = fetchMock.mock.calls[0]?.[1] as
+            | undefined
+            | { body?: unknown };
+        const messages = JSON.parse(String(init?.body)) as Array<{
+            channelId?: string;
+            data?: Record<string, unknown>;
+            priority?: string;
+        }>;
+        expect(messages[0]?.channelId).toBe("vex-push");
+        expect(messages[0]?.priority).toBe("high");
+        expect(messages[0]?.data).toMatchObject({
+            event: "mail",
+            title: "New Vex message",
+            transmissionID: "00000000-0000-0000-0000-000000000006",
+        });
+    });
+
     it("awaits ticket error cleanup so rejection stays on notifyPush", async () => {
         const cleanupError = new Error("database unavailable");
         const removeNotificationSubscription = vi.fn(() =>
