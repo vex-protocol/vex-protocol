@@ -1,6 +1,8 @@
 name: npm audit
 
 on:
+    pull_request:
+        branches: [master, development]
     push:
         branches: [master]
     workflow_dispatch:
@@ -33,5 +35,5 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Audit high severity vulnerabilities
-              run: pnpm audit --audit-level=high
+            - name: Audit moderate and high severity vulnerabilities
+              run: pnpm audit --audit-level=moderate

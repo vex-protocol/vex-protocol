@@ -7,7 +7,7 @@ name: Spire integration CLI
 
 on:
     pull_request:
-        branches: [master]
+        branches: [master, development]
     push:
         branches: [master]
     workflow_dispatch:

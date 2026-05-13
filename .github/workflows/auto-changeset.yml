@@ -48,7 +48,7 @@ jobs:
             - name: Check existing changeset
               id: check
               run: |
-                  if pnpm exec changeset status --since=origin/master 2>/dev/null; then
+                  if pnpm exec changeset status --since=origin/${{ github.base_ref }} 2>/dev/null; then
                     echo "exists=true" >> $GITHUB_OUTPUT
                   else
                     echo "exists=false" >> $GITHUB_OUTPUT
@@ -81,9 +81,9 @@ jobs:
                       2. Read the top of each touched package's `CHANGELOG.md` to
                          match voice and length.
                       3. Read the PR's commit messages:
-                           git log --format='%s%n%b%n---' origin/master..HEAD
+                           git log --format='%s%n%b%n---' origin/${{ github.base_ref }}..HEAD
                       4. Identify which packages changed:
-                           git diff --name-only origin/master...HEAD
+                           git diff --name-only origin/${{ github.base_ref }}...HEAD
 
                       ## Step 2 — decide user-visibility per package
 
