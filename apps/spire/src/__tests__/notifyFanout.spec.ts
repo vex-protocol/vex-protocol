@@ -35,8 +35,8 @@ const subscription: NotificationSubscription = {
 function createSpireHarness(
     clients: FakeClient[],
     subscriptions: NotificationSubscription[] = [],
+    removeNotificationSubscription = vi.fn(() => Promise.resolve(true)),
 ) {
-    const removeNotificationSubscription = vi.fn(() => Promise.resolve(true));
     const db = {
         removeNotificationSubscription,
         retrieveNotificationSubscriptions: vi.fn(() =>
@@ -65,6 +65,14 @@ function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         send: vi.fn(),
         ...overrides,
     };
+}
+
+function pendingReceiptCount(service: NotificationService): number {
+    return (
+        service as unknown as {
+            pendingReceipts: Map<string, unknown>;
+        }
+    ).pendingReceipts.size;
 }
 
 describe("Spire notify fanout", () => {
@@ -185,5 +193,79 @@ describe("Spire notify fanout", () => {
             subscriptionID: subscription.subscriptionID,
             userID: subscription.userID,
         });
+    });
+
+    it("does not leave stale pending receipts after receipt lookup failure", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: [{ id: "receipt-a", status: "ok" }],
+                    }),
+                ok: true,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [subscription]);
+        const service = new NotificationService(db, [], () => {}, {
+            receiptDelayMs: 1,
+        });
+
+        service.notify({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000004",
+            userID: subscription.userID,
+        });
+
+        await vi.advanceTimersByTimeAsync(1);
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(pendingReceiptCount(service)).toBe(0);
+        });
+    });
+
+    it("awaits ticket error cleanup so rejection stays on notifyPush", async () => {
+        const cleanupError = new Error("database unavailable");
+        const removeNotificationSubscription = vi.fn(() =>
+            Promise.reject(cleanupError),
+        );
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [
+                        {
+                            details: { error: "DeviceNotRegistered" },
+                            message: "device is not registered",
+                            status: "error",
+                        },
+                    ],
+                }),
+            ok: true,
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness(
+            [],
+            [subscription],
+            removeNotificationSubscription,
+        );
+        const service = new NotificationService(db, [], () => {});
+
+        await expect(
+            service["notifyPush"]({
+                deviceID: subscription.deviceID,
+                event: "mail",
+                transmissionID: "00000000-0000-0000-0000-000000000005",
+                userID: subscription.userID,
+            }),
+        ).rejects.toThrow(cleanupError);
     });
 });

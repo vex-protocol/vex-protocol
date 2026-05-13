@@ -109,6 +109,7 @@ export class NotificationService {
         });
 
         if (!res.ok) {
+            this.dropPendingReceipts(pendingIDs);
             throw new Error(
                 `Expo receipt request failed with status ${res.status.toString()}`,
             );
@@ -146,6 +147,12 @@ export class NotificationService {
                 },
                 receipt,
             );
+        }
+    }
+
+    private dropPendingReceipts(receiptIDs: string[]): void {
+        for (const receiptID of receiptIDs) {
+            this.pendingReceipts.delete(receiptID);
         }
     }
 
@@ -288,18 +295,18 @@ export class NotificationService {
         }
 
         const tickets = payload.tickets;
-        tickets.forEach((ticket, idx) => {
+        for (const [idx, ticket] of tickets.entries()) {
             const subscription = subscriptions[idx];
-            if (!subscription) return;
+            if (!subscription) continue;
 
             if (ticket.status === "error") {
-                void this.handleExpoDeliveryError(
+                await this.handleExpoDeliveryError(
                     "ticket",
                     subscription,
                     dispatch,
                     ticket,
                 );
-                return;
+                continue;
             }
 
             this.pendingReceipts.set(ticket.id, {
@@ -307,7 +314,7 @@ export class NotificationService {
                 subscription,
                 transmissionID: dispatch.transmissionID,
             });
-        });
+        }
 
         const receiptIDs = tickets.flatMap((ticket) =>
             ticket.status === "ok" ? [ticket.id] : [],
