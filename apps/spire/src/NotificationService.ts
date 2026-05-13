@@ -12,6 +12,7 @@ const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPT_ENDPOINT = "https://exp.host/--/api/v2/push/getReceipts";
 const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
+const ANDROID_PUSH_CHANNEL_ID = "vex-push";
 
 export interface NotificationDispatch {
     data?: unknown;
@@ -258,17 +259,9 @@ export class NotificationService {
         subscriptions: NotificationSubscription[],
         dispatch: NotificationDispatch,
     ): Promise<void> {
-        const messages = subscriptions.map((sub) => ({
-            body: bodyForEvent(dispatch.event),
-            data: {
-                deviceID: dispatch.deviceID ?? null,
-                event: dispatch.event,
-                transmissionID: dispatch.transmissionID,
-            },
-            sound: "default",
-            title: titleForEvent(dispatch.event),
-            to: sub.token,
-        }));
+        const messages = subscriptions.map((sub) =>
+            expoMessageForSubscription(sub, dispatch),
+        );
 
         const res = await fetch(EXPO_PUSH_ENDPOINT, {
             body: JSON.stringify(messages),
@@ -330,6 +323,33 @@ function bodyForEvent(event: string): string {
     if (event === "deviceRequest") return "Review the device request.";
     if (event === "deviceListChanged") return "Your device list changed.";
     return "Open Vex for the latest update.";
+}
+
+function expoMessageForSubscription(
+    subscription: NotificationSubscription,
+    dispatch: NotificationDispatch,
+): Record<string, unknown> {
+    const title = titleForEvent(dispatch.event);
+    const body = bodyForEvent(dispatch.event);
+    const data = {
+        deviceID: dispatch.deviceID ?? null,
+        event: dispatch.event,
+        title,
+        transmissionID: dispatch.transmissionID,
+    };
+
+    return {
+        body,
+        channelId:
+            subscription.platform === "android"
+                ? ANDROID_PUSH_CHANNEL_ID
+                : undefined,
+        data,
+        priority: subscription.platform === "android" ? "high" : undefined,
+        sound: "default",
+        title,
+        to: subscription.token,
+    };
 }
 
 function isExpoPushReceipt(value: unknown): value is ExpoPushReceipt {
