@@ -243,6 +243,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 25.6.0
+      publint:
+        specifier: 0.3.18
+        version: 0.3.18
 
   packages/crypto:
     dependencies:
