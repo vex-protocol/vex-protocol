@@ -193,7 +193,15 @@ export class NotificationService {
                 : query,
         );
         const expoSubscriptions = subscriptions;
-        if (expoSubscriptions.length === 0) return;
+        if (expoSubscriptions.length === 0) {
+            console.info("[spire-notify] no Expo push subscriptions", {
+                deviceScoped: Boolean(dispatch.deviceID),
+                event: dispatch.event,
+                transmissionID: dispatch.transmissionID,
+                userID: dispatch.userID,
+            });
+            return;
+        }
 
         for (let i = 0; i < expoSubscriptions.length; i += EXPO_BATCH_SIZE) {
             const batch = expoSubscriptions.slice(i, i + EXPO_BATCH_SIZE);
@@ -262,6 +270,21 @@ export class NotificationService {
         const messages = subscriptions.map((sub) =>
             expoMessageForSubscription(sub, dispatch),
         );
+        console.info("[spire-notify] sending Expo push batch", {
+            channelIDs: [
+                ...new Set(
+                    messages
+                        .map((msg) => msg["channelId"])
+                        .filter((value): value is string => {
+                            return typeof value === "string";
+                        }),
+                ),
+            ],
+            event: dispatch.event,
+            platforms: [...new Set(subscriptions.map((sub) => sub.platform))],
+            size: subscriptions.length,
+            transmissionID: dispatch.transmissionID,
+        });
 
         const res = await fetch(EXPO_PUSH_ENDPOINT, {
             body: JSON.stringify(messages),
@@ -288,6 +311,13 @@ export class NotificationService {
         }
 
         const tickets = payload.tickets;
+        console.info("[spire-notify] Expo push tickets received", {
+            errors: tickets.filter((ticket) => ticket.status === "error")
+                .length,
+            event: dispatch.event,
+            ok: tickets.filter((ticket) => ticket.status === "ok").length,
+            transmissionID: dispatch.transmissionID,
+        });
         for (const [idx, ticket] of tickets.entries()) {
             const subscription = subscriptions[idx];
             if (!subscription) continue;
