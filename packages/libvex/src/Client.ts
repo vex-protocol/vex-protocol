@@ -2075,6 +2075,12 @@ export class Client {
         this.reconnectPromise = this.reconnectWebsocketOnce().finally(() => {
             this.reconnectPromise = null;
         });
+        this.reconnectPromise.catch(() => {
+            // Callers still observe the rejection when they await this
+            // promise; this keeps shared reconnect attempts from surfacing as
+            // process-level unhandled rejections when another best-effort path
+            // touches the same promise.
+        });
         return this.reconnectPromise;
     }
 

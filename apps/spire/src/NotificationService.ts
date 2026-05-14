@@ -12,7 +12,7 @@ const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPT_ENDPOINT = "https://exp.host/--/api/v2/push/getReceipts";
 const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
-const ANDROID_PUSH_CHANNEL_ID = "vex-push";
+const ANDROID_PUSH_CHANNEL_ID = "vex-push-messages-v2";
 
 export interface NotificationDispatch {
     data?: unknown;
