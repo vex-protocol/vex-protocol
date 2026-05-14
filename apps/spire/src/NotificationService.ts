@@ -12,6 +12,7 @@ const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPT_ENDPOINT = "https://exp.host/--/api/v2/push/getReceipts";
 const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
+const EXPO_REQUEST_TIMEOUT_MS = 10_000;
 const ANDROID_PUSH_CHANNEL_ID = "vex-push-messages-v2";
 
 export interface NotificationDispatch {
@@ -89,8 +90,14 @@ export class NotificationService {
 
     public notify(dispatch: NotificationDispatch): void {
         this.notifyWebSocket(dispatch);
-        void this.notifyPush(dispatch).catch(() => {
+        void this.notifyPush(dispatch).catch((err: unknown) => {
             // Push is best-effort; websocket/inbox delivery remain authoritative.
+            console.warn("[spire-notify] Expo push fanout failed", {
+                event: dispatch.event,
+                message: err instanceof Error ? err.message : String(err),
+                transmissionID: dispatch.transmissionID,
+                userID: dispatch.userID,
+            });
         });
     }
 
@@ -286,7 +293,7 @@ export class NotificationService {
             transmissionID: dispatch.transmissionID,
         });
 
-        const res = await fetch(EXPO_PUSH_ENDPOINT, {
+        const res = await fetchWithTimeout(EXPO_PUSH_ENDPOINT, {
             body: JSON.stringify(messages),
             headers: {
                 Accept: "application/json",
@@ -296,8 +303,9 @@ export class NotificationService {
         });
 
         if (!res.ok) {
+            const body = await res.text().catch(() => "");
             throw new Error(
-                `Expo push request failed with status ${res.status.toString()}`,
+                `Expo push request failed with status ${res.status.toString()}${body ? `: ${body.slice(0, 500)}` : ""}`,
             );
         }
 
@@ -380,6 +388,36 @@ function expoMessageForSubscription(
         title,
         to: subscription.token,
     };
+}
+
+async function fetchWithTimeout(
+    input: string,
+    init: RequestInit,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        controller.abort();
+    }, EXPO_REQUEST_TIMEOUT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    try {
+        return await fetch(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    } catch (err: unknown) {
+        if (
+            err instanceof Error &&
+            (err.name === "AbortError" || err.name === "TimeoutError")
+        ) {
+            throw new Error(
+                `Expo push request timed out after ${EXPO_REQUEST_TIMEOUT_MS.toString()}ms`,
+                { cause: err },
+            );
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 function isExpoPushReceipt(value: unknown): value is ExpoPushReceipt {
