@@ -260,7 +260,7 @@ describe("Spire notify fanout", () => {
             data?: Record<string, unknown>;
             priority?: string;
         }>;
-        expect(messages[0]?.channelId).toBe("vex-push");
+        expect(messages[0]?.channelId).toBe("vex-push-messages-v2");
         expect(messages[0]?.priority).toBe("high");
         expect(messages[0]?.data).toMatchObject({
             event: "mail",
