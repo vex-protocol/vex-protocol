@@ -80,6 +80,7 @@ export class ClientManager extends EventEmitter {
         transmissionID: string,
         data?: unknown,
         deviceID?: string,
+        headlessPushUserID?: string,
     ) => void;
     private user: null | UserRecord;
     private userDetails: User;
@@ -87,7 +88,14 @@ export class ClientManager extends EventEmitter {
     constructor(
         ws: WebSocket,
         db: Database,
-        notify: (userID: string, event: string, transmissionID: string) => void,
+        notify: (
+            userID: string,
+            event: string,
+            transmissionID: string,
+            data?: unknown,
+            deviceID?: string,
+            headlessPushUserID?: string,
+        ) => void,
         userDetails: User,
     ) {
         super();
@@ -300,6 +308,7 @@ export class ClientManager extends EventEmitter {
                             msg.transmissionID,
                             null,
                             mail.recipient,
+                            mail.authorID,
                         );
                     } catch (err: unknown) {
                         this.sendErr(msg.transmissionID, String(err));
