@@ -23,16 +23,17 @@ From the monorepo root:
 
 ```sh
 pnpm install
-pnpm --filter @vex-chat/spire gen-spk
+pnpm --filter @vex-chat/spire env:init
 ```
 
 For the FIPS-compatible profile:
 
 ```sh
-pnpm --filter @vex-chat/spire gen-spk-fips
+pnpm --filter @vex-chat/spire env:init:fips
 ```
 
-Copy the printed `SPK` and `JWT_SECRET` into `apps/spire/.env`.
+This creates `apps/spire/.env` with generated `SPK` and `JWT_SECRET` values.
+Existing `.env` files are not overwritten unless you pass `--force`.
 
 ## Example `.env`
 

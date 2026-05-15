@@ -33,8 +33,7 @@ Spire's source lives at `apps/spire/`. Most commands below run from the monorepo
 The Dockerfile uses the monorepo as build context so the build can resolve `workspace:^` deps for `@vex-chat/{types,crypto,libvex}`. From `apps/spire/`, with Docker and Docker Compose installed:
 
 ```sh
-cp .env.example .env
-# set SPK, JWT_SECRET, DB_TYPE, SPIRE_FIPS, … (see Configuration)
+pnpm --filter @vex-chat/spire env:init
 docker compose up --build
 ```
 
@@ -61,6 +60,14 @@ node --experimental-strip-types node_modules/@vex-chat/spire/src/run.ts
 ## Configuration
 
 Spire reads configuration from environment variables. **Docker Compose:** put them in a `.env` file next to `docker-compose.yml` (the `env_file` entry injects them into the container). **Bare Node:** `dotenv` loads `.env` from the process working directory when you run `src/run.ts`.
+
+To create a fresh `.env` with generated `SPK` and `JWT_SECRET` values:
+
+```sh
+pnpm --filter @vex-chat/spire env:init
+```
+
+Use `env:init:fips` for the FIPS profile, or `env:init:dev` to also add a `DEV_API_KEY` for local/staging load testing. Existing `.env` files are not overwritten unless you pass `--force`.
 
 ### Required
 
