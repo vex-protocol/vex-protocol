@@ -404,40 +404,7 @@ export interface ClientOptions {
     unsafeHttp?: boolean;
 }
 
-/**
- * Permission is a permission to a resource.
- *
- * Common fields:
- * - `permissionID`: unique permission row ID
- * - `userID`: user receiving this grant
- * - `resourceID`: target server/channel/etc.
- * - `resourceType`: type string for the resource
- * - `powerLevel`: authorization level
- */
-export type { Permission } from "@vex-chat/types";
-
 export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
-
-/**
- * Device record associated with a user account.
- *
- * Common fields:
- * - `deviceID`: unique device identifier
- * - `owner`: owning user ID
- * - `signKey`: signing public key
- * - `name`: user-facing device name
- * - `lastLogin`: last login timestamp string
- * - `deleted`: soft-delete flag
- */
-export type { Device } from "@vex-chat/types";
-
-/**
- * Public passkey record returned by `client.passkeys.list()` and
- * `client.passkeys.finishRegistration()`. Server-private fields
- * (credential ID, public key, COSE algorithm, signature counter) are
- * never exposed.
- */
-export type { Passkey } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -495,6 +462,18 @@ export interface Devices {
 }
 
 /**
+ * Permission is a permission to a resource.
+ *
+ * Common fields:
+ * - `permissionID`: unique permission row ID
+ * - `userID`: user receiving this grant
+ * - `resourceID`: target server/channel/etc.
+ * - `resourceType`: type string for the resource
+ * - `powerLevel`: authorization level
+ */
+export type { Permission } from "@vex-chat/types";
+
+/**
  * @ignore
  */
 export interface Emojis {
@@ -509,6 +488,27 @@ export interface Emojis {
     /** Lists emojis available on a server. */
     retrieveList: (serverID: string) => Promise<Emoji[]>;
 }
+
+/**
+ * Device record associated with a user account.
+ *
+ * Common fields:
+ * - `deviceID`: unique device identifier
+ * - `owner`: owning user ID
+ * - `signKey`: signing public key
+ * - `name`: user-facing device name
+ * - `lastLogin`: last login timestamp string
+ * - `deleted`: soft-delete flag
+ */
+export type { Device } from "@vex-chat/types";
+
+/**
+ * Public passkey record returned by `client.passkeys.list()` and
+ * `client.passkeys.finishRegistration()`. Server-private fields
+ * (credential ID, public key, COSE algorithm, signature counter) are
+ * never exposed.
+ */
+export type { Passkey } from "@vex-chat/types";
 
 /**
  * Progress payload emitted by the `fileProgress` event.
@@ -581,31 +581,6 @@ export interface Keys {
 }
 
 /**
- * Channel is a chat channel on a server.
- *
- * Common fields:
- * - `channelID`
- * - `serverID`
- * - `name`
- */
-export type { Channel } from "@vex-chat/types";
-
-/**
- * Server is a single chat server.
- *
- * Common fields:
- * - `serverID`
- * - `name`
- * - `icon` (optional URL/data)
- */
-export type { Server } from "@vex-chat/types";
-
-/**
- * Combined server + channels payload used for fast UI bootstrap.
- */
-export type { ServerChannelBootstrap } from "@vex-chat/types";
-
-/**
  * @ignore
  */
 export interface Me {
@@ -651,6 +626,51 @@ export interface Message {
     sender: string;
     /** Time the message was created/received. */
     timestamp: string;
+}
+
+/**
+ * Channel is a chat channel on a server.
+ *
+ * Common fields:
+ * - `channelID`
+ * - `serverID`
+ * - `name`
+ */
+export type { Channel } from "@vex-chat/types";
+
+/**
+ * Server is a single chat server.
+ *
+ * Common fields:
+ * - `serverID`
+ * - `name`
+ * - `icon` (optional URL/data)
+ */
+export type { Server } from "@vex-chat/types";
+
+/**
+ * Combined server + channels payload used for fast UI bootstrap.
+ */
+export type { ServerChannelBootstrap } from "@vex-chat/types";
+
+export interface NotificationSubscription {
+    channel: "expo";
+    createdAt: string;
+    deviceID: string;
+    enabled: boolean;
+    events: string[];
+    platform: null | string;
+    subscriptionID: string;
+    token: string;
+    updatedAt: string;
+    userID: string;
+}
+
+export interface NotificationSubscriptionInput {
+    channel: "expo";
+    events?: string[];
+    platform?: "android" | "ios" | "web";
+    token: string;
 }
 
 /**
@@ -2055,6 +2075,12 @@ export class Client {
         this.reconnectPromise = this.reconnectWebsocketOnce().finally(() => {
             this.reconnectPromise = null;
         });
+        this.reconnectPromise.catch(() => {
+            // Callers still observe the rejection when they await this
+            // promise; this keeps shared reconnect attempts from surfacing as
+            // process-level unhandled rejections when another best-effort path
+            // touches the same promise.
+        });
         return this.reconnectPromise;
     }
 
@@ -2211,6 +2237,27 @@ export class Client {
     }
 
     /**
+     * Registers a push notification subscription for this device.
+     *
+     * Mobile clients using Expo should pass the Expo push token from
+     * `expo-notifications`. Push notifications are wake-up hints only; clients
+     * should still call `syncInboxNow()` after receiving one.
+     */
+    public async subscribeNotifications(
+        input: NotificationSubscriptionInput,
+    ): Promise<NotificationSubscription> {
+        const response = await this.http.post<NotificationSubscription>(
+            this.getHost() +
+                "/device/" +
+                this.getDevice().deviceID +
+                "/notifications/subscriptions",
+            input,
+            { responseType: "json" },
+        );
+        return response.data;
+    }
+
+    /**
      * Triggers an immediate inbox sync by fetching `/mail` once.
      * Useful on mobile foreground resume where background work may pause.
      */
@@ -2227,6 +2274,21 @@ export class Client {
             "<" +
             (this.device?.deviceID ?? "") +
             ">"
+        );
+    }
+
+    /**
+     * Removes a notification subscription for this device.
+     */
+    public async unsubscribeNotifications(
+        subscriptionID: string,
+    ): Promise<void> {
+        await this.http.delete(
+            this.getHost() +
+                "/device/" +
+                this.getDevice().deviceID +
+                "/notifications/subscriptions/" +
+                subscriptionID,
         );
     }
 

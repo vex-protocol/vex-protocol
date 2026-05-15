@@ -26,7 +26,10 @@ services:
         mem_limit: 512m
         memswap_limit: 512m
         networks:
-            - internal
+            internal:
+            # Spire needs outbound HTTPS for Expo push notifications.
+            # The internal network is intentionally egress-blocked.
+            egress:
         restart: unless-stopped
         # Default json-file logging so `docker compose logs` / `docker logs` work.
         healthcheck:

@@ -19,6 +19,7 @@ catalogMode: strict
 minimumReleaseAge: 10080
 
 minimumReleaseAgeExclude:
+    - "@vex-chat/cli"
     - "@vex-chat/crypto"
     - "@vex-chat/libvex"
     - "@vex-chat/spire"

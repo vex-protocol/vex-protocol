@@ -12,9 +12,11 @@ import type { EventEmitter } from 'eventemitter3';
 import type { FileResponse } from '@vex-chat/types';
 import type { FileSQL } from '@vex-chat/types';
 import { Invite } from '@vex-chat/types';
+import { Passkey } from '@vex-chat/types';
 import { Permission } from '@vex-chat/types';
 import type { PreKeysSQL } from '@vex-chat/types';
 import { Server } from '@vex-chat/types';
+import { ServerChannelBootstrap } from '@vex-chat/types';
 import type { SessionSQL } from '@vex-chat/types';
 import type { z } from 'zod/v4';
 
@@ -28,6 +30,9 @@ export interface Channels {
     retrieveByID: (channelID: string) => Promise<Channel | null>;
     userList: (channelID: string) => Promise<User[]>;
 }
+
+// @public
+export function clampLocalMessageRetentionDays(days: null | number | undefined): number;
 
 // @public (undocumented)
 export class Client {
@@ -49,6 +54,7 @@ export class Client {
     static generateSecretKeyAsync(): Promise<string>;
     getHost(): string;
     getKeys(): Keys;
+    getLocalMessageRetentionDays(): number;
     hasInit: boolean;
     hasLoggedIn: boolean;
     invites: Invites;
@@ -64,6 +70,7 @@ export class Client {
     off<E extends keyof ClientEvents>(event: E, fn?: ClientEvents[E], context?: unknown): this;
     on<E extends keyof ClientEvents>(event: E, fn: ClientEvents[E], context?: unknown): this;
     once<E extends keyof ClientEvents>(event: E, fn: ClientEvents[E], context?: unknown): this;
+    passkeys: Passkeys;
     permissions: Permissions_2;
     static randomUsername(): string;
     reconnectWebsocket(): Promise<void>;
@@ -74,8 +81,11 @@ export class Client {
     sending: Map<string, Device>;
     servers: Servers;
     sessions: Sessions;
+    setLocalMessageRetentionDays(days: number): void;
+    subscribeNotifications(input: NotificationSubscriptionInput): Promise<NotificationSubscription>;
     syncInboxNow(): Promise<void>;
     toString(): string;
+    unsubscribeNotifications(subscriptionID: string): Promise<void>;
     users: Users;
     whoami(): Promise<{
         exp: number;
@@ -110,6 +120,7 @@ export interface ClientOptions {
     deviceName?: string;
     host?: string;
     inMemoryDb?: boolean;
+    localMessageRetentionDays?: number;
     saveHistory?: boolean;
     unsafeHttp?: boolean;
 }
@@ -130,6 +141,7 @@ export class DeviceApprovalRequiredError extends Error {
         challenge: string;
         expiresAt: string;
         requestID: string;
+        userID?: null | string;
     });
     // (undocumented)
     readonly challenge: string;
@@ -137,6 +149,7 @@ export class DeviceApprovalRequiredError extends Error {
     readonly expiresAt: string;
     // (undocumented)
     readonly requestID: string;
+    readonly userID: null | string;
 }
 
 // @public (undocumented)
@@ -144,18 +157,30 @@ export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
 
 // @public (undocumented)
 export interface Devices {
+    abortPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<void>;
     approveRequest: (requestID: string) => Promise<Device>;
     delete: (deviceID: string) => Promise<void>;
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
+    list: () => Promise<Device[]>;
     listRequests: () => Promise<PendingDeviceRequest[]>;
     pollPendingRegistration: (args: {
         challenge: string;
         requestID: string;
     }) => Promise<null | PendingDeviceRequest>;
+    publishPendingRegistration: (args: {
+        challenge: string;
+        requestID: string;
+    }) => Promise<void>;
     register: () => Promise<DeviceRegistrationResult | null>;
     rejectRequest: (requestID: string) => Promise<void>;
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
 }
+
+// @public
+export function effectiveMessageRetentionHintDays(stored: null | number | undefined): number;
 
 // @public (undocumented)
 export interface Emojis {
@@ -215,6 +240,9 @@ export interface KeyStore {
     save(creds: StoredCredentials): Promise<void>;
 }
 
+// @public
+export const MAX_LOCAL_MESSAGE_RETENTION_DAYS = 30;
+
 // @public (undocumented)
 export interface Me {
     device: () => Device;
@@ -234,6 +262,7 @@ export interface Message {
     nonce: string;
     readerID: string;
     recipient: string;
+    retentionHintDays?: number;
     sender: string;
     timestamp: string;
 }
@@ -241,11 +270,15 @@ export interface Message {
 // @public (undocumented)
 export interface Messages {
     delete: (userOrChannelID: string) => Promise<void>;
-    group: (channelID: string, message: string) => Promise<void>;
+    group: (channelID: string, message: string, opts?: {
+        retentionHintDays?: number;
+    }) => Promise<void>;
     purge: () => Promise<void>;
     retrieve: (userID: string) => Promise<Message[]>;
     retrieveGroup: (channelID: string) => Promise<Message[]>;
-    send: (userID: string, message: string) => Promise<void>;
+    send: (userID: string, message: string, opts?: {
+        retentionHintDays?: number;
+    }) => Promise<void>;
 }
 
 // @public (undocumented)
@@ -261,6 +294,75 @@ export const msgpack: {
 };
 
 // @public (undocumented)
+export interface NotificationSubscription {
+    // (undocumented)
+    channel: "expo";
+    // (undocumented)
+    createdAt: string;
+    // (undocumented)
+    deviceID: string;
+    // (undocumented)
+    enabled: boolean;
+    // (undocumented)
+    events: string[];
+    // (undocumented)
+    platform: null | string;
+    // (undocumented)
+    subscriptionID: string;
+    // (undocumented)
+    token: string;
+    // (undocumented)
+    updatedAt: string;
+    // (undocumented)
+    userID: string;
+}
+
+// @public (undocumented)
+export interface NotificationSubscriptionInput {
+    // (undocumented)
+    channel: "expo";
+    // (undocumented)
+    events?: string[];
+    // (undocumented)
+    platform?: "android" | "ios" | "web";
+    // (undocumented)
+    token: string;
+}
+
+export { Passkey }
+
+// @public
+export interface Passkeys {
+    approveDeviceRequest: (requestID: string) => Promise<Device>;
+    beginAuthentication: (username: string) => Promise<{
+        options: any;
+        requestID: string;
+    }>;
+    beginRegistration: (name: string) => Promise<{
+        options: any;
+        requestID: string;
+    }>;
+    delete: (passkeyID: string) => Promise<void>;
+    deleteDevice: (deviceID: string) => Promise<void>;
+    finishAuthentication: (args: {
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<{
+        passkeyID: string;
+        token: string;
+        user: User;
+    }>;
+    finishRegistration: (args: {
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<Passkey>;
+    list: () => Promise<Passkey[]>;
+    listDevices: () => Promise<Device[]>;
+    rejectDeviceRequest: (requestID: string) => Promise<void>;
+}
+
+// @public (undocumented)
 export type PendingDeviceApprovalStatus = "approved" | "expired" | "pending" | "rejected";
 
 // @public (undocumented)
@@ -273,6 +375,7 @@ export interface PendingDeviceRegistration {
     requestID: string;
     // (undocumented)
     status: "pending_approval";
+    userID?: string | undefined;
 }
 
 // @public (undocumented)
@@ -314,6 +417,8 @@ export interface PreKeysCrypto extends UnsavedPreKey {
 
 export { Server }
 
+export { ServerChannelBootstrap }
+
 // @public (undocumented)
 export interface Servers {
     create: (name: string) => Promise<Server>;
@@ -321,6 +426,7 @@ export interface Servers {
     leave: (serverID: string) => Promise<void>;
     retrieve: () => Promise<Server[]>;
     retrieveByID: (serverID: string) => Promise<null | Server>;
+    retrieveWithChannels: () => Promise<ServerChannelBootstrap>;
 }
 
 // @public
@@ -386,11 +492,13 @@ interface Storage_2 extends EventEmitter {
     getPreKeys: () => Promise<null | PreKeysCrypto>;
     getSessionByDeviceID: (deviceID: string) => Promise<null | SessionCrypto>;
     getSessionByPublicKey: (publicKey: Uint8Array) => Promise<null | SessionCrypto>;
+    hasMessage: (mailID: string) => Promise<boolean>;
     init: () => Promise<void>;
     markSessionUsed: (sessionID: string) => Promise<void>;
     markSessionVerified: (sessionID: string) => Promise<void>;
     on(event: "ready", callback: () => void): this;
     on(event: "error", callback: (error: Error) => void): this;
+    pruneExpiredLocalMessages: (clientMaxRetentionDays: number) => Promise<void>;
     purgeHistory: () => Promise<void>;
     purgeKeyData: () => Promise<void>;
     ready: boolean;

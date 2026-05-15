@@ -23,6 +23,8 @@ export type {
     Message,
     Messages,
     Moderation,
+    NotificationSubscription,
+    NotificationSubscriptionInput,
     Passkeys,
     PendingDeviceApprovalStatus,
     PendingDeviceRegistration,

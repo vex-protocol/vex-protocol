@@ -9,6 +9,7 @@ This file is the **shared rules** for every package. Each package has its own `A
 ```
 protocol/
 ├── apps/spire/                  # @vex-chat/spire    (server, published)
+├── apps/vex-cli/                # @vex-chat/cli      (terminal client, published)
 ├── packages/types/              # @vex-chat/types    (wire-protocol types, published)
 ├── packages/crypto/             # @vex-chat/crypto   (crypto primitives, published)
 ├── packages/libvex/             # @vex-chat/libvex   (SDK, published)
@@ -21,7 +22,7 @@ Cross-package deps inside the workspace use `workspace:^` so the published tarba
 
 ## Release flow (how it actually works)
 
-Each of the four published packages versions independently. The full loop:
+Each of the five published packages versions independently. The full loop:
 
 1. A feature branch lands a code change **and** a changeset file in `.changeset/<slug>.md`. The changeset declares the semver bump per affected package and a user-facing summary — nothing else.
 2. The changeset file is written either:
@@ -48,7 +49,7 @@ The release workflow has `permissions: id-token: write` and **no `NPM_TOKEN` env
 - ❌ Hand-edit any `package.json`'s `version` field. The release action owns it.
 - ❌ Hand-edit any `CHANGELOG.md`. They are regenerated from changeset files. Any manual edit will be overwritten or create a conflict on the next release.
 - ❌ Run `pnpm changeset publish` / `changeset publish`. Publishing only happens from `release.yml` on `master`.
-- ❌ Set `"private": true` on any of the four published packages (`@vex-chat/spire`, `types`, `crypto`, `libvex`). Doing so blocks publish and breaks the release flow. `@vex-chat/eslint-config` _is_ and stays private.
+- ❌ Set `"private": true` on any of the five published packages (`@vex-chat/cli`, `spire`, `types`, `crypto`, `libvex`). Doing so blocks publish and breaks the release flow. `@vex-chat/eslint-config` _is_ and stays private.
 - ❌ Add `NPM_TOKEN` (or `NODE_AUTH_TOKEN`) to any workflow. OIDC-only is load-bearing — adding the token would silently downgrade every publish. See `release.yml` comments.
 - ❌ Run `pnpm changeset pre enter` / `pre exit`. Pre-release mode is a deliberate choice that flips the whole release flow; if you think you need it, stop and ask the human.
 - ❌ Delete files from `.changeset/` unless you are removing a changeset you just wrote in error in the same session. Consumed changesets are deleted by `changeset version`; deleting them any other way drops the corresponding CHANGELOG entry.
