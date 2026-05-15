@@ -14,6 +14,7 @@ const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
 const EXPO_REQUEST_TIMEOUT_MS = 10_000;
 const ANDROID_PUSH_CHANNEL_ID = "vex-push-messages-v2";
+const MESSAGE_PUSH_COLLAPSE_ID = "vex-message-summary";
 
 export interface NotificationDispatch {
     data?: unknown;
@@ -356,8 +357,8 @@ export class NotificationService {
     }
 }
 
-function bodyForEvent(event: string): string {
-    if (event === "mail") return "Open Vex to read it.";
+function bodyForEvent(event: string): string | undefined {
+    if (event === "mail") return undefined;
     if (event === "deviceRequest") return "Review the device request.";
     if (event === "deviceListChanged") return "Your device list changed.";
     return "Open Vex for the latest update.";
@@ -376,8 +377,7 @@ function expoMessageForSubscription(
         transmissionID: dispatch.transmissionID,
     };
 
-    return {
-        body,
+    const message: Record<string, unknown> = {
         channelId:
             subscription.platform === "android"
                 ? ANDROID_PUSH_CHANNEL_ID
@@ -391,6 +391,16 @@ function expoMessageForSubscription(
         title,
         to: subscription.token,
     };
+    if (body) {
+        message["body"] = body;
+    }
+    if (dispatch.event === "mail") {
+        message["collapseId"] = MESSAGE_PUSH_COLLAPSE_ID;
+        if (subscription.platform === "android") {
+            message["tag"] = MESSAGE_PUSH_COLLAPSE_ID;
+        }
+    }
+    return message;
 }
 
 async function fetchWithTimeout(
@@ -478,7 +488,7 @@ function parseExpoReceipts(data: unknown): Record<string, ExpoPushReceipt> {
 }
 
 function titleForEvent(event: string): string {
-    if (event === "mail") return "New Vex message";
+    if (event === "mail") return "New Message";
     if (event === "deviceRequest") return "Device approval request";
     if (event === "deviceListChanged") return "Vex device update";
     return "Vex notification";
