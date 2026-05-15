@@ -20,6 +20,7 @@ export interface NotificationDispatch {
     data?: unknown;
     deviceID?: string;
     event: string;
+    headlessPushUserID?: string;
     transmissionID: string;
     userID: string;
 }
@@ -275,8 +276,9 @@ export class NotificationService {
         subscriptions: NotificationSubscription[],
         dispatch: NotificationDispatch,
     ): Promise<void> {
+        const headless = shouldSendHeadlessPush(dispatch);
         const messages = subscriptions.map((sub) =>
-            expoMessageForSubscription(sub, dispatch),
+            expoMessageForSubscription(sub, dispatch, headless),
         );
         console.info("[spire-notify] sending Expo push batch", {
             channelIDs: [
@@ -289,6 +291,7 @@ export class NotificationService {
                 ),
             ],
             event: dispatch.event,
+            headless,
             platforms: [...new Set(subscriptions.map((sub) => sub.platform))],
             size: subscriptions.length,
             transmissionID: dispatch.transmissionID,
@@ -367,7 +370,22 @@ function bodyForEvent(event: string): string | undefined {
 function expoMessageForSubscription(
     subscription: NotificationSubscription,
     dispatch: NotificationDispatch,
+    headless: boolean,
 ): Record<string, unknown> {
+    if (headless) {
+        return {
+            _contentAvailable: true,
+            data: {
+                deviceID: dispatch.deviceID ?? null,
+                event: dispatch.event,
+                headless: true,
+                transmissionID: dispatch.transmissionID,
+            },
+            priority: subscription.platform === "android" ? "high" : undefined,
+            to: subscription.token,
+        };
+    }
+
     const title = titleForEvent(dispatch.event);
     const body = bodyForEvent(dispatch.event);
     const data = {
@@ -485,6 +503,13 @@ function parseExpoReceipts(data: unknown): Record<string, ExpoPushReceipt> {
         }
     }
     return receipts;
+}
+
+function shouldSendHeadlessPush(dispatch: NotificationDispatch): boolean {
+    return (
+        dispatch.headlessPushUserID !== undefined &&
+        dispatch.userID === dispatch.headlessPushUserID
+    );
 }
 
 function titleForEvent(event: string): string {

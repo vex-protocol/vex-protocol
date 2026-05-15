@@ -37,11 +37,12 @@ function createSpireHarness(
     subscriptions: NotificationSubscription[] = [],
     removeNotificationSubscription = vi.fn(() => Promise.resolve(true)),
 ) {
+    const retrieveNotificationSubscriptions = vi.fn(() =>
+        Promise.resolve(subscriptions),
+    );
     const db = {
         removeNotificationSubscription,
-        retrieveNotificationSubscriptions: vi.fn(() =>
-            Promise.resolve(subscriptions),
-        ),
+        retrieveNotificationSubscriptions,
     } as unknown as Database;
     const managers = clients as unknown as ClientManager[];
     const removeClient = (client: ClientManager) => {
@@ -54,6 +55,7 @@ function createSpireHarness(
         db,
         notifications,
         removeNotificationSubscription,
+        retrieveNotificationSubscriptions,
     };
 }
 
@@ -137,6 +139,64 @@ describe("Spire notify fanout", () => {
         expect(recipient.send).toHaveBeenCalledTimes(1);
         expect(other.send).not.toHaveBeenCalled();
         expect(clients).toEqual([recipient, other]);
+    });
+
+    it("uses headless Expo pushes for sender-owned mail while keeping websocket fanout", async () => {
+        const recipient = fakeClient({
+            getDeviceID: vi.fn(() => "device-b"),
+        });
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [{ id: "receipt-a", status: "ok" }],
+                }),
+            ok: true,
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { notifications, retrieveNotificationSubscriptions } =
+            createSpireHarness([recipient], [subscription]);
+
+        notifications.notify({
+            deviceID: "device-b",
+            event: "mail",
+            headlessPushUserID: "user-b",
+            transmissionID: "00000000-0000-0000-0000-000000000007",
+            userID: "user-b",
+        });
+
+        expect(recipient.send).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+        expect(retrieveNotificationSubscriptions).toHaveBeenCalledWith({
+            deviceID: "device-b",
+            event: "mail",
+            userID: "user-b",
+        });
+
+        const init = fetchMock.mock.calls[0]?.[1] as
+            | undefined
+            | { body?: unknown };
+        const messages = JSON.parse(String(init?.body)) as Array<{
+            _contentAvailable?: boolean;
+            body?: string;
+            channelId?: string;
+            data?: Record<string, unknown>;
+            tag?: string;
+            title?: string;
+        }>;
+        expect(messages[0]?._contentAvailable).toBe(true);
+        expect(messages[0]).not.toHaveProperty("body");
+        expect(messages[0]).not.toHaveProperty("channelId");
+        expect(messages[0]).not.toHaveProperty("tag");
+        expect(messages[0]).not.toHaveProperty("title");
+        expect(messages[0]?.data).toMatchObject({
+            deviceID: "device-b",
+            event: "mail",
+            headless: true,
+            transmissionID: "00000000-0000-0000-0000-000000000007",
+        });
     });
 
     it("checks Expo receipts and removes unregistered devices", async () => {

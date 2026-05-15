@@ -812,6 +812,7 @@ export class Spire extends EventEmitter {
                 crypto.randomUUID(),
                 null,
                 mail.recipient,
+                mail.authorID,
             );
         });
 
@@ -1074,10 +1075,12 @@ export class Spire extends EventEmitter {
         transmissionID: string,
         data?: unknown,
         deviceID?: string,
+        headlessPushUserID?: string,
     ): void {
         this.notifications.notify({
             data,
             event,
+            ...(headlessPushUserID ? { headlessPushUserID } : {}),
             transmissionID,
             userID,
             ...(deviceID ? { deviceID } : {}),
