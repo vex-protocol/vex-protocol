@@ -109,23 +109,33 @@ export class NotificationService {
         );
         if (pendingIDs.length === 0) return;
 
-        const res = await fetch(EXPO_RECEIPT_ENDPOINT, {
-            body: JSON.stringify({ ids: pendingIDs }),
-            headers: {
-                Accept: "application/json",
-                "Content-Type": "application/json",
-            },
-            method: "POST",
-        });
-
-        if (!res.ok) {
-            this.dropPendingReceipts(pendingIDs);
-            throw new Error(
-                `Expo receipt request failed with status ${res.status.toString()}`,
+        let payload: ParsedExpoReceiptResponse;
+        try {
+            const res = await fetchWithTimeout(
+                EXPO_RECEIPT_ENDPOINT,
+                {
+                    body: JSON.stringify({ ids: pendingIDs }),
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    method: "POST",
+                },
+                "Expo receipt request",
             );
+
+            if (!res.ok) {
+                throw new Error(
+                    `Expo receipt request failed with status ${res.status.toString()}`,
+                );
+            }
+
+            payload = parseExpoReceiptResponse(await res.json());
+        } catch (err: unknown) {
+            this.dropPendingReceipts(pendingIDs);
+            throw err;
         }
 
-        const payload = parseExpoReceiptResponse(await res.json());
         if (payload.errors.length > 0) {
             console.warn("[spire-notify] Expo receipt request errors", {
                 errors: payload.errors,
@@ -297,14 +307,18 @@ export class NotificationService {
             transmissionID: dispatch.transmissionID,
         });
 
-        const res = await fetchWithTimeout(EXPO_PUSH_ENDPOINT, {
-            body: JSON.stringify(messages),
-            headers: {
-                Accept: "application/json",
-                "Content-Type": "application/json",
+        const res = await fetchWithTimeout(
+            EXPO_PUSH_ENDPOINT,
+            {
+                body: JSON.stringify(messages),
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+                method: "POST",
             },
-            method: "POST",
-        });
+            "Expo push request",
+        );
 
         if (!res.ok) {
             const body = await res.text().catch(() => "");
@@ -424,6 +438,7 @@ function expoMessageForSubscription(
 async function fetchWithTimeout(
     input: string,
     init: RequestInit,
+    label: string,
 ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -441,7 +456,7 @@ async function fetchWithTimeout(
             (err.name === "AbortError" || err.name === "TimeoutError")
         ) {
             throw new Error(
-                `Expo push request timed out after ${EXPO_REQUEST_TIMEOUT_MS.toString()}ms`,
+                `${label} timed out after ${EXPO_REQUEST_TIMEOUT_MS.toString()}ms`,
                 { cause: err },
             );
         }

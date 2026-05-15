@@ -292,6 +292,94 @@ describe("Spire notify fanout", () => {
         });
     });
 
+    it("does not leave stale pending receipts after receipt fetch rejection", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: [{ id: "receipt-a", status: "ok" }],
+                    }),
+                ok: true,
+            })
+            .mockRejectedValueOnce(new Error("network unavailable"));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [subscription]);
+        const service = new NotificationService(db, [], () => {}, {
+            receiptDelayMs: 1,
+        });
+
+        service.notify({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000008",
+            userID: subscription.userID,
+        });
+
+        await vi.advanceTimersByTimeAsync(1);
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(pendingReceiptCount(service)).toBe(0);
+        });
+    });
+
+    it("does not leave stale pending receipts after receipt lookup timeout", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                json: () =>
+                    Promise.resolve({
+                        data: [{ id: "receipt-a", status: "ok" }],
+                    }),
+                ok: true,
+            })
+            .mockImplementationOnce((_input: string, init?: RequestInit) => {
+                return new Promise<Response>((_resolve, reject) => {
+                    const abortError = new Error("aborted");
+                    abortError.name = "AbortError";
+                    const signal = init?.signal;
+                    if (signal?.aborted) {
+                        reject(abortError);
+                        return;
+                    }
+                    signal?.addEventListener(
+                        "abort",
+                        () => {
+                            reject(abortError);
+                        },
+                        { once: true },
+                    );
+                });
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [subscription]);
+        const service = new NotificationService(db, [], () => {}, {
+            receiptDelayMs: 1,
+        });
+
+        service.notify({
+            deviceID: subscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000009",
+            userID: subscription.userID,
+        });
+
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        await vi.waitFor(() => {
+            expect(pendingReceiptCount(service)).toBe(0);
+        });
+    });
+
     it("sends Android Expo pushes on the mobile push channel", async () => {
         const fetchMock = vi.fn().mockResolvedValueOnce({
             json: () =>

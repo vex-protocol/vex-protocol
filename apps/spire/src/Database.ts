@@ -1245,37 +1245,7 @@ export class Database extends EventEmitter {
         input: SaveNotificationSubscriptionInput,
     ): Promise<NotificationSubscription> {
         const now = new Date().toISOString();
-        const existing = await this.db
-            .selectFrom("notification_subscriptions")
-            .selectAll()
-            .where("channel", "=", input.channel)
-            .where("deviceID", "=", input.deviceID)
-            .where("token", "=", input.token)
-            .executeTakeFirst();
-
         const events = encodeNotificationEvents(input.events);
-        if (existing) {
-            await this.db
-                .updateTable("notification_subscriptions")
-                .set({
-                    enabled: 1,
-                    events,
-                    platform: input.platform ?? null,
-                    updatedAt: now,
-                    userID: input.userID,
-                })
-                .where("subscriptionID", "=", existing.subscriptionID)
-                .execute();
-            return {
-                ...toNotificationSubscription(existing),
-                enabled: true,
-                events: decodeNotificationEvents(events),
-                platform: input.platform ?? null,
-                updatedAt: now,
-                userID: input.userID,
-            };
-        }
-
         const row = {
             channel: input.channel,
             createdAt: now,
@@ -1292,9 +1262,25 @@ export class Database extends EventEmitter {
         await this.db
             .insertInto("notification_subscriptions")
             .values(row)
+            .onConflict((oc) =>
+                oc.columns(["channel", "deviceID", "token"]).doUpdateSet({
+                    enabled: 1,
+                    events,
+                    platform: input.platform ?? null,
+                    updatedAt: now,
+                    userID: input.userID,
+                }),
+            )
             .execute();
 
-        return toNotificationSubscription(row);
+        const saved = await this.db
+            .selectFrom("notification_subscriptions")
+            .selectAll()
+            .where("channel", "=", input.channel)
+            .where("deviceID", "=", input.deviceID)
+            .where("token", "=", input.token)
+            .executeTakeFirstOrThrow();
+        return toNotificationSubscription(saved);
     }
 
     public async saveOTK(
