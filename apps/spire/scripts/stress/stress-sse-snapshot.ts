@@ -17,7 +17,7 @@ import type {
 const MAX_WIRE_FAILURES = 120;
 const MAX_WIRE_STACK = 10_000;
 const MAX_WIRE_MESSAGE = 4000;
-const MAX_WIRE_AXIOS_SNIPPET = 1200;
+const MAX_WIRE_HTTP_SNIPPET = 1200;
 const MAX_WIRE_RECENT_REQUESTS = 40;
 
 /** Snapshot safe for frequent `JSON.stringify` (SSE + optional /api/snapshot). */
@@ -45,20 +45,6 @@ function clipStrNum(s: string, maxLen: number): string {
     return `${s.slice(0, maxLen)}…`;
 }
 
-function slimAxios(
-    ax: StressFailureRecord["axios"],
-): StressFailureRecord["axios"] | undefined {
-    if (ax === undefined) {
-        return undefined;
-    }
-    const dataSnippet =
-        typeof ax.dataSnippet === "string" &&
-        ax.dataSnippet.length > MAX_WIRE_AXIOS_SNIPPET
-            ? `${ax.dataSnippet.slice(0, MAX_WIRE_AXIOS_SNIPPET)}…`
-            : ax.dataSnippet;
-    return { ...ax, dataSnippet };
-}
-
 function slimFailure(f: StressFailureRecord): StressFailureRecord {
     const stack =
         typeof f.stack === "string" && f.stack.length > MAX_WIRE_STACK
@@ -67,10 +53,24 @@ function slimFailure(f: StressFailureRecord): StressFailureRecord {
     const message = clipStrNum(f.message, MAX_WIRE_MESSAGE);
     return {
         ...f,
-        axios: slimAxios(f.axios),
+        http: slimHttp(f.http),
         message,
         stack,
     };
+}
+
+function slimHttp(
+    http: StressFailureRecord["http"],
+): StressFailureRecord["http"] | undefined {
+    if (http === undefined) {
+        return undefined;
+    }
+    const dataSnippet =
+        typeof http.dataSnippet === "string" &&
+        http.dataSnippet.length > MAX_WIRE_HTTP_SNIPPET
+            ? `${http.dataSnippet.slice(0, MAX_WIRE_HTTP_SNIPPET)}…`
+            : http.dataSnippet;
+    return { ...http, dataSnippet };
 }
 
 function slimRecent(r: StressRequestLogEntry): StressRequestLogEntry {

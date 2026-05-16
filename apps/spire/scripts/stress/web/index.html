@@ -2105,29 +2105,29 @@
                 return `${head}(\n${arg}\n)`;
             }
 
-            function formatAxiosBlock(ax) {
-                if (!ax || typeof ax !== "object") {
-                    return "(No Axios metadata on this sample.)";
+            function formatHttpBlock(http) {
+                if (!http || typeof http !== "object") {
+                    return "(No HTTP metadata on this sample.)";
                 }
                 const bits = [];
-                if (ax.method != null) {
-                    bits.push(`method: ${ax.method}`);
+                if (http.method != null) {
+                    bits.push(`method: ${http.method}`);
                 }
-                if (ax.url != null) {
-                    bits.push(`url: ${ax.url}`);
+                if (http.url != null) {
+                    bits.push(`url: ${http.url}`);
                 }
-                if (ax.status != null) {
+                if (http.status != null) {
                     bits.push(
-                        `status: ${ax.status} ${ax.statusText || ""}`.trim(),
+                        `status: ${http.status} ${http.statusText || ""}`.trim(),
                     );
                 }
-                if (ax.message) {
-                    bits.push(`message: ${ax.message}`);
+                if (http.message) {
+                    bits.push(`message: ${http.message}`);
                 }
-                if (ax.dataSnippet) {
-                    bits.push(`response body (snippet):\n${ax.dataSnippet}`);
+                if (http.dataSnippet) {
+                    bits.push(`response body (snippet):\n${http.dataSnippet}`);
                 }
-                return bits.length ? bits.join("\n") : "(Axios object empty)";
+                return bits.length ? bits.join("\n") : "(HTTP object empty)";
             }
 
             function fenceMarkdown(lang, body) {
@@ -2151,7 +2151,7 @@
                     callPath,
                     sample.requestInputs,
                 );
-                const httpTxt = formatAxiosBlock(sample.axios);
+                const httpTxt = formatHttpBlock(sample.http);
                 const stackTxt =
                     typeof sample.stack === "string" && sample.stack.length > 0
                         ? sample.stack
@@ -2206,7 +2206,7 @@
                     callPath,
                     sample.requestInputs,
                 );
-                const httpTxt = formatAxiosBlock(sample.axios);
+                const httpTxt = formatHttpBlock(sample.http);
                 const stackTxt =
                     typeof sample.stack === "string" && sample.stack.length > 0
                         ? sample.stack

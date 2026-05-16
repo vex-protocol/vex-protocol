@@ -9,6 +9,7 @@ catalog:
     "@types/node": ^25.6.0
     kysely: ^0.28.17
     msgpackr: ^1.11.9
+    tsx: 4.20.6
     typescript: 6.0.2
     uuid: ^14.0.0
     vitest: 4.1.4

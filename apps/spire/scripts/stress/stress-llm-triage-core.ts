@@ -10,8 +10,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 
-import axios from "axios";
-
+import { stressHttpGet, stressHttpPost } from "./stress-http.ts";
 import { STRESS_ISSUE_BUNDLE_PATH } from "./stress-issue-bundle.ts";
 import {
     firstClientProtocolCall,
@@ -266,7 +265,7 @@ export async function runLlmIssueTitleOnly(input: {
     const system =
         "You name stress-run incidents for engineers. Reply with exactly one line, no code fences: TITLE: <short plain-language name, max 72 characters>. Use only facts from the JSON. No other text.";
 
-    const res = await axios.post(
+    const res = await stressHttpPost(
         url,
         {
             max_tokens: 96,
@@ -374,7 +373,7 @@ export async function runLlmTriage(input: {
         ? triageFacetMinimalSystemPrompt()
         : triageSystemPrompt();
 
-    const res = await axios.post(
+    const res = await stressHttpPost(
         url,
         {
             messages: [
@@ -493,7 +492,7 @@ export function splitLlmTriageTitleMarkdown(raw: string): {
 export function triageFacetMinimalSystemPrompt(): string {
     return [
         "You triage one deduplicated stress **issue** (one correlationKey). JSON has: `focus` (protocolPath, primaryClientPath, surfaceTitle, correlationKey), `run` (scenario, spireHost, load shape), `samples` (1–2 rows).",
-        "Each sample may include: `harnessCall` (synthetic JS: Client API + sanitized args), `req` (sanitized requestInputs), `http` (method/status/url/body snippet when Axios), `stk` (trimmed Node `Error.stack` from the harness / libvex client), `message`.",
+        "Each sample may include: `harnessCall` (synthetic JS: Client API + sanitized args), `req` (sanitized requestInputs), `http` (method/status/url/body snippet), `stk` (trimmed Node `Error.stack` from the harness / libvex client), `message`.",
         "Use only those fields. `protocolPath` / `primaryClientPath` name the published API surface—align your wording with them.",
         "Do not invent stack frames, file paths, or root causes beyond the text given. Label guesses as suggestions.",
         "First line MUST be exactly `TITLE: <short plain-language name, max ~72 chars>` (like a human-written GitHub issue title). Second line blank. Then markdown: Summary (facts), Suggested checks (suggestions), Open questions.",
@@ -519,7 +518,7 @@ export function triageSystemPrompt(): string {
     ].join("\n");
 }
 
-function compactAxiosForLlm(ax: unknown): Record<string, unknown> | undefined {
+function compactHttpForLlm(ax: unknown): Record<string, unknown> | undefined {
     if (!isRecord(ax)) {
         return undefined;
     }
@@ -578,7 +577,7 @@ async function pickFirstListedModelId(
         return undefined;
     }
     try {
-        const res = await axios.get(modelsUrl, {
+        const res = await stressHttpGet(modelsUrl, {
             headers: getHeaders,
             timeout: 8_000,
             validateStatus: () => true,
@@ -648,7 +647,7 @@ function shrinkFacetSampleRow(s: unknown): Record<string, unknown> {
     const hc = s["harnessCall"];
     return {
         harnessCall: typeof hc === "string" ? truncateStr(hc, 1400) : undefined,
-        http: compactAxiosForLlm(s["axios"]),
+        http: compactHttpForLlm(s["http"]),
         message: truncateStr(sampleMessageString(s["message"]), 360),
         primaryClientPath: s["primaryClientPath"],
         protocolPath: s["protocolPath"],

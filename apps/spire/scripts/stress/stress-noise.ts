@@ -50,7 +50,7 @@ export interface NoiseWorld {
 
 const DURATIONS = ["1h", "24h", "48h", "7d"] as const;
 
-/** Noise op outcome; `cause` is the libvex/axios rejection when the Client path threw. */
+/** Noise op outcome; `cause` is the libvex HTTP rejection when the Client path threw. */
 export type NoiseOpOutcome = TrackSoftResult;
 
 type OpFn = (

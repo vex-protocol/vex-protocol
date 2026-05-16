@@ -106,7 +106,6 @@
     "dependencies": {
         "@vex-chat/crypto": "workspace:^",
         "@vex-chat/types": "workspace:^",
-        "axios": "1.15.2",
         "eventemitter3": "5.0.4",
         "kysely": "catalog:",
         "msgpackr": "catalog:",

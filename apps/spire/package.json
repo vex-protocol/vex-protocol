@@ -71,7 +71,6 @@
         "@vex-chat/eslint-config": "workspace:*",
         "@vex-chat/libvex": "workspace:^",
         "@vitest/eslint-plugin": "1.6.15",
-        "axios": "1.15.2",
         "eslint": "10.2.0",
         "eslint-config-prettier": "10.1.8",
         "eslint-plugin-n": "17.24.0",

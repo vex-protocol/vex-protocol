@@ -14,7 +14,6 @@ import { existsSync } from "node:fs";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 
-import axios from "axios";
 import Database from "better-sqlite3";
 
 import { DEV_API_KEY_HEADER } from "../../src/server/rateLimit.ts";
@@ -23,6 +22,7 @@ import {
     formatHttpExpectLine,
     type HttpExpectStats,
 } from "./stress-http-stats.ts";
+import { stressHttpGet } from "./stress-http.ts";
 import {
     type StressRunSummary,
     writeStressRunSummary,
@@ -419,17 +419,17 @@ export class StressDashboard {
             devKey.length > 0 ? { [DEV_API_KEY_HEADER]: devKey } : undefined;
 
         void Promise.all([
-            axios.get(statusUrl, {
+            stressHttpGet(statusUrl, {
                 headers: devHeaders,
                 timeout: 1200,
                 validateStatus: () => true,
             }),
-            axios.get(processUrl, {
+            stressHttpGet(processUrl, {
                 headers: devHeaders,
                 timeout: 1200,
                 validateStatus: () => true,
             }),
-            axios.get(sqliteUrl, {
+            stressHttpGet(sqliteUrl, {
                 headers: devHeaders,
                 timeout: 1200,
                 validateStatus: () => true,
