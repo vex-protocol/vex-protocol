@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.6.1
+
+### Patch Changes
+
+- [#142](https://github.com/vex-protocol/vex-protocol/pull/142) [`e791d28`](https://github.com/vex-protocol/vex-protocol/commit/e791d28439711d684b2d2c51e10f125c0de80726) Thanks [@yuki111888](https://github.com/yuki111888)! - Publish the patched Axios dependency in the libvex package manifest.
+
 ## 6.6.0
 
 ### Minor Changes
