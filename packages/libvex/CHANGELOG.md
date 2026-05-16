@@ -359,7 +359,7 @@
     - **`@vex-chat/crypto@2.0.0`** is now the only crypto dep. Previously libvex pulled `tweetnacl` directly; that and several other transitive deps are gone — see "Removed dependencies" below.
 
     ### Authentication & transport
-    - **Per-client axios with Bearer auth.** Previously libvex relied on shared cookies via the global `axios` default. Now each `Client` instance gets its own `AxiosInstance` and authenticates via `Authorization: Bearer <token>`. Consumers no longer need to share cookie state between clients in the same process. (ADR-008)
+    - **Per-client HTTP transport with Bearer auth.** Previously libvex relied on shared cookies via global HTTP client defaults. Now each `Client` instance gets its own transport and authenticates via `Authorization: Bearer <token>`. Consumers no longer need to share cookie state between clients in the same process. (ADR-008)
     - **Post-connection WebSocket auth.** The WS handshake now negotiates auth after the socket opens, with an event-loop yield in between, fixing a race that broke auth on slow connections. (ADR-006)
     - **`Client.loginWithDeviceKey()`** — passwordless auto-login using a previously-registered device key. Skips the `register` + `login` round-trip on subsequent app launches. (ADR-007)
     - **`Client.deleteAllData()`** — public method that purges message history, encryption sessions, and prekeys, then closes the client. Credentials (keychain entries) must still be cleared by the embedding app.
@@ -423,15 +423,15 @@ The WS handshake used to negotiate auth before the socket was fully open, which 
 
 New `Client.loginWithDeviceKey()` method. After a one-time `register` + `login` round-trip, the device's persistent key is enough to re-authenticate without a password on subsequent app launches. Apps that need biometric or PIN gating can wrap this however they like — libvex just needs the device key.
 
-### ADR-008: per-client axios with Bearer auth
+### ADR-008: per-client HTTP transport with Bearer auth
 
-Previously every `Client` instance shared the global `axios` default and authenticated via cookies. That meant:
+Previously every `Client` instance shared global HTTP client defaults and authenticated via cookies. That meant:
 
 - Multiple `Client` instances in one process collided on auth state.
 - Cookie handling needed simulation in test transports.
 - Browser cookie policies (SameSite, third-party blocking) were a constant source of friction.
 
-Now each `Client` gets its own `AxiosInstance` and authenticates via `Authorization: Bearer <token>` on every REST call. Cookies are gone from the libvex codebase entirely. Test transports lost their cookie-simulation layer as a side benefit.
+Now each `Client` gets its own HTTP transport and authenticates via `Authorization: Bearer <token>` on every REST call. Cookies are gone from the libvex codebase entirely. Test transports lost their cookie-simulation layer as a side benefit.
 
 ### Other features
 

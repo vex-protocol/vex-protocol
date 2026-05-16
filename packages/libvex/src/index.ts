@@ -41,6 +41,12 @@ export type {
     VexFile,
 } from "./Client.js";
 export { createCodec, msgpack } from "./codec.js";
+export { HttpError, isHttpError } from "./http.js";
+export type {
+    HttpErrorOptions,
+    HttpRequestRecord,
+    HttpResponse,
+} from "./http.js";
 export {
     clampLocalMessageRetentionDays,
     effectiveMessageRetentionHintDays,

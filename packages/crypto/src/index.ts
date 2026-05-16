@@ -382,7 +382,7 @@ function toBufferSource(bytes: Uint8Array): ArrayBuffer {
 
 // msgpackr with useRecords:false emits standard msgpack (no nonstandard record extension).
 // moreTypes:false keeps the extension set to only what other decoders understand.
-// pack() returns Node Buffer (tight view) so consumers like axios send the correct bytes.
+// pack() returns Node Buffer (tight view) so HTTP clients send the correct bytes.
 const packer = new Packr({ moreTypes: false, useRecords: false });
 const msgpackEncode = packer.pack.bind(packer);
 const msgpackDecode = packer.unpack.bind(packer);

@@ -32,8 +32,7 @@ import type { Storage } from "../../Storage.js";
 
 import { getCryptoProfile, setCryptoProfile } from "@vex-chat/crypto";
 
-import { isAxiosError } from "axios";
-
+import { isHttpError } from "../../http.js";
 import { Client } from "../../index.js";
 
 import { testFile, testImage } from "./fixtures.js";
@@ -685,7 +684,7 @@ async function withTransientRetry<T>(fn: () => Promise<T>): Promise<T> {
         } catch (e) {
             last = e;
             const transient =
-                isAxiosError(e) &&
+                isHttpError(e) &&
                 (e.response?.status === 502 || e.response?.status === 503);
             if (transient && i < attempts - 1) {
                 await new Promise((r) => setTimeout(r, 400 * (i + 1)));

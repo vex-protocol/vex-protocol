@@ -7,9 +7,11 @@
 import { inspect } from "node:util";
 
 /**
- * Rich stderr for unhandled stress harness errors (Spire 5 JSON bodies, axios metadata).
+ * Rich stderr for unhandled stress harness errors (Spire 5 JSON bodies, HTTP metadata).
  */
-import { isAxiosError } from "axios";
+import { isHttpError } from "@vex-chat/libvex";
+
+import { isStressHttpError } from "./stress-http.ts";
 
 const MAX_SNIP = 6_000;
 
@@ -17,17 +19,15 @@ const MAX_SNIP = 6_000;
  * Use in `spire-stress` top-level `catch` so CI logs are actionable (not one opaque line).
  */
 export function formatStressUncaughtError(err: unknown): string {
-    if (isAxiosError(err)) {
-        const lines: string[] = ["[axios]"];
+    if (isHttpError(err) || isStressHttpError(err)) {
+        const lines: string[] = ["[http]"];
         if (err.response) {
             const r = err.response;
             const st = String(r.status);
             lines.push(`  status: ${st} ${r.statusText}`.trim());
-            const cfg = r.config;
-            const method = (cfg.method ?? "?").toUpperCase();
-            const base = cfg.baseURL ?? "";
-            const path = cfg.url ?? "";
-            lines.push(`  request: ${method} ${base}${path}`);
+            const cfg = err.config;
+            const method = cfg.method.toUpperCase();
+            lines.push(`  request: ${method} ${cfg.url}`);
             if (r.data !== undefined) {
                 let d: string;
                 if (r.data instanceof ArrayBuffer) {
@@ -42,9 +42,13 @@ export function formatStressUncaughtError(err: unknown): string {
                     d = r.data;
                 } else {
                     try {
-                        d = JSON.stringify(r.data);
+                        const json = JSON.stringify(r.data);
+                        d =
+                            typeof json === "string"
+                                ? json
+                                : Object.prototype.toString.call(r.data);
                     } catch {
-                        d = String(r.data);
+                        d = Object.prototype.toString.call(r.data);
                     }
                 }
                 d = d.length > MAX_SNIP ? d.slice(0, MAX_SNIP) + "…" : d;
@@ -53,7 +57,7 @@ export function formatStressUncaughtError(err: unknown): string {
         } else {
             lines.push("  (no response — network / DNS / connection refused?)");
         }
-        lines.push(`  axios.message: ${err.message}`);
+        lines.push(`  http.message: ${err.message}`);
         if (err.code !== undefined) {
             lines.push(`  code: ${err.code}`);
         }

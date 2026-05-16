@@ -5,12 +5,14 @@
  */
 
 /**
- * Count libvex HTTP outcomes (success vs Axios status vs other errors).
+ * Count libvex HTTP outcomes (success vs HTTP status vs other errors).
  */
-import { isAxiosError } from "axios";
+import { isHttpError } from "@vex-chat/libvex";
+
+import { isStressHttpError } from "./stress-http.ts";
 
 export interface HttpExpectStats {
-    /** Non-2xx or Axios errors with a response status. */
+    /** Non-2xx or HTTP errors with a response status. */
     byStatus: Record<number, number>;
     /** Successful round-trips we explicitly counted (2xx implied). */
     ok: number;
@@ -72,7 +74,10 @@ export function httpFailureTotal(stats: HttpExpectStats): number {
 }
 
 export function recordHttpFailure(stats: HttpExpectStats, err: unknown): void {
-    if (isAxiosError(err) && typeof err.response?.status === "number") {
+    if (
+        (isHttpError(err) || isStressHttpError(err)) &&
+        typeof err.response?.status === "number"
+    ) {
         const c = err.response.status;
         stats.byStatus[c] = (stats.byStatus[c] ?? 0) + 1;
     } else {

@@ -30,7 +30,7 @@ The client implements an X3DH-style handshake (X25519 DH + KDF), XSalsa20-Poly13
 npm install @vex-chat/libvex
 ```
 
-`@vex-chat/types`, `@vex-chat/crypto`, `axios`, `eventemitter3`, `kysely`, `msgpackr`, `uuid`, and `zod` are required runtime dependencies and install automatically.
+`@vex-chat/types`, `@vex-chat/crypto`, `eventemitter3`, `kysely`, `msgpackr`, `uuid`, and `zod` are required runtime dependencies and install automatically. HTTP calls use the native `fetch` runtime API.
 
 `better-sqlite3` is an **optional peer dependency** — install it explicitly only if you plan to use the SQLite storage backend on Node:
 

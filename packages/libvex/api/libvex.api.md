@@ -4,7 +4,6 @@
 
 ```ts
 
-import { AxiosError } from 'axios';
 import { Channel } from '@vex-chat/types';
 import { Device } from '@vex-chat/types';
 import type { Emoji } from '@vex-chat/types';
@@ -207,6 +206,55 @@ export interface Files {
     retrieve: (fileID: string, key: string) => Promise<FileResponse | null>;
 }
 
+// @public (undocumented)
+export class HttpError extends Error {
+    constructor(message: string, options: HttpErrorOptions);
+    // (undocumented)
+    readonly code?: string;
+    // (undocumented)
+    readonly config: HttpRequestRecord;
+    // (undocumented)
+    readonly isHttpError = true;
+    // (undocumented)
+    readonly response?: HttpResponse<unknown>;
+}
+
+// @public (undocumented)
+export interface HttpErrorOptions {
+    // (undocumented)
+    readonly cause?: unknown;
+    // (undocumented)
+    readonly code?: string;
+    // (undocumented)
+    readonly config: HttpRequestRecord;
+    // (undocumented)
+    readonly response?: HttpResponse<unknown>;
+}
+
+// @public (undocumented)
+export interface HttpRequestRecord {
+    // (undocumented)
+    readonly headers: Readonly<Record<string, string>>;
+    // (undocumented)
+    readonly method: string;
+    // (undocumented)
+    readonly url: string;
+}
+
+// @public (undocumented)
+export interface HttpResponse<T = ArrayBuffer> {
+    // (undocumented)
+    readonly config: HttpRequestRecord;
+    // (undocumented)
+    readonly data: T;
+    // (undocumented)
+    readonly headers: Readonly<Record<string, string>>;
+    // (undocumented)
+    readonly status: number;
+    // (undocumented)
+    readonly statusText: string;
+}
+
 export { Invite }
 
 // @public (undocumented)
@@ -215,6 +263,9 @@ export interface Invites {
     redeem: (inviteID: string) => Promise<Permission>;
     retrieve: (serverID: string) => Promise<Invite[]>;
 }
+
+// @public (undocumented)
+export function isHttpError(err: unknown): err is HttpError;
 
 // @public
 export interface KeyPair {
@@ -541,7 +592,7 @@ export interface User {
 // @public (undocumented)
 export interface Users {
     familiars: () => Promise<User[]>;
-    retrieve: (userID: string) => Promise<[null | User, AxiosError | null]>;
+    retrieve: (userID: string) => Promise<[null | User, HttpError | null]>;
 }
 
 // @public
