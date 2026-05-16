@@ -39,6 +39,7 @@
     },
     "dependencies": {
         "@vex-chat/libvex": "workspace:^",
+        "better-sqlite3": "11.10.0",
         "msgpackr": "catalog:"
     },
     "devDependencies": {
