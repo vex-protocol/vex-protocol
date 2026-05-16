@@ -100,7 +100,7 @@ export interface DevicePayload {
     // (undocumented)
     signKey: string;
     // (undocumented)
-    username: string;
+    username?: string | undefined;
 }
 
 // @public
@@ -316,6 +316,63 @@ export interface NotifyMsg extends BaseMsg {
 export const NotifyMsgSchema: z.ZodType<NotifyMsg>;
 
 // @public
+export interface Passkey {
+    // (undocumented)
+    createdAt: string;
+    // (undocumented)
+    lastUsedAt: null | string;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    passkeyID: string;
+    transports: string[];
+    // (undocumented)
+    userID: string;
+}
+
+// @public
+export interface PasskeyAuthenticationOptions {
+    // (undocumented)
+    options: PublicKeyCredentialRequestOptionsJSON;
+    // (undocumented)
+    requestID: string;
+}
+
+// @public (undocumented)
+export const PasskeyAuthFinishPayloadSchema: z.ZodType<{
+    requestID: string;
+    response: Record<string, unknown>;
+}>;
+
+// @public (undocumented)
+export const PasskeyAuthStartPayloadSchema: z.ZodType<{
+    username: string;
+}>;
+
+// @public (undocumented)
+export const PasskeyRegistrationFinishPayloadSchema: z.ZodType<{
+    name: string;
+    requestID: string;
+    response: Record<string, unknown>;
+}>;
+
+// @public
+export interface PasskeyRegistrationOptions {
+    // (undocumented)
+    options: PublicKeyCredentialCreationOptionsJSON;
+    // (undocumented)
+    requestID: string;
+}
+
+// @public (undocumented)
+export const PasskeyRegistrationStartPayloadSchema: z.ZodType<{
+    name: string;
+}>;
+
+// @public (undocumented)
+export const PasskeySchema: z.ZodType<Passkey>;
+
+// @public
 export interface Permission {
     // (undocumented)
     permissionID: string;
@@ -377,6 +434,84 @@ export type PreKeysWS = KeyBundleEntry;
 // @public
 export const PreKeysWSSchema: z.ZodType<PreKeysWS>;
 
+// @public (undocumented)
+export interface PublicKeyCredentialCreationOptionsJSON {
+    // (undocumented)
+    attestation?: string;
+    // (undocumented)
+    authenticatorSelection?: {
+        authenticatorAttachment?: "cross-platform" | "platform";
+        requireResidentKey?: boolean;
+        residentKey?: "discouraged" | "preferred" | "required";
+        userVerification?: "discouraged" | "preferred" | "required";
+    };
+    // (undocumented)
+    challenge: string;
+    // (undocumented)
+    excludeCredentials?: PublicKeyCredentialDescriptorJSON[];
+    // (undocumented)
+    extensions?: Record<string, unknown>;
+    // (undocumented)
+    pubKeyCredParams: {
+        alg: number;
+        type: "public-key";
+    }[];
+    // (undocumented)
+    rp: {
+        id?: string;
+        name: string;
+    };
+    // (undocumented)
+    timeout?: number;
+    // (undocumented)
+    user: {
+        displayName: string;
+        id: string;
+        name: string;
+    };
+}
+
+// @public (undocumented)
+export interface PublicKeyCredentialDescriptorJSON {
+    // (undocumented)
+    id: string;
+    // (undocumented)
+    transports?: string[];
+    // (undocumented)
+    type: "public-key";
+}
+
+// @public (undocumented)
+export interface PublicKeyCredentialRequestOptionsJSON {
+    // (undocumented)
+    allowCredentials?: PublicKeyCredentialDescriptorJSON[];
+    // (undocumented)
+    challenge: string;
+    // (undocumented)
+    extensions?: Record<string, unknown>;
+    // (undocumented)
+    rpId?: string;
+    // (undocumented)
+    timeout?: number;
+    // (undocumented)
+    userVerification?: "discouraged" | "preferred" | "required";
+}
+
+// @public
+export interface RatchetHeader {
+    // (undocumented)
+    dhPub: Uint8Array;
+    // (undocumented)
+    n: number;
+    // (undocumented)
+    pn: number;
+    // (undocumented)
+    version: 1;
+}
+
+// @public
+export const RatchetHeaderSchema: z.ZodType<RatchetHeader>;
+
 // @public
 export interface ReceiptMsg extends BaseMsg {
     // (undocumented)
@@ -391,7 +526,7 @@ export const ReceiptMsgSchema: z.ZodType<ReceiptMsg>;
 // @public
 export interface RegistrationPayload extends DevicePayload {
     // (undocumented)
-    password: string;
+    password?: string | undefined;
 }
 
 // @public
@@ -434,12 +569,33 @@ export interface Server {
 }
 
 // @public
+export interface ServerChannelBootstrap {
+    // (undocumented)
+    channelsByServer: Record<string, Channel[]>;
+    // (undocumented)
+    servers: Server[];
+}
+
+// @public
+export const ServerChannelBootstrapSchema: z.ZodType<ServerChannelBootstrap>;
+
+// @public
 export const ServerSchema: z.ZodType<Server>;
 
 // @public
 export interface SessionSQL {
     // (undocumented)
+    CKr: null | string;
+    // (undocumented)
+    CKs: null | string;
+    // (undocumented)
     deviceID: string;
+    // (undocumented)
+    DHr: null | string;
+    // (undocumented)
+    DHsPrivate: string;
+    // (undocumented)
+    DHsPublic: string;
     // (undocumented)
     fingerprint: string;
     // (undocumented)
@@ -447,11 +603,21 @@ export interface SessionSQL {
     // (undocumented)
     mode: "initiator" | "receiver";
     // (undocumented)
+    Nr: number;
+    // (undocumented)
+    Ns: number;
+    // (undocumented)
+    PN: number;
+    // (undocumented)
     publicKey: string;
+    // (undocumented)
+    RK: string;
     // (undocumented)
     sessionID: string;
     // (undocumented)
     SK: string;
+    // (undocumented)
+    skippedKeys: string;
     // (undocumented)
     userID: string;
     // (undocumented)

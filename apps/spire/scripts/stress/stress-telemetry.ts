@@ -11,7 +11,7 @@ import type { StressLoadPacing } from "./stress-load-pacing.ts";
 
 import { randomUUID } from "node:crypto";
 
-import { isAxiosError } from "axios";
+import { isHttpError } from "@vex-chat/libvex";
 
 import {
     facetIdsForScenario,
@@ -25,6 +25,7 @@ import {
     type StressFailureGroupRow,
 } from "./stress-correlation.ts";
 import { type HttpExpectStats, settleOne } from "./stress-http-stats.ts";
+import { isStressHttpError } from "./stress-http.ts";
 import {
     facetToLibvexSurface,
     formatHarnessCallNotation,
@@ -44,7 +45,12 @@ export interface StressFacetErrorGroupRow {
 
 export interface StressFailureRecord {
     readonly at: number;
-    readonly axios?: Readonly<{
+    readonly burst: number;
+    readonly clientIndex?: number;
+    /** Stable key from libvex `protocolPath` + normalized message + top stack line. */
+    readonly correlationKey: string;
+    readonly extraContext?: Readonly<Record<string, unknown>>;
+    readonly http?: Readonly<{
         readonly dataSnippet: null | string;
         readonly message: null | string;
         readonly method: null | string;
@@ -52,11 +58,6 @@ export interface StressFailureRecord {
         readonly statusText: null | string;
         readonly url: null | string;
     }>;
-    readonly burst: number;
-    readonly clientIndex?: number;
-    /** Stable key from libvex `protocolPath` + normalized message + top stack line. */
-    readonly correlationKey: string;
-    readonly extraContext?: Readonly<Record<string, unknown>>;
     readonly id: string;
     /** Primary libvex / API surface label (from facet catalog). */
     readonly libvexSurface: string;
@@ -169,10 +170,8 @@ function clipStoredStack(stack: string | undefined): string | undefined {
     return `${stack.slice(0, MAX_STORED_STACK_CHARS)}\n… [truncated ${String(stack.length - MAX_STORED_STACK_CHARS)} chars]`;
 }
 
-function serializeAxios(
-    err: unknown,
-): StressFailureRecord["axios"] | undefined {
-    if (!isAxiosError(err)) {
+function serializeHttp(err: unknown): StressFailureRecord["http"] | undefined {
+    if (!isHttpError(err) && !isStressHttpError(err)) {
         return undefined;
     }
     const st = err.response?.status;
@@ -189,13 +188,10 @@ function serializeAxios(
     return {
         dataSnippet,
         message: err.message,
-        method: err.config?.method?.toUpperCase() ?? null,
+        method: err.config.method.toUpperCase(),
         status: typeof st === "number" ? st : null,
         statusText: err.response?.statusText ?? null,
-        url:
-            typeof err.config?.url === "string"
-                ? err.config.url
-                : (err.config?.baseURL ?? null),
+        url: err.config.url,
     };
 }
 
@@ -482,11 +478,11 @@ export class StressTelemetry {
                 : undefined;
         const rec: StressFailureRecord = {
             at: Date.now(),
-            axios: serializeAxios(err),
             burst: ctx.burst,
             clientIndex: ctx.clientIndex,
             correlationKey,
             extraContext,
+            http: serializeHttp(err),
             id: randomUUID(),
             libvexSurface,
             message,
@@ -616,7 +612,6 @@ export class StressTelemetry {
                 : undefined;
         return {
             at: f.at,
-            axios: f.axios,
             burst: f.burst,
             clientIndex: f.clientIndex,
             clientSurfaceKey: f.surfaceKey,
@@ -625,6 +620,7 @@ export class StressTelemetry {
                 f.protocolPath,
                 f.requestInputs,
             ),
+            http: f.http,
             message: f.message,
             primaryClientPath: facetToLibvexSurface(f.surfaceKey),
             protocolPath: f.protocolPath,

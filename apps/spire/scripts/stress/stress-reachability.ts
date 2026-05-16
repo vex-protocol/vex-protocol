@@ -8,12 +8,17 @@
  * Classify errors where Spire is probably not running or not reachable on HTTP.
  * Used only to improve stress harness UX — no root-cause guessing beyond transport.
  */
-import { isAxiosError } from "axios";
+import { isHttpError } from "@vex-chat/libvex";
+
+import { isStressHttpError } from "./stress-http.ts";
 
 const UNREACHABLE_BANNER = "── Spire stress: target server unreachable ──";
 
 export function isLikelySpireDown(err: unknown): boolean {
-    if (isAxiosError(err) && err.response === undefined) {
+    if (
+        (isHttpError(err) || isStressHttpError(err)) &&
+        err.response === undefined
+    ) {
         return true;
     }
     if (!(err instanceof Error)) {

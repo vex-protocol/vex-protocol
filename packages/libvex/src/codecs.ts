@@ -8,7 +8,7 @@
  * Pre-built codec instances for every HTTP response type.
  *
  * Usage: import { UserCodec } from "./codecs.js";
- *        const data = decodeAxios(UserCodec, res.data);
+ *        const data = decodeHttpResponse(UserCodec, res.data);
  *
  * decode() returns typed data without runtime validation (SDK trusts server).
  * For trust boundary validation, use codec.decodeSafe() directly.
@@ -190,18 +190,15 @@ export const PasskeyAuthFinishResponseCodec = createCodec(
     }),
 );
 
-// ── Helper: decode axios response buffer ────────────────────────────────────
+// ── Helper: decode binary HTTP response buffer ──────────────────────────────
 
 /**
- * Decode an axios arraybuffer response with a typed codec.
+ * Decode a binary HTTP response with a typed codec.
  * Uses decodeSafe (Zod-validated) so schema mismatches surface immediately.
  */
-export function decodeAxios<T>(
+export function decodeHttpResponse<T>(
     codec: { decodeSafe: (data: Uint8Array) => T },
-    /**
-     * Accepts `unknown` because axios types its `responseType: 'arraybuffer'`
-     * responses as `any`. At runtime this is always an `ArrayBuffer`.
-     */
+    /** Accepts `unknown` so callers can pass transport response data directly. */
     data: unknown,
 ): T {
     if (data instanceof Uint8Array) {
@@ -210,5 +207,5 @@ export function decodeAxios<T>(
     if (data instanceof ArrayBuffer) {
         return codec.decodeSafe(new Uint8Array(data));
     }
-    throw new Error("Expected Uint8Array or ArrayBuffer from axios response");
+    throw new Error("Expected Uint8Array or ArrayBuffer from HTTP response");
 }

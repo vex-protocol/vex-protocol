@@ -39,7 +39,6 @@ import type {
     SessionSQL,
 } from "@vex-chat/types";
 import type { ClientMessage } from "@vex-chat/types";
-import type { AxiosInstance } from "axios";
 
 import {
     type CryptoProfile,
@@ -76,11 +75,16 @@ import {
     WSMessageSchema,
 } from "@vex-chat/types";
 
-import axios, { type AxiosError, isAxiosError } from "axios";
 import { EventEmitter } from "eventemitter3";
 import * as uuid from "uuid";
 import { z } from "zod/v4";
 
+import {
+    createFetchHttpClient,
+    type FetchHttpClient,
+    type HttpError,
+    isHttpError,
+} from "./http.js";
 import {
     clampLocalMessageRetentionDays,
     formatVexRetentionEnvelope,
@@ -317,7 +321,7 @@ import {
     ChannelArrayCodec,
     ChannelCodec,
     ConnectResponseCodec,
-    decodeAxios,
+    decodeHttpResponse,
     DeviceArrayCodec,
     DeviceChallengeCodec,
     DeviceCodec,
@@ -665,6 +669,20 @@ export interface NotificationSubscription {
     updatedAt: string;
     userID: string;
 }
+
+const NotificationSubscriptionSchema: z.ZodType<NotificationSubscription> =
+    z.object({
+        channel: z.literal("expo"),
+        createdAt: z.string(),
+        deviceID: z.string(),
+        enabled: z.boolean(),
+        events: z.array(z.string()),
+        platform: z.string().nullable(),
+        subscriptionID: z.string(),
+        token: z.string(),
+        updatedAt: z.string(),
+        userID: z.string(),
+    });
 
 export interface NotificationSubscriptionInput {
     channel: "expo";
@@ -1032,7 +1050,7 @@ export interface Users {
     /**
      * Looks up a user by user ID, username, or signing key.
      */
-    retrieve: (userID: string) => Promise<[null | User, AxiosError | null]>;
+    retrieve: (userID: string) => Promise<[null | User, HttpError | null]>;
 }
 
 /**
@@ -1439,8 +1457,8 @@ export class Client {
     private firstMailFetch = true;
     private readonly forwarded = new Set<string>();
     private readonly host: string;
-    private readonly http: AxiosInstance;
-    /** Cancels in-flight axios work on `close()` so `postAuth`/`getMail` cannot hang forever. */
+    private readonly http: FetchHttpClient;
+    /** Cancels in-flight HTTP work on `close()` so `postAuth`/`getMail` cannot hang forever. */
     private readonly httpAbortController = new AbortController();
     private readonly idKeys: KeyPair | null;
     private isAlive: boolean = true;
@@ -1451,14 +1469,6 @@ export class Client {
     private readonly mailInterval?: NodeJS.Timeout;
 
     private manuallyClosing: boolean = false;
-    /**
-     * Node-only: per-client HTTP(S) agents (see `init()` + `storage/node/http-agents`).
-     * Dropped on `close()` so idle keep-alive sockets do not keep the process alive.
-     */
-    private nodeHttpAgents?: {
-        http: { destroy(): void };
-        https: { destroy(): void };
-    };
     /* Retrieves the userID with the user identifier.
     user identifier is checked for userID, then signkey,
     and finally falls back to username. */
@@ -1544,7 +1554,7 @@ export class Client {
             void this.close(true);
         });
 
-        this.http = axios.create({
+        this.http = createFetchHttpClient({
             responseType: "arraybuffer",
             signal: this.httpAbortController.signal,
         });
@@ -1755,32 +1765,6 @@ export class Client {
     }
 
     /**
-     * True when running under Node (has `process.versions`).
-     * Uses indirect lookup so the bare `process` global never appears in
-     * source that the platform-guard plugin scans.
-     */
-    private static isNodeRuntime(): boolean {
-        try {
-            const g = Object.getOwnPropertyDescriptor(
-                globalThis,
-                "\u0070rocess",
-            );
-            if (!g) return false;
-            const proc: unknown =
-                typeof g.get === "function" ? g.get() : g.value;
-            if (typeof proc !== "object" || proc === null) {
-                return false;
-            }
-            return (
-                "versions" in proc &&
-                typeof (proc as { versions?: unknown }).versions === "object"
-            );
-        } catch {
-            return false;
-        }
-    }
-
-    /**
      * Closes the client — disconnects the WebSocket, shuts down storage,
      * and emits `closed` unless `muteEvent` is `true`.
      *
@@ -1796,12 +1780,6 @@ export class Client {
         this.httpAbortController.abort();
         this.socket.close();
         await this.database.close();
-
-        if (this.nodeHttpAgents) {
-            this.nodeHttpAgents.http.destroy();
-            this.nodeHttpAgents.https.destroy();
-            delete this.nodeHttpAgents;
-        }
 
         if (this.pingInterval) {
             clearInterval(this.pingInterval);
@@ -1855,7 +1833,10 @@ export class Client {
             msgpack.encode({ signed: signedAsync }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        const { deviceToken } = decodeAxios(ConnectResponseCodec, res.data);
+        const { deviceToken } = decodeHttpResponse(
+            ConnectResponseCodec,
+            res.data,
+        );
         this.http.defaults.headers.common["X-Device-Token"] = deviceToken;
 
         this.autoReconnectEnabled = true;
@@ -1937,14 +1918,17 @@ export class Client {
                     headers: { "Content-Type": "application/msgpack" },
                 },
             );
-            const { token, user } = decodeAxios(AuthResponseCodec, res.data);
+            const { token, user } = decodeHttpResponse(
+                AuthResponseCodec,
+                res.data,
+            );
 
             this.setUser(user);
             this.token = token;
             this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
             return { ok: true };
         } catch (err: unknown) {
-            if (isAxiosError(err) && err.response) {
+            if (isHttpError(err) && err.response) {
                 return {
                     error: spireErrorBodyMessage(err.response.data),
                     ok: false,
@@ -1979,7 +1963,7 @@ export class Client {
                 }),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            const { challenge, challengeID } = decodeAxios(
+            const { challenge, challengeID } = decodeHttpResponse(
                 DeviceChallengeCodec,
                 challengeRes.data,
             );
@@ -1996,7 +1980,7 @@ export class Client {
                 msgpack.encode({ challengeID, signed }),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            const { token, user } = decodeAxios(
+            const { token, user } = decodeHttpResponse(
                 AuthResponseCodec,
                 verifyRes.data,
             );
@@ -2150,7 +2134,7 @@ export class Client {
                 let didDecodeRegisterResponse = false;
                 let pendingApproval: null | PendingDeviceRegistration = null;
                 try {
-                    const { device, token, user } = decodeAxios(
+                    const { device, token, user } = decodeHttpResponse(
                         RegisterResponseCodec,
                         res.data,
                     );
@@ -2165,7 +2149,7 @@ export class Client {
 
                 if (!didDecodeRegisterResponse) {
                     try {
-                        pendingApproval = decodeAxios(
+                        pendingApproval = decodeHttpResponse(
                             RegisterPendingApprovalCodec,
                             res.data,
                         );
@@ -2186,7 +2170,7 @@ export class Client {
                             }),
                         ];
                     }
-                    const legacyUser = decodeAxios(UserCodec, res.data);
+                    const legacyUser = decodeHttpResponse(UserCodec, res.data);
                     this.setUser(legacyUser);
 
                     // Legacy servers require /auth after /register to get a JWT.
@@ -2206,7 +2190,7 @@ export class Client {
                 }
                 return [this.getUser(), null];
             } catch (err: unknown) {
-                if (isAxiosError(err) && err.response) {
+                if (isHttpError(err) && err.response) {
                     return [
                         null,
                         new Error(spireErrorBodyMessage(err.response.data)),
@@ -2246,7 +2230,7 @@ export class Client {
     public async subscribeNotifications(
         input: NotificationSubscriptionInput,
     ): Promise<NotificationSubscription> {
-        const response = await this.http.post<NotificationSubscription>(
+        const response = await this.http.post(
             this.getHost() +
                 "/device/" +
                 this.getDevice().deviceID +
@@ -2254,7 +2238,7 @@ export class Client {
             input,
             { responseType: "json" },
         );
-        return response.data;
+        return NotificationSubscriptionSchema.parse(response.data);
     }
 
     /**
@@ -2309,7 +2293,7 @@ export class Client {
     }> {
         const res = await this.http.post(this.getHost() + "/whoami");
 
-        const whoami = decodeAxios(WhoamiCodec, res.data);
+        const whoami = decodeHttpResponse(WhoamiCodec, res.data);
         return whoami;
     }
 
@@ -2380,7 +2364,7 @@ export class Client {
             msgpack.encode({ signed }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(DeviceCodec, response.data);
+        return decodeHttpResponse(DeviceCodec, response.data);
     }
 
     private async beginPasskeyAuthentication(username: string): Promise<{
@@ -2393,7 +2377,7 @@ export class Client {
             msgpack.encode({ username }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(PasskeyOptionsCodec, response.data);
+        return decodeHttpResponse(PasskeyOptionsCodec, response.data);
     }
 
     private async beginPasskeyRegistration(name: string): Promise<{
@@ -2407,7 +2391,7 @@ export class Client {
             msgpack.encode({ name }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(PasskeyOptionsCodec, response.data);
+        return decodeHttpResponse(PasskeyOptionsCodec, response.data);
     }
 
     private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
@@ -2432,7 +2416,7 @@ export class Client {
             msgpack.encode(body),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(ChannelCodec, res.data);
+        return decodeHttpResponse(ChannelCodec, res.data);
     }
 
     // returns the file details and the encryption key
@@ -2477,7 +2461,10 @@ export class Client {
                         },
                     },
                 );
-                const fcreatedFile = decodeAxios(FileSQLCodec, fres.data);
+                const fcreatedFile = decodeHttpResponse(
+                    FileSQLCodec,
+                    fres.data,
+                );
 
                 return [fcreatedFile, XUtils.encodeHex(fileKey)];
             }
@@ -2496,7 +2483,7 @@ export class Client {
                 msgpack.encode(payload),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            const createdFile = decodeAxios(FileSQLCodec, res.data);
+            const createdFile = decodeHttpResponse(FileSQLCodec, res.data);
 
             return [createdFile, XUtils.encodeHex(fileKey)];
         });
@@ -2514,7 +2501,7 @@ export class Client {
             { headers: { "Content-Type": "application/msgpack" } },
         );
 
-        return decodeAxios(InviteCodec, res.data);
+        return decodeHttpResponse(InviteCodec, res.data);
     }
 
     private async createPreKey(): Promise<UnsavedPreKey> {
@@ -2533,7 +2520,7 @@ export class Client {
         const res = await this.http.post(
             this.getHost() + "/server/" + globalThis.btoa(name),
         );
-        return decodeAxios(ServerCodec, res.data);
+        return decodeHttpResponse(ServerCodec, res.data);
     }
 
     private async createSession(
@@ -2794,7 +2781,7 @@ export class Client {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
     private deviceListFailureDetail(err: unknown): string {
-        if (!isAxiosError(err)) {
+        if (!isHttpError(err)) {
             return "";
         }
         const st = err.response?.status;
@@ -2819,12 +2806,12 @@ export class Client {
                 serverID +
                 "/permissions",
         );
-        return decodeAxios(PermissionArrayCodec, res.data);
+        return decodeHttpResponse(PermissionArrayCodec, res.data);
     }
 
     private async fetchUser(
         userIdentifier: string,
-    ): Promise<[null | User, AxiosError | null]> {
+    ): Promise<[null | User, HttpError | null]> {
         // Usernames are case-insensitive at the protocol level, so
         // canonicalize the *cache key* to lowercase for username
         // lookups. Without this we'd accumulate duplicate
@@ -2851,18 +2838,18 @@ export class Client {
             const res = await this.http.get(
                 this.getHost() + "/user/" + cacheKey,
             );
-            const userRecord = decodeAxios(UserCodec, res.data);
+            const userRecord = decodeHttpResponse(UserCodec, res.data);
             this.userRecords[cacheKey] = userRecord;
             this.notFoundUsers.delete(cacheKey);
             return [userRecord, null];
         } catch (err: unknown) {
-            if (isAxiosError(err) && err.response?.status === 404) {
+            if (isHttpError(err) && err.response?.status === 404) {
                 // Definitive: user doesn't exist — cache and don't retry
                 this.notFoundUsers.set(cacheKey, Date.now());
                 return [null, err];
             }
             // Transient (5xx, network error) — don't cache, caller can retry
-            return [null, isAxiosError(err) ? err : null];
+            return [null, isHttpError(err) ? err : null];
         }
     }
 
@@ -2873,7 +2860,7 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/user/" + userID + "/devices",
         );
-        const devices = decodeAxios(DeviceArrayCodec, res.data);
+        const devices = decodeHttpResponse(DeviceArrayCodec, res.data);
         for (const device of devices) {
             this.deviceRecords[device.deviceID] = device;
         }
@@ -2936,7 +2923,7 @@ export class Client {
             msgpack.encode(args),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        const decoded = decodeAxios(
+        const decoded = decodeHttpResponse(
             PasskeyAuthFinishResponseCodec,
             response.data,
         );
@@ -2957,7 +2944,7 @@ export class Client {
             msgpack.encode(args),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(PasskeyCodec, response.data);
+        return decodeHttpResponse(PasskeyCodec, response.data);
     }
 
     private async forward(message: Message) {
@@ -3007,7 +2994,7 @@ export class Client {
             const res = await this.http.get(
                 this.getHost() + "/channel/" + channelID,
             );
-            return decodeAxios(ChannelCodec, res.data);
+            return decodeHttpResponse(ChannelCodec, res.data);
         } catch (_err: unknown) {
             return null;
         }
@@ -3017,7 +3004,7 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/server/" + serverID + "/channels",
         );
-        return decodeAxios(ChannelArrayCodec, res.data);
+        return decodeHttpResponse(ChannelArrayCodec, res.data);
     }
 
     private getDevice(): Device {
@@ -3043,7 +3030,7 @@ export class Client {
             const res = await this.http.get(
                 this.getHost() + "/device/" + deviceID,
             );
-            const fetchedDevice = decodeAxios(DeviceCodec, res.data);
+            const fetchedDevice = decodeHttpResponse(DeviceCodec, res.data);
             this.deviceRecords[deviceID] = fetchedDevice;
             await this.database.saveDevice(fetchedDevice);
             return fetchedDevice;
@@ -3064,9 +3051,9 @@ export class Client {
                     "/devices/requests/" +
                     requestID,
             );
-            return decodeAxios(PendingDeviceRequestCodec, response.data);
+            return decodeHttpResponse(PendingDeviceRequestCodec, response.data);
         } catch (err: unknown) {
-            if (isAxiosError(err) && err.response?.status === 404) {
+            if (isHttpError(err) && err.response?.status === 404) {
                 return null;
             }
             throw err;
@@ -3112,7 +3099,7 @@ export class Client {
         }
 
         try {
-            const res = await this.http.post<ArrayBuffer>(
+            const res = await this.http.post(
                 this.getHost() +
                     "/device/" +
                     this.getDevice().deviceID +
@@ -3186,7 +3173,7 @@ export class Client {
                 msgpack.encode(userIDs),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            const devices = decodeAxios(DeviceArrayCodec, res.data);
+            const devices = decodeHttpResponse(DeviceArrayCodec, res.data);
             for (const device of devices) {
                 this.deviceRecords[device.deviceID] = device;
             }
@@ -3204,7 +3191,7 @@ export class Client {
                 this.getDevice().deviceID +
                 "/otk/count",
         );
-        return decodeAxios(OtkCountCodec, res.data).count;
+        return decodeHttpResponse(OtkCountCodec, res.data).count;
     }
 
     /**
@@ -3216,7 +3203,7 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/user/" + this.getUser().userID + "/permissions",
         );
-        return decodeAxios(PermissionArrayCodec, res.data);
+        return decodeHttpResponse(PermissionArrayCodec, res.data);
     }
 
     private async getServerByID(serverID: string): Promise<null | Server> {
@@ -3224,7 +3211,7 @@ export class Client {
             const res = await this.http.get(
                 this.getHost() + "/server/" + serverID,
             );
-            return decodeAxios(ServerCodec, res.data);
+            return decodeHttpResponse(ServerCodec, res.data);
         } catch (_err: unknown) {
             return null;
         }
@@ -3237,14 +3224,14 @@ export class Client {
                 this.getUser().userID +
                 "/servers/bootstrap",
         );
-        return decodeAxios(ServerChannelBootstrapCodec, res.data);
+        return decodeHttpResponse(ServerChannelBootstrapCodec, res.data);
     }
 
     private async getServerList(): Promise<Server[]> {
         const res = await this.http.get(
             this.getHost() + "/user/" + this.getUser().userID + "/servers",
         );
-        return decodeAxios(ServerArrayCodec, res.data);
+        return decodeHttpResponse(ServerArrayCodec, res.data);
     }
 
     private async getSessionByPubkey(publicKey: Uint8Array) {
@@ -3277,7 +3264,7 @@ export class Client {
             const res = await this.http.get(this.getHost() + "/token/" + type, {
                 responseType: "arraybuffer",
             });
-            return decodeAxios(ActionTokenCodec, res.data);
+            return decodeHttpResponse(ActionTokenCodec, res.data);
         } catch {
             return null;
         }
@@ -3312,7 +3299,7 @@ export class Client {
         const res = await this.http.post(
             this.getHost() + "/userList/" + channelID,
         );
-        return decodeAxios(UserArrayCodec, res.data);
+        return decodeHttpResponse(UserArrayCodec, res.data);
     }
 
     private async handleNotify(msg: NotifyMsg) {
@@ -3384,14 +3371,6 @@ export class Client {
             throw new Error("You should only call init() once.");
         }
         this.hasInit = true;
-
-        if (Client.isNodeRuntime()) {
-            const { attachNodeAgentsToAxios, createNodeHttpAgents } =
-                await import("./storage/node/http-agents.js");
-            const agents = createNodeHttpAgents();
-            this.nodeHttpAgents = agents;
-            attachNodeAgentsToAxios(this.http, agents);
-        }
 
         await this.populateKeyRing();
         this.emitter.on("message", this.onInternalMessage);
@@ -3546,7 +3525,10 @@ export class Client {
                 this.getUser().userID +
                 "/devices/requests",
         );
-        return decodeAxios(PendingDeviceRequestArrayCodec, response.data);
+        return decodeHttpResponse(
+            PendingDeviceRequestArrayCodec,
+            response.data,
+        );
     }
 
     /**
@@ -3560,7 +3542,7 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/user/" + userID + "/devices",
         );
-        return decodeAxios(DeviceArrayCodec, res.data);
+        return decodeHttpResponse(DeviceArrayCodec, res.data);
     }
 
     private async listPasskeys(): Promise<Passkey[]> {
@@ -3568,7 +3550,7 @@ export class Client {
         const response = await this.http.get(
             this.getHost() + "/user/" + userID + "/passkeys",
         );
-        return decodeAxios(PasskeyArrayCodec, response.data);
+        return decodeHttpResponse(PasskeyArrayCodec, response.data);
     }
 
     private async markSessionVerified(sessionID: string) {
@@ -3634,7 +3616,7 @@ export class Client {
                 requestID +
                 "/approve",
         );
-        return decodeAxios(DeviceCodec, response.data);
+        return decodeHttpResponse(DeviceCodec, response.data);
     }
 
     private async passkeyDeleteDevice(deviceID: string): Promise<void> {
@@ -3649,7 +3631,7 @@ export class Client {
         const response = await this.http.get(
             this.getHost() + "/user/" + userID + "/passkey/devices",
         );
-        return decodeAxios(DeviceArrayCodec, response.data);
+        return decodeHttpResponse(DeviceArrayCodec, response.data);
     }
 
     private async passkeyRejectDeviceRequest(requestID: string): Promise<void> {
@@ -3716,9 +3698,9 @@ export class Client {
                 msgpack.encode({ signed }),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            return decodeAxios(PendingDeviceRequestCodec, response.data);
+            return decodeHttpResponse(PendingDeviceRequestCodec, response.data);
         } catch (err: unknown) {
-            if (isAxiosError(err) && err.response?.status === 404) {
+            if (isHttpError(err) && err.response?.status === 404) {
                 return null;
             }
             throw err;
@@ -4548,7 +4530,7 @@ export class Client {
         const res = await this.http.patch(
             this.getHost() + "/invite/" + inviteID,
         );
-        return decodeAxios(PermissionCodec, res.data);
+        return decodeHttpResponse(PermissionCodec, res.data);
     }
 
     private registerDecryptFailure(mail: MailWS): number {
@@ -4603,7 +4585,7 @@ export class Client {
             msgpack.encode(devMsg),
             { headers: { "Content-Type": "application/msgpack" } },
         );
-        return decodeAxios(DeviceRegistrationResultCodec, res.data);
+        return decodeHttpResponse(DeviceRegistrationResultCodec, res.data);
     }
 
     private async rejectDeviceRequest(requestID: string): Promise<void> {
@@ -4640,17 +4622,14 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/emoji/" + emojiID + "/details",
         );
-        if (!res.data) {
-            return null;
-        }
-        return decodeAxios(EmojiCodec, res.data);
+        return decodeHttpResponse(EmojiCodec, res.data);
     }
 
     private async retrieveEmojiList(serverID: string): Promise<Emoji[]> {
         const res = await this.http.get(
             this.getHost() + "/server/" + serverID + "/emoji",
         );
-        return decodeAxios(EmojiArrayCodec, res.data);
+        return decodeHttpResponse(EmojiArrayCodec, res.data);
     }
 
     private async retrieveFile(
@@ -4660,28 +4639,24 @@ export class Client {
         const detailsRes = await this.http.get(
             this.getHost() + "/file/" + fileID + "/details",
         );
-        const details = decodeAxios(FileSQLCodec, detailsRes.data);
+        const details = decodeHttpResponse(FileSQLCodec, detailsRes.data);
 
-        const res = await this.http.get<ArrayBuffer>(
-            this.getHost() + "/file/" + fileID,
-            {
-                onDownloadProgress: (progressEvent) => {
-                    const percentCompleted = Math.round(
-                        (progressEvent.loaded * 100) /
-                            (progressEvent.total ?? 1),
-                    );
-                    const { loaded, total = 0 } = progressEvent;
-                    const progress: FileProgress = {
-                        direction: "download",
-                        loaded,
-                        progress: percentCompleted,
-                        token: fileID,
-                        total,
-                    };
-                    this.emitter.emit("fileProgress", progress);
-                },
+        const res = await this.http.get(this.getHost() + "/file/" + fileID, {
+            onDownloadProgress: (progressEvent) => {
+                const percentCompleted = Math.round(
+                    (progressEvent.loaded * 100) / (progressEvent.total ?? 1),
+                );
+                const { loaded, total = 0 } = progressEvent;
+                const progress: FileProgress = {
+                    direction: "download",
+                    loaded,
+                    progress: percentCompleted,
+                    token: fileID,
+                    total,
+                };
+                this.emitter.emit("fileProgress", progress);
             },
-        );
+        });
         const fileData = res.data;
 
         const decrypted = await xSecretboxOpenAsync(
@@ -4703,14 +4678,14 @@ export class Client {
         const res = await this.http.get(
             this.getHost() + "/server/" + serverID + "/invites",
         );
-        return decodeAxios(InviteArrayCodec, res.data);
+        return decodeHttpResponse(InviteArrayCodec, res.data);
     }
 
     private async retrieveKeyBundle(deviceID: string): Promise<KeyBundle> {
         const res = await this.http.post(
             this.getHost() + "/device/" + deviceID + "/keyBundle",
         );
-        return decodeAxios(KeyBundleCodec, res.data);
+        return decodeHttpResponse(KeyBundleCodec, res.data);
     }
 
     private async retrieveOrCreateDevice(): Promise<Device> {
@@ -4722,9 +4697,9 @@ export class Client {
                     "/device/" +
                     XUtils.encodeHex(this.signKeys.publicKey),
             );
-            device = decodeAxios(DeviceCodec, res.data);
+            device = decodeHttpResponse(DeviceCodec, res.data);
         } catch (err: unknown) {
-            if (isAxiosError(err) && err.response?.status === 404) {
+            if (isHttpError(err) && err.response?.status === 404) {
                 await this.database.purgeKeyData();
                 await this.populateKeyRing();
 
@@ -5477,7 +5452,7 @@ export class Client {
                         },
                     },
                 );
-                return decodeAxios(EmojiCodec, res.data);
+                return decodeHttpResponse(EmojiCodec, res.data);
             } catch (_err: unknown) {
                 return null;
             }
@@ -5493,7 +5468,7 @@ export class Client {
                 msgpack.encode(payload),
                 { headers: { "Content-Type": "application/msgpack" } },
             );
-            return decodeAxios(EmojiCodec, res.data);
+            return decodeHttpResponse(EmojiCodec, res.data);
         } catch (_err: unknown) {
             return null;
         }

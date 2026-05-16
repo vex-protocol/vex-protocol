@@ -59,7 +59,7 @@ function msgpackDecode(data: Uint8Array): unknown {
 /**
  * Encode a value to msgpack. Returns a fresh Uint8Array copy
  * (not a subarray of the internal pool buffer) to avoid browser
- * XMLHttpRequest.send() corruption (axios issue #4068).
+ * transport corruption when a runtime reuses pooled buffers.
  */
 function msgpackEncode(value: unknown): Uint8Array {
     const packed = _packr.encode(value);

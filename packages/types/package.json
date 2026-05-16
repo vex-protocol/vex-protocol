@@ -67,6 +67,7 @@
         "prettier": "3.8.2",
         "publint": "0.3.18",
         "rimraf": "6.1.3",
+        "tsx": "catalog:",
         "type-coverage": "2.29.7",
         "typescript": "catalog:",
         "typescript-eslint": "8.58.1"

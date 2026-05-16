@@ -68,10 +68,7 @@ import readline from "node:readline";
 
 import { Client } from "@vex-chat/libvex";
 
-import axios from "axios";
 import { config } from "dotenv";
-
-import { DEV_API_KEY_HEADER } from "../../src/server/rateLimit.ts";
 
 import {
     bootstrapChatWorld,
@@ -92,6 +89,7 @@ import {
     httpFailureTotal,
     recordHttpFailure,
 } from "./stress-http-stats.ts";
+import { stressHttpGet } from "./stress-http.ts";
 import { StressKnobs } from "./stress-knobs.ts";
 import {
     parseStressLoadPacing,
@@ -201,7 +199,10 @@ async function bootstrapClient(
         const bootCtx: TelemetryTouchCtx = { burst, phase };
 
         const devKeyRaw = process.env["DEV_API_KEY"]?.trim();
-        const cryptoProfile = await resolveStressCryptoProfile(host);
+        const cryptoProfile = await resolveStressCryptoProfile(
+            host,
+            devKeyRaw ?? "",
+        );
         const createOpts: ClientOptions = {
             cryptoProfile,
             dbFolder,
@@ -431,10 +432,6 @@ async function main(): Promise<void> {
         );
         process.exit(1);
     }
-
-    // Stress-only axios (status probes, etc.). libvex uses its own instance — pass
-    // `devApiKey` in `Client.create` options so Spire sees `x-dev-api-key` on API traffic.
-    axios.defaults.headers.common[DEV_API_KEY_HEADER] = devApiKey;
 
     const host = process.env["SPIRE_STRESS_HOST"] ?? "127.0.0.1:16777";
     const initialConcurrency = Math.max(
@@ -1412,6 +1409,7 @@ function readCryptoProfileField(data: unknown): null | string {
 
 async function resolveStressCryptoProfile(
     host: string,
+    devApiKey: string,
 ): Promise<StressCryptoProfile> {
     const env = process.env["SPIRE_STRESS_CRYPTO_PROFILE"]?.trim();
     if (env !== undefined && env.length > 0) {
@@ -1430,7 +1428,12 @@ async function resolveStressCryptoProfile(
 
     resolvedStressCryptoProfile = (async (): Promise<StressCryptoProfile> => {
         const base = httpStatusBase(host);
-        const res = await axios.get<unknown>(`${base}/status`);
+        const headers =
+            devApiKey.length > 0 ? { "x-dev-api-key": devApiKey } : undefined;
+        const res = await stressHttpGet(
+            `${base}/status`,
+            headers === undefined ? {} : { headers },
+        );
         const profileRaw = readCryptoProfileField(res.data);
         if (profileRaw === null) {
             throw new Error(
