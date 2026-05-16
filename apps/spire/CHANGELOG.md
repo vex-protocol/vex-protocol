@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.11.2
+
+### Patch Changes
+
+- [#152](https://github.com/vex-protocol/vex-protocol/pull/152) [`bf1317c`](https://github.com/vex-protocol/vex-protocol/commit/bf1317ca43861c2a398e0e26ba23aba262797e37) Thanks [@yuki111888](https://github.com/yuki111888)! - Remove the external HTTP client dependency from libvex and Spire stress tooling in favor of native fetch-based transports.
+
 ## 1.11.1
 
 ### Patch Changes
