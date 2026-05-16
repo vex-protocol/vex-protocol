@@ -1,5 +1,29 @@
 # @vex-chat/spire
 
+## 1.11.1
+
+### Patch Changes
+
+- [#147](https://github.com/vex-protocol/vex-protocol/pull/147) [`89c1e85`](https://github.com/vex-protocol/vex-protocol/commit/89c1e8579d8f240d5539f92505a0151130e0ea39) Thanks [@dependabot](https://github.com/apps/dependabot)! - Update Spire's HTTP client dependency to the patched 1.15.2 release.
+
+## 1.11.0
+
+### Minor Changes
+
+- [#118](https://github.com/vex-protocol/vex-protocol/pull/118) [`517ea9b`](https://github.com/vex-protocol/vex-protocol/commit/517ea9b478c0f816cc76dd62bcd49e16a1ab890a) Thanks [@yuki111888](https://github.com/yuki111888)! - Add device notification subscriptions and Expo push fanout alongside the existing websocket notify path. Libvex now exposes subscribe/unsubscribe helpers so mobile clients can register Expo push tokens for inbox wakeups.
+
+### Patch Changes
+
+- [#129](https://github.com/vex-protocol/vex-protocol/pull/129) [`002a812`](https://github.com/vex-protocol/vex-protocol/commit/002a812ff69a7affbd57ed160d0a1df44616eccd) Thanks [@yuki111888](https://github.com/yuki111888)! - Send Android Expo push notifications on the mobile push channel with wake metadata.
+
+- [#137](https://github.com/vex-protocol/vex-protocol/pull/137) [`c002984`](https://github.com/vex-protocol/vex-protocol/commit/c002984b8388e9ce3ed7868509a5565b90c05369) Thanks [@yuki111888](https://github.com/yuki111888)! - Send sender-owned mail notifications as headless Expo pushes so clients can wake and sync without showing self-notifications.
+
+- [#140](https://github.com/vex-protocol/vex-protocol/pull/140) [`48864fa`](https://github.com/vex-protocol/vex-protocol/commit/48864faa2c13827d95807532eb41aa1873f86540) Thanks [@yuki111888](https://github.com/yuki111888)! - Harden Expo push receipt cleanup and make notification subscription saves atomic.
+
+- [#126](https://github.com/vex-protocol/vex-protocol/pull/126) [`82d56bf`](https://github.com/vex-protocol/vex-protocol/commit/82d56bf0d2190cf32be2287e2bfaa148be8afa1f) Thanks [@yuki111888](https://github.com/yuki111888)! - Guard websocket mail receipts until the client has an authenticated device.
+
+- [#130](https://github.com/vex-protocol/vex-protocol/pull/130) [`bf11197`](https://github.com/vex-protocol/vex-protocol/commit/bf11197978cca3cf9c87b10e133b680b5348ee9c) Thanks [@yuki111888](https://github.com/yuki111888)! - Keep shared WebSocket reconnect attempts from surfacing as unhandled rejections and send Android pushes on a fresh audible channel.
+
 ## 1.10.4
 
 ### Patch Changes

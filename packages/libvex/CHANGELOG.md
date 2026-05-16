@@ -1,5 +1,21 @@
 # @vex-chat/libvex
 
+## 6.6.1
+
+### Patch Changes
+
+- [#142](https://github.com/vex-protocol/vex-protocol/pull/142) [`e791d28`](https://github.com/vex-protocol/vex-protocol/commit/e791d28439711d684b2d2c51e10f125c0de80726) Thanks [@yuki111888](https://github.com/yuki111888)! - Publish the patched HTTP client dependency in the libvex package manifest.
+
+## 6.6.0
+
+### Minor Changes
+
+- [#118](https://github.com/vex-protocol/vex-protocol/pull/118) [`517ea9b`](https://github.com/vex-protocol/vex-protocol/commit/517ea9b478c0f816cc76dd62bcd49e16a1ab890a) Thanks [@yuki111888](https://github.com/yuki111888)! - Add device notification subscriptions and Expo push fanout alongside the existing websocket notify path. Libvex now exposes subscribe/unsubscribe helpers so mobile clients can register Expo push tokens for inbox wakeups.
+
+### Patch Changes
+
+- [#130](https://github.com/vex-protocol/vex-protocol/pull/130) [`bf11197`](https://github.com/vex-protocol/vex-protocol/commit/bf11197978cca3cf9c87b10e133b680b5348ee9c) Thanks [@yuki111888](https://github.com/yuki111888)! - Keep shared WebSocket reconnect attempts from surfacing as unhandled rejections and send Android pushes on a fresh audible channel.
+
 ## 6.5.5
 
 ### Patch Changes
