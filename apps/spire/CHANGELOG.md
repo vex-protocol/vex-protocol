@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.11.1
+
+### Patch Changes
+
+- [#147](https://github.com/vex-protocol/vex-protocol/pull/147) [`89c1e85`](https://github.com/vex-protocol/vex-protocol/commit/89c1e8579d8f240d5539f92505a0151130e0ea39) Thanks [@dependabot](https://github.com/apps/dependabot)! - Update Spire's Axios dependency to the patched 1.15.2 release.
+
 ## 1.11.0
 
 ### Minor Changes
