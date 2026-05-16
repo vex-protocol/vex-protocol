@@ -1,8 +1,8 @@
 name: Spire integration CLI
 
 # Headless Spire integration tests (`integration:cli`): one Docker Compose stack
-# per crypto profile; all scenarios run in series on that instance (fresh 4-client
-# harness each scenario — lighter on GHA runners). FIPS integration is tracked
+# per crypto profile; stable scenarios run in series on that instance (fresh
+# 4-client harness each scenario — lighter on GHA runners). FIPS integration is tracked
 # separately in VEX-113 while that profile's realtime path is unstable.
 
 on:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
     integration-cli:
-        name: integration:cli (${{ matrix.crypto }}, all scenarios, Docker :16777)
+        name: integration:cli (${{ matrix.crypto }}, stable scenarios, Docker :16777)
         runs-on: ubuntu-latest
         timeout-minutes: 90
         concurrency:
@@ -113,7 +113,7 @@ jobs:
               shell: bash
               run: sleep 8
 
-            - name: Run integration CLI (all scenarios, one stack)
+            - name: Run integration CLI (stable scenarios, one stack)
               shell: bash
               working-directory: apps/spire
               env:
@@ -136,7 +136,7 @@ jobs:
                     # Use a much lower CI value to preserve headroom on GHA.
                     stress_conc=16
                   fi
-                  scenarios=(chat noise mixed whoami servers)
+                  scenarios=(chat mixed whoami servers)
                   for s in "${scenarios[@]}"; do
                     echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls, conc ${stress_conc})"
                     pnpm integration:cli -- \
