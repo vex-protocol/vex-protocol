@@ -54,6 +54,8 @@ import { type Kysely, sql } from "kysely";
 import { effectiveMessageRetentionHintDays } from "../retention.js";
 import { parseSkippedKeysStrict } from "../utils/ratchet.js";
 
+const STORAGE_MESSAGE_BLOB_PREFIX = "vex-storage-message:1\n";
+
 export class SqliteStorage extends EventEmitter implements Storage {
     public ready = false;
     /** 32-byte AES-256 (or nacl) key for local at-rest `secretbox` (see `XUtils.deriveLocalAtRestAesKey`). */
@@ -323,6 +325,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     .addColumn("sender", "text")
                     .addColumn("recipient", "text")
                     .addColumn("group", "text")
+                    .addColumn("extra", "text")
                     .addColumn("mailID", "text")
                     .addColumn("message", "text")
                     .addColumn("direction", "text")
@@ -370,6 +373,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     )
                     .execute();
                 await this.ensureSessionRatchetColumns();
+                await this.ensureMessageExtraColumn();
                 await this.ensureRetentionHintColumn();
                 await this.ensureMessageMailIdIndex();
 
@@ -534,16 +538,17 @@ export class SqliteStorage extends EventEmitter implements Storage {
             return;
         }
 
-        // Encrypt plaintext with at-rest key before saving to disk
+        // Encrypt plaintext with at-rest key before saving to disk.
+        const storedPlaintext = encodeStoredMessagePlaintext(message);
         const fips = getCryptoProfile() === "fips";
         const ct = fips
             ? await xSecretboxAsync(
-                  XUtils.decodeUTF8(message.message),
+                  XUtils.decodeUTF8(storedPlaintext),
                   XUtils.decodeHex(message.nonce),
                   this.atRestAesKey,
               )
             : xSecretbox(
-                  XUtils.decodeUTF8(message.message),
+                  XUtils.decodeUTF8(storedPlaintext),
                   XUtils.decodeHex(message.nonce),
                   this.atRestAesKey,
               );
@@ -559,6 +564,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     authorID: message.authorID,
                     decrypted: message.decrypted ? 1 : 0,
                     direction: message.direction,
+                    extra: null,
                     forward: message.forward ? 1 : 0,
                     group: message.group ?? null,
                     mailID: message.mailID,
@@ -733,6 +739,10 @@ export class SqliteStorage extends EventEmitter implements Storage {
             }
             const direction =
                 msg.direction === "incoming" ? "incoming" : "outgoing";
+            const storedPlaintext = decodeStoredMessagePlaintext(
+                plaintext,
+                msg.extra,
+            );
             const rowMessage: Message = {
                 authorID: msg.authorID,
                 decrypted: decryptedFlag,
@@ -740,7 +750,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 forward: msg.forward !== 0,
                 group: msg.group,
                 mailID: msg.mailID,
-                message: plaintext,
+                ...storedPlaintext,
                 nonce: msg.nonce,
                 readerID: msg.readerID,
                 recipient: msg.recipient,
@@ -771,6 +781,16 @@ export class SqliteStorage extends EventEmitter implements Storage {
             owner: row.owner,
             signKey: row.signKey,
         };
+    }
+
+    private async ensureMessageExtraColumn(): Promise<void> {
+        try {
+            await sql
+                .raw("ALTER TABLE messages ADD COLUMN extra text")
+                .execute(this.db);
+        } catch {
+            // Existing databases may already have this column.
+        }
     }
 
     /** Speeds up mailID existence checks for saveMessage deduplication. */
@@ -964,4 +984,62 @@ export class SqliteStorage extends EventEmitter implements Storage {
             check();
         });
     }
+}
+
+function decodeStoredMessagePlaintext(
+    plaintext: string,
+    rowExtra: null | string,
+): Pick<Message, "extra" | "message"> {
+    if (!plaintext.startsWith(STORAGE_MESSAGE_BLOB_PREFIX)) {
+        return {
+            ...(rowExtra !== null ? { extra: rowExtra } : {}),
+            message: plaintext,
+        };
+    }
+
+    try {
+        const raw = JSON.parse(
+            plaintext.slice(STORAGE_MESSAGE_BLOB_PREFIX.length),
+        ) as unknown;
+        if (!isJsonRecord(raw)) {
+            return {
+                ...(rowExtra !== null ? { extra: rowExtra } : {}),
+                message: plaintext,
+            };
+        }
+        const message = raw["message"];
+        if (typeof message !== "string") {
+            return {
+                ...(rowExtra !== null ? { extra: rowExtra } : {}),
+                message: plaintext,
+            };
+        }
+        const extra = raw["extra"];
+        return {
+            ...(extra === null || typeof extra === "string" ? { extra } : {}),
+            message,
+        };
+    } catch {
+        return {
+            ...(rowExtra !== null ? { extra: rowExtra } : {}),
+            message: plaintext,
+        };
+    }
+}
+
+function encodeStoredMessagePlaintext(message: Message): string {
+    if (message.extra === undefined) {
+        return message.message;
+    }
+    return (
+        STORAGE_MESSAGE_BLOB_PREFIX +
+        JSON.stringify({
+            extra: message.extra,
+            message: message.message,
+        })
+    );
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
