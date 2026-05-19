@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.7.0
+
+### Minor Changes
+
+- [#172](https://github.com/vex-protocol/vex-protocol/pull/172) [`d11382f`](https://github.com/vex-protocol/vex-protocol/commit/d11382ffb928363f5da022cf0dac0a067ea5ccde) Thanks [@yuki111888](https://github.com/yuki111888)! - Add encrypted message-level extra metadata on direct and group sends so clients can build features such as reactions without exposing that metadata in mail routing fields.
+
 ## 6.6.4
 
 ### Patch Changes
