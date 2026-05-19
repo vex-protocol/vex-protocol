@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.11.3
+
+### Patch Changes
+
+- [#157](https://github.com/vex-protocol/vex-protocol/pull/157) [`cce95e8`](https://github.com/vex-protocol/vex-protocol/commit/cce95e854c37781d79fcd58e8b2fa68546dee73f) Thanks [@yuki111888](https://github.com/yuki111888)! - Keep encrypted file uploads working on React Native by probing multipart Blob support before choosing the upload path, and allow Spire's JSON file-upload fallback to omit the legacy signed field that libvex no longer sends.
+
 ## 1.11.2
 
 ### Patch Changes
