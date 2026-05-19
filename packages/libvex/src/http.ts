@@ -164,6 +164,36 @@ export class FetchHttpClient {
             const response = await fetch(url, requestInit);
             const responseType =
                 config.responseType ?? this.defaultResponseType;
+            const validateStatus =
+                config.validateStatus ??
+                ((status: number) => status >= 200 && status < 300);
+            if (!validateStatus(response.status)) {
+                const { cause, data: responseData } =
+                    await readErrorResponseData(
+                        response,
+                        responseType,
+                        config.onDownloadProgress,
+                    );
+                const httpResponse: HttpResponse<unknown> = {
+                    config: requestRecord,
+                    data: responseData,
+                    headers: headersToRecord(response.headers),
+                    status: response.status,
+                    statusText: response.statusText,
+                };
+                const errorOptions: HttpErrorOptions =
+                    cause === undefined
+                        ? { config: requestRecord, response: httpResponse }
+                        : {
+                              cause,
+                              config: requestRecord,
+                              response: httpResponse,
+                          };
+                throw new HttpError(
+                    `Request failed with status code ${String(response.status)}`,
+                    errorOptions,
+                );
+            }
             const responseData = await readResponseData(
                 response,
                 responseType,
@@ -176,15 +206,6 @@ export class FetchHttpClient {
                 status: response.status,
                 statusText: response.statusText,
             };
-            const validateStatus =
-                config.validateStatus ??
-                ((status: number) => status >= 200 && status < 300);
-            if (!validateStatus(response.status)) {
-                throw new HttpError(
-                    `Request failed with status code ${String(response.status)}`,
-                    { config: requestRecord, response: httpResponse },
-                );
-            }
             return httpResponse;
         } catch (err: unknown) {
             if (isHttpError(err)) {
@@ -272,6 +293,9 @@ function bodyLength(data: unknown): number | undefined {
     if (typeof Blob !== "undefined" && data instanceof Blob) {
         return data.size;
     }
+    if (isFormDataValue(data)) {
+        return formDataPayloadLength(data);
+    }
     return undefined;
 }
 
@@ -337,6 +361,24 @@ function errorMessage(err: unknown): string {
         return err.message;
     }
     return String(err);
+}
+
+function formDataPayloadLength(data: FormData): number {
+    let total = 0;
+    data.forEach((value: unknown) => {
+        total += formDataValueLength(value);
+    });
+    return total;
+}
+
+function formDataValueLength(value: unknown): number {
+    if (typeof value === "string") {
+        return new TextEncoder().encode(value).byteLength;
+    }
+    if (typeof Blob !== "undefined" && value instanceof Blob) {
+        return value.size;
+    }
+    return 0;
 }
 
 function headersToRecord(headers: Headers): Record<string, string> {
@@ -473,6 +515,36 @@ async function readArrayBuffer(
         offset += chunk.byteLength;
     }
     return out.buffer;
+}
+
+async function readErrorResponseData(
+    response: Response,
+    responseType: HttpResponseType,
+    onDownloadProgress: ((event: HttpProgressEvent) => void) | undefined,
+): Promise<{ readonly cause?: unknown; readonly data: unknown }> {
+    try {
+        if (responseType === "json") {
+            const text = await response.text();
+            if (text.length === 0) {
+                return { data: null };
+            }
+            try {
+                const data: unknown = JSON.parse(text);
+                return { data };
+            } catch {
+                return { data: text };
+            }
+        }
+        return {
+            data: await readResponseData(
+                response,
+                responseType,
+                onDownloadProgress,
+            ),
+        };
+    } catch (cause: unknown) {
+        return { cause, data: null };
+    }
 }
 
 async function readResponseData(

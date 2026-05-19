@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/cli",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "description": "Terminal client for vex-chat.",
     "type": "module",
     "bin": {
@@ -39,6 +39,7 @@
     },
     "dependencies": {
         "@vex-chat/libvex": "workspace:^",
+        "better-sqlite3": "11.10.0",
         "msgpackr": "catalog:"
     },
     "devDependencies": {
