@@ -498,7 +498,7 @@ function resolveAccountEntry(ctx, config, selector) {
         return { ...parsed, account: null, changed, key: scopedKey };
     }
 
-    changed = stripExpiredPendingApproval(legacy) || changed;
+    stripExpiredPendingApproval(legacy);
     if (!legacy.deviceID && !legacy.pendingApproval) {
         delete config.accounts[parsed.username];
         if (config.lastUsername === parsed.username) {
