@@ -47,10 +47,7 @@ export const FilePayloadSchema: z.ZodType<FilePayload> = z
         file: z.string().optional().describe("Optional file ID for updates"),
         nonce: z.string().describe("Encryption nonce (hex)"),
         owner: z.string().describe("File owner user ID"),
-        signed: z
-            .string()
-            .optional()
-            .describe("Legacy signed file data"),
+        signed: z.string().optional().describe("Legacy signed file data"),
     })
     .describe("File upload payload");
 
