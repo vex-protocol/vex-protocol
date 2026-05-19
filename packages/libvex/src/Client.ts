@@ -606,6 +606,8 @@ export interface Message {
     decrypted: boolean;
     /** Whether this message was received or sent by the current client. */
     direction: "incoming" | "outgoing";
+    /** Optional encrypted client metadata attached to this message. */
+    extra?: null | string | undefined;
     /** `true` when this message was forwarded to another owned device. */
     forward: boolean;
     /** Channel ID for group messages; `null` for direct messages. */
@@ -625,7 +627,7 @@ export interface Message {
      * with {@link ClientOptions.localMessageRetentionDays} to pick the
      * shorter local retention window. Ignored when absent.
      */
-    retentionHintDays?: number;
+    retentionHintDays?: number | undefined;
     /** Sender device ID. */
     sender: string;
     /** Time the message was created/received. */
@@ -850,6 +852,7 @@ const messageSchema: z.ZodType<Message> = z.object({
     authorID: z.string(),
     decrypted: z.boolean(),
     direction: z.enum(["incoming", "outgoing"]),
+    extra: z.string().nullable().optional(),
     forward: z.boolean(),
     group: z.string().nullable(),
     mailID: z.string(),
@@ -857,9 +860,93 @@ const messageSchema: z.ZodType<Message> = z.object({
     nonce: z.string(),
     readerID: z.string(),
     recipient: z.string(),
+    retentionHintDays: z.number().optional(),
     sender: z.string(),
     timestamp: z.string(),
 });
+
+const MESSAGE_BLOB_PREFIX = "vex-message:1\n";
+
+interface DecodedMessagePlaintext {
+    extra?: null | string | undefined;
+    message: string;
+    retentionHintDays?: number | undefined;
+}
+
+function decodeMessageBlob(body: string): DecodedMessagePlaintext {
+    if (!body.startsWith(MESSAGE_BLOB_PREFIX)) {
+        return { message: body };
+    }
+
+    try {
+        const raw = JSON.parse(
+            body.slice(MESSAGE_BLOB_PREFIX.length),
+        ) as unknown;
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+            return { message: body };
+        }
+        const message = Reflect.get(raw, "message");
+        if (typeof message !== "string") {
+            return { message: body };
+        }
+        const extra = Reflect.get(raw, "extra");
+        return {
+            ...(extra === null || typeof extra === "string" ? { extra } : {}),
+            message,
+        };
+    } catch {
+        return { message: body };
+    }
+}
+
+function decodeMessagePlaintext(plaintext: string): DecodedMessagePlaintext {
+    const stripped = stripVexRetentionEnvelope(plaintext);
+    const blob = decodeMessageBlob(stripped.body);
+    return stripped.retentionHintDays !== undefined
+        ? {
+              ...blob,
+              retentionHintDays: stripped.retentionHintDays,
+          }
+        : blob;
+}
+
+function encodeMessagePlaintext(
+    message: string,
+    opts?: MessageSendOptions,
+): string {
+    const body =
+        opts?.extra === undefined
+            ? message
+            : MESSAGE_BLOB_PREFIX +
+              JSON.stringify({
+                  extra: opts.extra,
+                  message,
+              });
+    return formatVexRetentionEnvelope(body, opts?.retentionHintDays);
+}
+
+function messageFromDecodedPlaintext(
+    decoded: DecodedMessagePlaintext,
+): Pick<Message, "extra" | "message" | "retentionHintDays"> {
+    return {
+        ...(decoded.extra !== undefined ? { extra: decoded.extra } : {}),
+        message: decoded.message,
+        ...(decoded.retentionHintDays !== undefined
+            ? { retentionHintDays: decoded.retentionHintDays }
+            : {}),
+    };
+}
+
+function normalizeForwardedMessage(message: Message): Message {
+    const decoded = decodeMessagePlaintext(message.message);
+    return {
+        ...message,
+        ...messageFromDecodedPlaintext({
+            ...decoded,
+            extra: decoded.extra !== undefined ? decoded.extra : message.extra,
+        }),
+    };
+}
 
 /** Zod schema for a single inbox entry from getMail: [header, mailBody, timestamp]. */
 const mailInboxEntry = z.tuple([
@@ -929,7 +1016,7 @@ export interface Messages {
     group: (
         channelID: string,
         message: string,
-        opts?: { retentionHintDays?: number },
+        opts?: MessageSendOptions,
     ) => Promise<void>;
     /** Deletes all locally stored message history. */
     purge: () => Promise<void>;
@@ -941,8 +1028,15 @@ export interface Messages {
     send: (
         userID: string,
         message: string,
-        opts?: { retentionHintDays?: number },
+        opts?: MessageSendOptions,
     ) => Promise<void>;
+}
+
+export interface MessageSendOptions {
+    /** Optional encrypted client metadata for message-level features. */
+    extra?: null | string | undefined;
+    /** Optional peer hint (1-30 days) for local history retention. */
+    retentionHintDays?: number | undefined;
 }
 
 /**
@@ -1275,7 +1369,7 @@ export class Client {
         group: (
             channelID: string,
             message: string,
-            opts?: { retentionHintDays?: number },
+            opts?: MessageSendOptions,
         ) => this.sendGroupMessage(channelID, message, opts),
         purge: this.purgeHistory.bind(this),
         /**
@@ -1297,11 +1391,8 @@ export class Client {
          * @param userID - The user to send a message to.
          * @param message - The message to send.
          */
-        send: (
-            userID: string,
-            message: string,
-            opts?: { retentionHintDays?: number },
-        ) => this.sendMessage(userID, message, opts),
+        send: (userID: string, message: string, opts?: MessageSendOptions) =>
+            this.sendMessage(userID, message, opts),
     };
     /**
      * Server moderation helper methods.
@@ -2704,7 +2795,7 @@ export class Client {
                 : null;
             const shouldEmitHandshakeMessage = forward || message.length > 0;
             const emitMsg: Message = forwardedMsg
-                ? { ...forwardedMsg, forward: true }
+                ? { ...normalizeForwardedMessage(forwardedMsg), forward: true }
                 : {
                       authorID: mail.authorID,
                       decrypted: true,
@@ -2712,7 +2803,9 @@ export class Client {
                       forward: mail.forward,
                       group: mail.group ? uuid.stringify(mail.group) : null,
                       mailID: mail.mailID,
-                      message: XUtils.encodeUTF8(message),
+                      ...messageFromDecodedPlaintext(
+                          decodeMessagePlaintext(XUtils.encodeUTF8(message)),
+                      ),
                       nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
                       readerID: mail.readerID,
                       recipient: mail.recipient,
@@ -4098,39 +4191,19 @@ export class Client {
                             if (!mail.forward) {
                                 plaintext = XUtils.encodeUTF8(unsealed);
                             }
-                            let incomingPlain = plaintext;
-                            let hintFromEnvelope: number | undefined;
-                            if (!mail.forward && plaintext.length > 0) {
-                                const stripped =
-                                    stripVexRetentionEnvelope(plaintext);
-                                incomingPlain = stripped.body;
-                                hintFromEnvelope = stripped.retentionHintDays;
-                            }
+                            const decodedPlaintext = mail.forward
+                                ? null
+                                : decodeMessagePlaintext(plaintext);
 
                             // emit the message
                             const fwdMsg1 = mail.forward
                                 ? messageSchema.parse(msgpack.decode(unsealed))
                                 : null;
                             const message: Message = fwdMsg1
-                                ? (() => {
-                                      const stripped =
-                                          stripVexRetentionEnvelope(
-                                              fwdMsg1.message,
-                                          );
-                                      const base: Message = {
-                                          ...fwdMsg1,
-                                          forward: true,
-                                          message: stripped.body,
-                                      };
-                                      return stripped.retentionHintDays !==
-                                          undefined
-                                          ? {
-                                                ...base,
-                                                retentionHintDays:
-                                                    stripped.retentionHintDays,
-                                            }
-                                          : base;
-                                  })()
+                                ? {
+                                      ...normalizeForwardedMessage(fwdMsg1),
+                                      forward: true,
+                                  }
                                 : {
                                       authorID: mail.authorID,
                                       decrypted: true,
@@ -4140,18 +4213,16 @@ export class Client {
                                           ? uuid.stringify(mail.group)
                                           : null,
                                       mailID: mail.mailID,
-                                      message: incomingPlain,
+                                      ...messageFromDecodedPlaintext(
+                                          decodedPlaintext ?? {
+                                              message: plaintext,
+                                          },
+                                      ),
                                       nonce: XUtils.encodeHex(
                                           new Uint8Array(mail.nonce),
                                       ),
                                       readerID: mail.readerID,
                                       recipient: mail.recipient,
-                                      ...(hintFromEnvelope !== undefined
-                                          ? {
-                                                retentionHintDays:
-                                                    hintFromEnvelope,
-                                            }
-                                          : {}),
                                       sender: mail.sender,
                                       timestamp: timestamp,
                                   };
@@ -4391,34 +4462,14 @@ export class Client {
                                 ? messageSchema.parse(msgpack.decode(decrypted))
                                 : null;
                             const rawIncoming = XUtils.encodeUTF8(decrypted);
-                            let bodyIncoming = rawIncoming;
-                            let hintIncoming: number | undefined;
-                            if (!mail.forward) {
-                                const stripped =
-                                    stripVexRetentionEnvelope(rawIncoming);
-                                bodyIncoming = stripped.body;
-                                hintIncoming = stripped.retentionHintDays;
-                            }
+                            const decodedPlaintext = mail.forward
+                                ? null
+                                : decodeMessagePlaintext(rawIncoming);
                             const message: Message = fwdMsg2
-                                ? (() => {
-                                      const stripped =
-                                          stripVexRetentionEnvelope(
-                                              fwdMsg2.message,
-                                          );
-                                      const base: Message = {
-                                          ...fwdMsg2,
-                                          forward: true,
-                                          message: stripped.body,
-                                      };
-                                      return stripped.retentionHintDays !==
-                                          undefined
-                                          ? {
-                                                ...base,
-                                                retentionHintDays:
-                                                    stripped.retentionHintDays,
-                                            }
-                                          : base;
-                                  })()
+                                ? {
+                                      ...normalizeForwardedMessage(fwdMsg2),
+                                      forward: true,
+                                  }
                                 : {
                                       authorID: mail.authorID,
                                       decrypted: true,
@@ -4428,15 +4479,16 @@ export class Client {
                                           ? uuid.stringify(mail.group)
                                           : null,
                                       mailID: mail.mailID,
-                                      message: bodyIncoming,
+                                      ...messageFromDecodedPlaintext(
+                                          decodedPlaintext ?? {
+                                              message: rawIncoming,
+                                          },
+                                      ),
                                       nonce: XUtils.encodeHex(
                                           new Uint8Array(mail.nonce),
                                       ),
                                       readerID: mail.readerID,
                                       recipient: mail.recipient,
-                                      ...(hintIncoming !== undefined
-                                          ? { retentionHintDays: hintIncoming }
-                                          : {}),
                                       sender: mail.sender,
                                       timestamp: timestamp,
                                   };
@@ -4848,7 +4900,7 @@ export class Client {
     private async sendGroupMessage(
         channelID: string,
         message: string,
-        opts?: { retentionHintDays?: number },
+        opts?: MessageSendOptions,
     ): Promise<void> {
         const userList = await this.getUserList(channelID);
         for (const user of userList) {
@@ -4856,10 +4908,7 @@ export class Client {
         }
 
         const mailID = uuid.v4();
-        const payload = formatVexRetentionEnvelope(
-            message,
-            opts?.retentionHintDays,
-        );
+        const payload = encodeMessagePlaintext(message, opts);
         const msgBytes = XUtils.decodeUTF8(payload);
         const myUserID = this.getUser().userID;
         const peerUserIDs = [...new Set(userList.map((u) => u.userID))].filter(
@@ -4890,6 +4939,7 @@ export class Client {
         if (targetDevices.size === 0) {
             const dev = this.getDevice();
             const nonce = xMakeNonce();
+            const decodedPlaintext = decodeMessagePlaintext(payload);
             this.emitter.emit("message", {
                 authorID: myUserID,
                 decrypted: true,
@@ -4897,7 +4947,7 @@ export class Client {
                 forward: false,
                 group: channelID,
                 mailID,
-                message,
+                ...messageFromDecodedPlaintext(decodedPlaintext),
                 nonce: XUtils.encodeHex(nonce),
                 readerID: myUserID,
                 recipient: dev.deviceID,
@@ -5043,25 +5093,8 @@ export class Client {
             const fwdOut = forward
                 ? messageSchema.parse(msgpack.decode(msg))
                 : null;
-            const rawUtf8 = XUtils.encodeUTF8(msg);
-            const strippedOut = stripVexRetentionEnvelope(rawUtf8);
             const outMsg: Message = fwdOut
-                ? (() => {
-                      const stripped = stripVexRetentionEnvelope(
-                          fwdOut.message,
-                      );
-                      const base: Message = {
-                          ...fwdOut,
-                          forward: true,
-                          message: stripped.body,
-                      };
-                      return stripped.retentionHintDays !== undefined
-                          ? {
-                                ...base,
-                                retentionHintDays: stripped.retentionHintDays,
-                            }
-                          : base;
-                  })()
+                ? { ...normalizeForwardedMessage(fwdOut), forward: true }
                 : {
                       authorID: mail.authorID,
                       decrypted: true,
@@ -5069,16 +5102,12 @@ export class Client {
                       forward: mail.forward,
                       group: mail.group ? uuid.stringify(mail.group) : null,
                       mailID: mail.mailID,
-                      message: strippedOut.body,
+                      ...messageFromDecodedPlaintext(
+                          decodeMessagePlaintext(XUtils.encodeUTF8(msg)),
+                      ),
                       nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
                       readerID: mail.readerID,
                       recipient: mail.recipient,
-                      ...(strippedOut.retentionHintDays !== undefined
-                          ? {
-                                retentionHintDays:
-                                    strippedOut.retentionHintDays,
-                            }
-                          : {}),
                       sender: mail.sender,
                       timestamp: new Date().toISOString(),
                   };
@@ -5172,12 +5201,9 @@ export class Client {
     private async sendMessage(
         userID: string,
         message: string,
-        opts?: { retentionHintDays?: number },
+        opts?: MessageSendOptions,
     ): Promise<void> {
-        const payload = formatVexRetentionEnvelope(
-            message,
-            opts?.retentionHintDays,
-        );
+        const payload = encodeMessagePlaintext(message, opts);
         try {
             const [userEntry, err] = await this.fetchUser(userID);
             if (err) {

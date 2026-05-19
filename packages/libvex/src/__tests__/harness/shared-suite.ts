@@ -91,6 +91,32 @@ export function platformSuite(
             expect(msg.message).toBe("platform-test");
         });
 
+        test("send and receive DM with encrypted extra", async () => {
+            const me = client.me.user();
+            const extra = JSON.stringify({
+                reactionEvent: {
+                    action: "toggle",
+                    emoji: { kind: "unicode", value: "👍" },
+                    targetMailID: "mail-target",
+                },
+                version: 1,
+            });
+            const msgPromise = waitForMessage(
+                client,
+                (m) =>
+                    m.direction === "incoming" &&
+                    m.decrypted &&
+                    m.extra === extra,
+                `[${platformName}] self-DM extra`,
+            );
+
+            await client.messages.send(me.userID, "", { extra });
+            const msg = await msgPromise;
+
+            expect(msg.message).toBe("");
+            expect(msg.extra).toBe(extra);
+        });
+
         test("message history retrieve + delete", async () => {
             const me = client.me.user();
             const body = "history-test";
@@ -265,6 +291,14 @@ export function platformSuite(
                 );
 
                 // user1 sends group message, user2 receives it
+                const extra = JSON.stringify({
+                    reactionEvent: {
+                        action: "toggle",
+                        emoji: { kind: "unicode", value: "🎉" },
+                        targetMailID: "group-mail-target",
+                    },
+                    version: 1,
+                });
                 const msgPromise = waitForMessage(
                     client2,
                     (m) =>
@@ -275,10 +309,13 @@ export function platformSuite(
                     15_000,
                 );
                 await withTransientRetry(() =>
-                    client.messages.group(channel.channelID, "hello channel"),
+                    client.messages.group(channel.channelID, "hello channel", {
+                        extra,
+                    }),
                 );
                 const msg = await msgPromise;
                 expect(msg.message).toBe("hello channel");
+                expect(msg.extra).toBe(extra);
 
                 // Cleanup
                 await client.servers.delete(server.serverID);
