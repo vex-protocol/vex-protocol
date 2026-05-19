@@ -2433,7 +2433,20 @@ export class Client {
                 fileKey,
             );
 
-            if (typeof FormData !== "undefined") {
+            const canUseMultipart =
+                typeof FormData !== "undefined" &&
+                (() => {
+                    try {
+                        // React Native/Hermes can expose Blob/FormData but
+                        // reject ArrayBufferView-backed blobs at runtime.
+                        void new Blob([new Uint8Array([1, 2, 3])]);
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                })();
+
+            if (canUseMultipart) {
                 const fpayload = new FormData();
                 fpayload.set("owner", this.getDevice().deviceID);
                 fpayload.set("nonce", XUtils.encodeHex(nonce));
