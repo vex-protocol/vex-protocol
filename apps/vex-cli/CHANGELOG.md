@@ -1,5 +1,14 @@
 # @vex-chat/cli
 
+## 0.1.5
+
+### Patch Changes
+
+- [#172](https://github.com/vex-protocol/vex-protocol/pull/172) [`d11382f`](https://github.com/vex-protocol/vex-protocol/commit/d11382ffb928363f5da022cf0dac0a067ea5ccde) Thanks [@yuki111888](https://github.com/yuki111888)! - If a stored device was removed from the account server-side, the CLI now drops the dead local account entry and `vex auth login <username>` starts fresh device approval instead of surfacing a raw 404.
+
+- Updated dependencies [[`d11382f`](https://github.com/vex-protocol/vex-protocol/commit/d11382ffb928363f5da022cf0dac0a067ea5ccde)]:
+    - @vex-chat/libvex@6.7.0
+
 ## 0.1.4
 
 ### Patch Changes
