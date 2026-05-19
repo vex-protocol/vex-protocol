@@ -22,6 +22,7 @@ export type {
     Me,
     Message,
     Messages,
+    MessageSendOptions,
     Moderation,
     NotificationSubscription,
     NotificationSubscriptionInput,

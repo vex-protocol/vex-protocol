@@ -58,6 +58,7 @@ interface MessagesTable {
     authorID: string;
     decrypted: number;
     direction: string;
+    extra: null | string;
     forward: number;
     group: null | string;
     mailID: string;

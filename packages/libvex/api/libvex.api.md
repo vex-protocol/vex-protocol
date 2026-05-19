@@ -306,6 +306,7 @@ export interface Message {
     authorID: string;
     decrypted: boolean;
     direction: "incoming" | "outgoing";
+    extra?: null | string | undefined;
     forward: boolean;
     group: null | string;
     mailID: string;
@@ -313,7 +314,7 @@ export interface Message {
     nonce: string;
     readerID: string;
     recipient: string;
-    retentionHintDays?: number;
+    retentionHintDays?: number | undefined;
     sender: string;
     timestamp: string;
 }
@@ -321,15 +322,17 @@ export interface Message {
 // @public (undocumented)
 export interface Messages {
     delete: (userOrChannelID: string) => Promise<void>;
-    group: (channelID: string, message: string, opts?: {
-        retentionHintDays?: number;
-    }) => Promise<void>;
+    group: (channelID: string, message: string, opts?: MessageSendOptions) => Promise<void>;
     purge: () => Promise<void>;
     retrieve: (userID: string) => Promise<Message[]>;
     retrieveGroup: (channelID: string) => Promise<Message[]>;
-    send: (userID: string, message: string, opts?: {
-        retentionHintDays?: number;
-    }) => Promise<void>;
+    send: (userID: string, message: string, opts?: MessageSendOptions) => Promise<void>;
+}
+
+// @public (undocumented)
+export interface MessageSendOptions {
+    extra?: null | string | undefined;
+    retentionHintDays?: number | undefined;
 }
 
 // @public (undocumented)
