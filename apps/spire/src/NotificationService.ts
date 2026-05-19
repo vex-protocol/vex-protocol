@@ -13,6 +13,7 @@ const EXPO_RECEIPT_ENDPOINT = "https://exp.host/--/api/v2/push/getReceipts";
 const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
 const EXPO_REQUEST_TIMEOUT_MS = 10_000;
+const MAIL_PUSH_WEBSOCKET_GRACE_MS = 1500;
 const ANDROID_PUSH_CHANNEL_ID = "vex-push-messages-v2";
 const MESSAGE_PUSH_COLLAPSE_ID = "vex-message-summary";
 
@@ -21,6 +22,7 @@ export interface NotificationDispatch {
     deviceID?: string;
     event: string;
     headlessPushUserID?: string;
+    mailNonce?: Uint8Array;
     transmissionID: string;
     userID: string;
 }
@@ -91,16 +93,12 @@ export class NotificationService {
     }
 
     public notify(dispatch: NotificationDispatch): void {
-        this.notifyWebSocket(dispatch);
-        void this.notifyPush(dispatch).catch((err: unknown) => {
-            // Push is best-effort; websocket/inbox delivery remain authoritative.
-            console.warn("[spire-notify] Expo push fanout failed", {
-                event: dispatch.event,
-                message: err instanceof Error ? err.message : String(err),
-                transmissionID: dispatch.transmissionID,
-                userID: dispatch.userID,
-            });
-        });
+        const websocketDeliveries = this.notifyWebSocket(dispatch);
+        if (shouldDeferMailPush(dispatch, websocketDeliveries)) {
+            this.scheduleMailPush(dispatch);
+            return;
+        }
+        this.startPush(dispatch);
     }
 
     private async checkExpoReceipts(receiptIDs: string[]): Promise<void> {
@@ -228,7 +226,29 @@ export class NotificationService {
         }
     }
 
-    private notifyWebSocket(dispatch: NotificationDispatch): void {
+    private async notifyPushIfMailPending(
+        dispatch: NotificationDispatch & {
+            deviceID: string;
+            mailNonce: Uint8Array;
+        },
+    ): Promise<void> {
+        const pending = await this.db.hasMail(
+            dispatch.mailNonce,
+            dispatch.deviceID,
+        );
+        if (!pending) {
+            console.info("[spire-notify] skipping Expo push for acked mail", {
+                deviceID: dispatch.deviceID,
+                event: dispatch.event,
+                transmissionID: dispatch.transmissionID,
+                userID: dispatch.userID,
+            });
+            return;
+        }
+        await this.notifyPush(dispatch);
+    }
+
+    private notifyWebSocket(dispatch: NotificationDispatch): number {
         const msg: NotifyMsg = {
             data: dispatch.data,
             event: dispatch.event,
@@ -236,6 +256,7 @@ export class NotificationService {
             type: "notify",
         };
 
+        let deliveries = 0;
         const snapshot = this.clients.slice();
         for (const client of snapshot) {
             try {
@@ -252,6 +273,7 @@ export class NotificationService {
                     }
                     if (currentDeviceID === dispatch.deviceID) {
                         client.send(msg);
+                        deliveries++;
                     }
                     continue;
                 }
@@ -263,11 +285,35 @@ export class NotificationService {
                 }
                 if (currentUserID === dispatch.userID) {
                     client.send(msg);
+                    deliveries++;
                 }
             } catch (_err: unknown) {
                 this.removeClient(client);
             }
         }
+        return deliveries;
+    }
+
+    private scheduleMailPush(
+        dispatch: NotificationDispatch & {
+            deviceID: string;
+            mailNonce: Uint8Array;
+        },
+    ): void {
+        const timer = setTimeout(() => {
+            void this.notifyPushIfMailPending(dispatch).catch(
+                (err: unknown) => {
+                    console.warn("[spire-notify] Expo push fanout failed", {
+                        event: dispatch.event,
+                        message:
+                            err instanceof Error ? err.message : String(err),
+                        transmissionID: dispatch.transmissionID,
+                        userID: dispatch.userID,
+                    });
+                },
+            );
+        }, MAIL_PUSH_WEBSOCKET_GRACE_MS);
+        (timer as { unref?: () => void }).unref?.();
     }
 
     private scheduleReceiptCheck(receiptIDs: string[]): void {
@@ -371,6 +417,18 @@ export class NotificationService {
         if (receiptIDs.length > 0) {
             this.scheduleReceiptCheck(receiptIDs);
         }
+    }
+
+    private startPush(dispatch: NotificationDispatch): void {
+        void this.notifyPush(dispatch).catch((err: unknown) => {
+            // Push is best-effort; websocket/inbox delivery remain authoritative.
+            console.warn("[spire-notify] Expo push fanout failed", {
+                event: dispatch.event,
+                message: err instanceof Error ? err.message : String(err),
+                transmissionID: dispatch.transmissionID,
+                userID: dispatch.userID,
+            });
+        });
     }
 }
 
@@ -518,6 +576,21 @@ function parseExpoReceipts(data: unknown): Record<string, ExpoPushReceipt> {
         }
     }
     return receipts;
+}
+
+function shouldDeferMailPush(
+    dispatch: NotificationDispatch,
+    websocketDeliveries: number,
+): dispatch is NotificationDispatch & {
+    deviceID: string;
+    mailNonce: Uint8Array;
+} {
+    return (
+        dispatch.event === "mail" &&
+        websocketDeliveries > 0 &&
+        typeof dispatch.deviceID === "string" &&
+        dispatch.mailNonce instanceof Uint8Array
+    );
 }
 
 function shouldSendHeadlessPush(dispatch: NotificationDispatch): boolean {

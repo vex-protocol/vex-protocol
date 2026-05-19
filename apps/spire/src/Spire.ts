@@ -813,6 +813,7 @@ export class Spire extends EventEmitter {
                 null,
                 mail.recipient,
                 mail.authorID,
+                mail.nonce,
             );
         });
 
@@ -1076,11 +1077,13 @@ export class Spire extends EventEmitter {
         data?: unknown,
         deviceID?: string,
         headlessPushUserID?: string,
+        mailNonce?: Uint8Array,
     ): void {
         this.notifications.notify({
             data,
             event,
             ...(headlessPushUserID ? { headlessPushUserID } : {}),
+            ...(mailNonce ? { mailNonce } : {}),
             transmissionID,
             userID,
             ...(deviceID ? { deviceID } : {}),
