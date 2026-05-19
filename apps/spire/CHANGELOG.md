@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.11.4
+
+### Patch Changes
+
+- [#162](https://github.com/vex-protocol/vex-protocol/pull/162) [`c3505a3`](https://github.com/vex-protocol/vex-protocol/commit/c3505a3b09ee2f7128082481f77b98dc0a5f2ea3) Thanks [@yuki111888](https://github.com/yuki111888)! - Update Spire's `ws` runtime dependency and pin the patched `brace-expansion` transitive dependency used by tooling.
+
 ## 1.11.3
 
 ### Patch Changes
