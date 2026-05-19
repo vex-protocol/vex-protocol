@@ -58,6 +58,10 @@ export interface HttpResponse<T = ArrayBuffer> {
 
 export type HttpResponseType = "arraybuffer" | "json" | "text";
 
+interface ReadableResponseBody {
+    getReader: () => ReadableStreamDefaultReader<Uint8Array>;
+}
+
 export class FetchHttpClient {
     public readonly defaults: FetchHttpClientDefaults = {
         headers: { common: {} },
@@ -415,6 +419,15 @@ function isJsonBodyCandidate(value: unknown): boolean {
     return true;
 }
 
+function isReadableResponseBody(value: unknown): value is ReadableResponseBody {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "getReader" in value &&
+        typeof value.getReader === "function"
+    );
+}
+
 function makeBody(data: unknown, headers: Headers): BodyInit | undefined {
     if (data === undefined) {
         return undefined;
@@ -487,16 +500,22 @@ async function readArrayBuffer(
     response: Response,
     onDownloadProgress: ((event: HttpProgressEvent) => void) | undefined,
 ): Promise<ArrayBuffer> {
-    if (response.body === null || onDownloadProgress === undefined) {
-        return await response.arrayBuffer();
-    }
-
     const rawTotal = response.headers.get("content-length");
     const parsedTotal = rawTotal === null ? Number.NaN : Number(rawTotal);
     const total = Number.isFinite(parsedTotal) ? parsedTotal : undefined;
+    const body: unknown = response.body;
+
+    if (onDownloadProgress === undefined || !isReadableResponseBody(body)) {
+        const data = await response.arrayBuffer();
+        if (onDownloadProgress !== undefined) {
+            onDownloadProgress(progressEvent(data.byteLength, total));
+        }
+        return data;
+    }
+
     const chunks: Uint8Array[] = [];
     let loaded = 0;
-    const reader = response.body.getReader();
+    const reader = body.getReader();
 
     for (;;) {
         const { done, value } = await reader.read();

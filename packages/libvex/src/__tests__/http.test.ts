@@ -86,6 +86,29 @@ describe("FetchHttpClient", () => {
 
         expect(events).toEqual([{ loaded: 5, total: 5 }]);
     });
+
+    it("falls back to arrayBuffer when response body streams are unavailable", async () => {
+        const response = new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "Content-Length": "3" },
+            status: 200,
+        });
+        Object.defineProperty(response, "body", {
+            configurable: true,
+            value: undefined,
+        });
+        globalThis.fetch = () => Promise.resolve(response);
+
+        const client = createFetchHttpClient();
+        const events: { loaded: number; total?: number }[] = [];
+        const result = await client.get("https://example.test/file", {
+            onDownloadProgress: (event) => {
+                events.push(event);
+            },
+        });
+
+        expect(Array.from(new Uint8Array(result.data))).toEqual([1, 2, 3]);
+        expect(events).toEqual([{ loaded: 3, total: 3 }]);
+    });
 });
 
 async function captureError(fn: () => Promise<unknown>): Promise<unknown> {
