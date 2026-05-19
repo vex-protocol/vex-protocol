@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.11.5
+
+### Patch Changes
+
+- [#174](https://github.com/vex-protocol/vex-protocol/pull/174) [`e8b9f60`](https://github.com/vex-protocol/vex-protocol/commit/e8b9f609996be883df3e724b3e2d8a65c66b50ec) Thanks [@yuki111888](https://github.com/yuki111888)! - Delay Expo pushes for mail that was just delivered over an active websocket and skip the push if the device acknowledges the mail during that grace window.
+
 ## 1.11.4
 
 ### Patch Changes
