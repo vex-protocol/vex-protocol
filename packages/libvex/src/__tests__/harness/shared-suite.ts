@@ -393,6 +393,37 @@ export function platformSuite(
             expect(new Uint8Array(fetched!.data)).toEqual(testFile);
         });
 
+        test("file upload + download via JSON fallback path", async () => {
+            const globalWithFormData = globalThis as typeof globalThis & {
+                FormData?: unknown;
+            };
+            const originalFormData = globalWithFormData.FormData;
+            Object.defineProperty(globalThis, "FormData", {
+                configurable: true,
+                enumerable: true,
+                value: undefined,
+                writable: true,
+            });
+            try {
+                const [details, key] = await client.files.create(testFile);
+                expect(details.fileID).toBeTruthy();
+
+                const fetched = await client.files.retrieve(
+                    details.fileID,
+                    key,
+                );
+                expect(fetched).toBeTruthy();
+                expect(new Uint8Array(fetched!.data)).toEqual(testFile);
+            } finally {
+                Object.defineProperty(globalThis, "FormData", {
+                    configurable: true,
+                    enumerable: true,
+                    value: originalFormData,
+                    writable: true,
+                });
+            }
+        });
+
         test("emoji upload", async () => {
             const server = await client.servers.create("Emoji Test Server");
             const emoji = await client.emoji.create(

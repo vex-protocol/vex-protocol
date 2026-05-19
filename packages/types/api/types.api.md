@@ -143,8 +143,7 @@ export interface FilePayload {
     nonce: string;
     // (undocumented)
     owner: string;
-    // (undocumented)
-    signed: string;
+    signed?: string | undefined;
 }
 
 // @public

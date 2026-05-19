@@ -359,14 +359,207 @@ function httpFromApiUrl(raw) {
     }
 }
 
+function normalizeAccountHost(host) {
+    return String(host ?? DEFAULT_HOST)
+        .trim()
+        .toLowerCase();
+}
+
+function normalizeAccountName(value) {
+    return String(value ?? "")
+        .trim()
+        .toLowerCase();
+}
+
+function accountKeyFor(ctx, username) {
+    return `${normalizeAccountName(username)}@${normalizeAccountHost(ctx.clientOptions.host)}`;
+}
+
+function parseAccountSelector(ctx, value) {
+    const selector = normalizeAccountName(value);
+    const currentHost = normalizeAccountHost(ctx.clientOptions.host);
+    const at = selector.lastIndexOf("@");
+    if (at > 0) {
+        const host = selector.slice(at + 1);
+        return {
+            host,
+            hostMatches: host === currentHost,
+            key: selector,
+            scoped: true,
+            username: selector.slice(0, at),
+        };
+    }
+    return {
+        host: currentHost,
+        hostMatches: true,
+        key: `${selector}@${currentHost}`,
+        scoped: false,
+        username: selector,
+    };
+}
+
+function stripExpiredPendingApproval(account) {
+    const expiresAt = account?.pendingApproval?.expiresAt;
+    if (typeof expiresAt !== "string") return false;
+    const expiresAtMs = Date.parse(expiresAt);
+    if (Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+        return false;
+    }
+    delete account.pendingApproval;
+    return true;
+}
+
+function normalizeStoredAccount(config, key, fallbackUsername) {
+    const account = config.accounts[key];
+    if (!account || typeof account !== "object") return false;
+    let changed = stripExpiredPendingApproval(account);
+    const username =
+        typeof account.username === "string" && account.username.trim()
+            ? account.username.trim().toLowerCase()
+            : fallbackUsername;
+    if (account.username !== username) {
+        account.username = username;
+        changed = true;
+    }
+    return changed;
+}
+
+function removeUnusableAccount(config, key) {
+    const account = config.accounts[key];
+    if (!account || account.deviceID || account.pendingApproval) {
+        return false;
+    }
+    delete config.accounts[key];
+    if (config.lastUsername === key) {
+        delete config.lastUsername;
+    }
+    return true;
+}
+
+function resolveAccountEntry(ctx, config, selector) {
+    const parsed = parseAccountSelector(ctx, selector);
+    let changed = false;
+
+    if (!parsed.username) {
+        return { ...parsed, account: null, changed };
+    }
+
+    const exact = config.accounts[parsed.key];
+    if (parsed.scoped) {
+        if (exact) {
+            changed =
+                normalizeStoredAccount(config, parsed.key, parsed.username) ||
+                changed;
+            if (removeUnusableAccount(config, parsed.key)) {
+                return { ...parsed, account: null, changed: true };
+            }
+            return {
+                ...parsed,
+                account: config.accounts[parsed.key],
+                changed,
+            };
+        }
+        return { ...parsed, account: null, changed };
+    }
+
+    const scopedKey = accountKeyFor(ctx, parsed.username);
+    const scoped = config.accounts[scopedKey];
+    if (scoped) {
+        changed =
+            normalizeStoredAccount(config, scopedKey, parsed.username) ||
+            changed;
+        if (removeUnusableAccount(config, scopedKey)) {
+            return {
+                ...parsed,
+                account: null,
+                changed: true,
+                key: scopedKey,
+            };
+        }
+        const legacy = config.accounts[parsed.username];
+        if (legacy && stripExpiredPendingApproval(legacy)) {
+            delete config.accounts[parsed.username];
+            changed = true;
+        }
+        if (config.lastUsername === parsed.username) {
+            config.lastUsername = scopedKey;
+            changed = true;
+        }
+        return {
+            ...parsed,
+            account: config.accounts[scopedKey],
+            changed,
+            key: scopedKey,
+        };
+    }
+
+    const legacy = config.accounts[parsed.username];
+    if (!legacy) {
+        return { ...parsed, account: null, changed, key: scopedKey };
+    }
+
+    stripExpiredPendingApproval(legacy);
+    if (!legacy.deviceID && !legacy.pendingApproval) {
+        delete config.accounts[parsed.username];
+        if (config.lastUsername === parsed.username) {
+            delete config.lastUsername;
+        }
+        return { ...parsed, account: null, changed: true, key: scopedKey };
+    }
+
+    config.accounts[scopedKey] = {
+        ...legacy,
+        username:
+            typeof legacy.username === "string" && legacy.username.trim()
+                ? legacy.username.trim().toLowerCase()
+                : parsed.username,
+    };
+    delete config.accounts[parsed.username];
+    if (config.lastUsername === parsed.username) {
+        config.lastUsername = scopedKey;
+    }
+    return {
+        ...parsed,
+        account: config.accounts[scopedKey],
+        changed: true,
+        key: scopedKey,
+    };
+}
+
+async function writeConfigIfChanged(ctx, config, changed) {
+    if (changed) {
+        await writeConfig(ctx.configPath, config);
+    }
+}
+
+function assertAccountHostMatches(ctx, accountRef) {
+    if (!accountRef.scoped || accountRef.hostMatches) return;
+    const currentHost = normalizeAccountHost(ctx.clientOptions.host);
+    throw new Error(
+        `Local account ${accountRef.key} is for ${accountRef.host}; current host is ${currentHost}. Pass --host ${accountRef.host}.`,
+    );
+}
+
+function deleteLocalAccount(ctx, config, username) {
+    const { key } = parseAccountSelector(ctx, username);
+    delete config.accounts[key];
+    if (config.lastUsername === key) {
+        delete config.lastUsername;
+    }
+}
+
 async function register(ctx, args) {
-    const username = (args[0] ?? ctx.username)?.toLowerCase();
+    const requestedUsername = args[0] ?? ctx.username;
     const password = args[1] ?? ctx.password;
-    if (!username) {
+    if (!requestedUsername) {
         throw new Error("Usage: vex-chat register <username> [password]");
     }
     const config = await readConfig(ctx.configPath);
-    if (config.accounts[username]) {
+    const accountRef = resolveAccountEntry(ctx, config, requestedUsername);
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    const { username } = accountRef;
+    if (accountRef.account) {
         throw new Error(
             `Local account already exists for ${username}. Use login or remove it from ${ctx.configPath}.`,
         );
@@ -414,15 +607,17 @@ async function persistNewLocalAccount(
     client,
     deviceID = client.me.device().deviceID,
 ) {
-    config.accounts[username] = {
+    const accountRef = parseAccountSelector(ctx, username);
+    const storedUsername = client.me.user().username ?? accountRef.username;
+    config.accounts[accountRef.key] = {
         deviceID,
         privateKey,
         userID: client.me.user().userID,
-        username,
+        username: storedUsername,
     };
-    config.lastUsername = username;
+    config.lastUsername = accountRef.key;
     await writeConfig(ctx.configPath, config);
-    return config.accounts[username];
+    return { ...config.accounts[accountRef.key], accountKey: accountRef.key };
 }
 
 async function persistPendingLocalAccount(
@@ -432,8 +627,9 @@ async function persistPendingLocalAccount(
     privateKey,
     pending,
 ) {
-    const previous = config.accounts[username] ?? {};
-    config.accounts[username] = {
+    const accountRef = parseAccountSelector(ctx, username);
+    const previous = config.accounts[accountRef.key] ?? {};
+    config.accounts[accountRef.key] = {
         ...previous,
         privateKey,
         pendingApproval: {
@@ -442,38 +638,38 @@ async function persistPendingLocalAccount(
             requestID: pending.requestID,
         },
         ...(pending.userID ? { userID: pending.userID } : {}),
-        username,
+        username: accountRef.username,
     };
-    config.lastUsername = username;
+    config.lastUsername = accountRef.key;
     await writeConfig(ctx.configPath, config);
-    return config.accounts[username];
+    return { ...config.accounts[accountRef.key], accountKey: accountRef.key };
 }
 
 async function login(ctx, args) {
-    const username = (args[0] ?? ctx.username)?.toLowerCase();
+    const requestedUsername = args[0] ?? ctx.username;
     const password = args[1] ?? ctx.password;
-    if (!username) {
+    if (!requestedUsername) {
         throw new Error("Usage: vex-chat login <username> [password]");
     }
+    const { username } = parseAccountSelector(ctx, requestedUsername);
     if (!password) {
-        await loginWithDeviceApproval(ctx, username);
+        await loginWithDeviceApproval(ctx, requestedUsername);
         return;
     }
-    const { client, config } = await makeClient(ctx, username);
+    const { client, config } = await makeClient(ctx, requestedUsername);
     attachDebugClientEvents(ctx, client, `login:${username}`);
     try {
         const loginResult = await client.login(username, password);
         if (!loginResult.ok)
             throw new Error(loginResult.error ?? "Login failed.");
         await connectAndWait(client, ctx, `login:${username}`);
-        config.accounts[username] = {
-            deviceID: client.me.device().deviceID,
-            privateKey: client.getKeys().private,
-            userID: client.me.user().userID,
+        await persistNewLocalAccount(
+            ctx,
+            config,
             username,
-        };
-        config.lastUsername = username;
-        await writeConfig(ctx.configPath, config);
+            client.getKeys().private,
+            client,
+        );
         console.log(
             `${color(ROOT_ACCENT, "logged in")} ${color(userAccent(client.me.user().userID), username)}`,
         );
@@ -485,11 +681,14 @@ async function login(ctx, args) {
 
 async function loginWithDeviceApproval(ctx, username) {
     const config = await readConfig(ctx.configPath);
-    if (config.accounts[username]) {
-        const { client } = await authenticate(ctx, username);
+    const accountRef = resolveAccountEntry(ctx, config, username);
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    if (accountRef.account) {
+        const { client } = await authenticate(ctx, accountRef.key);
         try {
             console.log(
-                `${color(ROOT_ACCENT, "using")} ${color(userAccent(client.me.user().userID), username)}`,
+                `${color(ROOT_ACCENT, "using")} ${color(userAccent(client.me.user().userID), accountRef.username)}`,
             );
             printWhoami(client);
         } finally {
@@ -498,22 +697,27 @@ async function loginWithDeviceApproval(ctx, username) {
         return;
     }
 
+    const { username: accountUsername } = accountRef;
     const privateKey = Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
-    attachDebugClientEvents(ctx, client, `login-request:${username}`);
+    attachDebugClientEvents(ctx, client, `login-request:${accountUsername}`);
     try {
-        const [, registerErr] = await client.register(username);
+        const [, registerErr] = await client.register(accountUsername);
         if (!registerErr) {
-            await connectAndWait(client, ctx, `login-request:${username}`);
+            await connectAndWait(
+                client,
+                ctx,
+                `login-request:${accountUsername}`,
+            );
             await persistNewLocalAccount(
                 ctx,
                 config,
-                username,
+                accountUsername,
                 privateKey,
                 client,
             );
             console.log(
-                `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
+                `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), accountUsername)}`,
             );
             printWhoami(client);
             return;
@@ -521,12 +725,19 @@ async function loginWithDeviceApproval(ctx, username) {
         if (!isDeviceApprovalRequired(registerErr)) {
             throw registerErr;
         }
-        await waitForDeviceApproval(ctx, client, config, username, privateKey, {
-            challenge: registerErr.challenge,
-            expiresAt: registerErr.expiresAt,
-            requestID: registerErr.requestID,
-            userID: registerErr.userID,
-        });
+        await waitForDeviceApproval(
+            ctx,
+            client,
+            config,
+            accountUsername,
+            privateKey,
+            {
+                challenge: registerErr.challenge,
+                expiresAt: registerErr.expiresAt,
+                requestID: registerErr.requestID,
+                userID: registerErr.userID,
+            },
+        );
     } finally {
         await client.close().catch(() => {});
     }
@@ -591,7 +802,7 @@ async function waitForDeviceApproval(
                         requestID: pending.requestID,
                     })
                     .catch(() => {});
-                delete config.accounts[username];
+                deleteLocalAccount(ctx, config, username);
                 await writeConfig(ctx.configPath, config);
                 throw new Error("Device login cancelled.");
             }
@@ -672,7 +883,7 @@ async function waitForDeviceApproval(
                 );
             }
         }
-        delete config.accounts[username];
+        deleteLocalAccount(ctx, config, username);
         await writeConfig(ctx.configPath, config);
         throw new Error(`Device login ${current.status}.`);
     }
@@ -812,18 +1023,21 @@ function formatDeviceRequestLine(request) {
 }
 
 async function useAccount(ctx, args) {
-    const username = requireArg(args, 0, "username").toLowerCase();
+    const requestedUsername = requireArg(args, 0, "username");
     const config = await readConfig(ctx.configPath);
-    if (!config.accounts[username]) {
+    const accountRef = resolveAccountEntry(ctx, config, requestedUsername);
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    if (!accountRef.account) {
         throw new Error(
-            `No local account for ${username}. Run vex auth register ${username} first.`,
+            `No local account for ${accountRef.username}. Run vex auth register ${accountRef.username} first.`,
         );
     }
-    config.lastUsername = username;
+    config.lastUsername = accountRef.key;
     await writeConfig(ctx.configPath, config);
-    const account = config.accounts[username];
+    const account = config.accounts[accountRef.key];
     console.log(
-        `${color(ROOT_ACCENT, "using")} ${color(userAccent(account.userID), username)}`,
+        `${color(ROOT_ACCENT, "using")} ${color(userAccent(account.userID), accountRef.key)}`,
     );
 }
 
@@ -890,14 +1104,14 @@ async function channelCommand(ctx, args) {
         await useChannel(ctx, args);
         return;
     }
-    await withReadyClient(ctx, args, async (client, rest) => {
+    await withReadyClient(ctx, args, async (client, rest, meta) => {
         if (sub === "list" || sub === "ls") {
             const serverID = requireArg(rest, 0, "server id");
             printChannels(await client.channels.retrieve(serverID));
             return;
         }
         if (sub === "history") {
-            const accountState = accountUiState(meta.config, meta.account);
+            const accountState = accountUiState(ctx, meta.config, meta.account);
             const channelID = rest[0] ?? accountState.lastChannel;
             if (!channelID)
                 throw new Error(
@@ -976,7 +1190,7 @@ async function groupCommand(ctx, args) {
 
 async function sendCommand(ctx, args) {
     await withReadyClient(ctx, args, async (client, rest, meta) => {
-        const accountState = accountUiState(meta.config, meta.account);
+        const accountState = accountUiState(ctx, meta.config, meta.account);
         let channelID = rest[0];
         let messageParts = rest.slice(1);
         if (messageParts.length === 0 && accountState.lastChannel) {
@@ -1043,7 +1257,7 @@ async function createServerInChat(ctx, client, state, name, rl) {
 
 async function createInviteInteractive(ctx, client, state, args, rl) {
     const config = await readConfig(ctx.configPath);
-    const accountState = accountUiState(config, state.account);
+    const accountState = accountUiState(ctx, config, state.account);
     let serverID =
         state.target?.type === "channel" && state.target.serverID
             ? state.target.serverID
@@ -2140,7 +2354,7 @@ async function chat(ctx, args) {
         username,
     );
     attachDebugClientEvents(ctx, client, `chat:${account.username}`);
-    const accountState = accountUiState(config, account);
+    const accountState = accountUiState(ctx, config, account);
     const state = {
         account,
         avatarMarkers: new Map(),
@@ -2703,13 +2917,20 @@ async function withReadyClient(ctx, args, fn) {
 
 async function authenticate(ctx, explicitUsername) {
     const config = await readConfig(ctx.configPath);
-    const username = (explicitUsername ?? config.lastUsername)?.toLowerCase();
+    const accountRef = resolveAccountEntry(
+        ctx,
+        config,
+        explicitUsername ?? config.lastUsername,
+    );
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    const { username } = accountRef;
     if (!username) {
         throw new Error(
             "No local account selected. Use --username or run register/login first.",
         );
     }
-    const account = config.accounts[username];
+    const account = accountRef.account;
     if (!account) {
         throw new Error(
             `No local account for ${username}. Run register/login first.`,
@@ -2750,9 +2971,13 @@ async function authenticate(ctx, explicitUsername) {
     }
     account.userID = client.me.user().userID;
     account.username = client.me.user().username ?? username;
-    config.accounts[username] = account;
+    config.accounts[accountRef.key] = account;
     await writeConfig(ctx.configPath, config);
-    return { account, client, config };
+    return {
+        account: { ...account, accountKey: accountRef.key },
+        client,
+        config,
+    };
 }
 
 async function resolveStoredDeviceID(ctx, client, account, username) {
@@ -2775,20 +3000,32 @@ async function resolveStoredDeviceID(ctx, client, account, username) {
 
 async function authenticateOrRegister(ctx, explicitUsername) {
     const config = await readConfig(ctx.configPath);
-    const username = (explicitUsername ?? config.lastUsername)?.toLowerCase();
-    if (username && config.accounts[username]) {
-        return authenticate(ctx, username);
+    const accountRef = resolveAccountEntry(
+        ctx,
+        config,
+        explicitUsername ?? config.lastUsername,
+    );
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    if (accountRef.account) {
+        return authenticate(ctx, accountRef.key);
     }
 
     const rl = createInterface({ input, output });
     try {
         console.log("Welcome to vex.");
-        const entered = (username ?? (await rl.question("username: ")))
+        const enteredRaw = (
+            accountRef.username || (await rl.question("username: "))
+        )
             .trim()
             .toLowerCase();
+        const enteredRef = resolveAccountEntry(ctx, config, enteredRaw);
+        await writeConfigIfChanged(ctx, config, enteredRef.changed);
+        assertAccountHostMatches(ctx, enteredRef);
+        const entered = enteredRef.username;
         if (!entered) throw new Error("username is required");
-        if (config.accounts[entered]) {
-            return authenticate(ctx, entered);
+        if (enteredRef.account) {
+            return authenticate(ctx, enteredRef.key);
         }
         const answer = (await rl.question(`register ${entered}? [Y/n] `))
             .trim()
@@ -2834,7 +3071,10 @@ async function authenticateOrRegister(ctx, explicitUsername) {
 
 async function makeClient(ctx, username) {
     const config = await readConfig(ctx.configPath);
-    const account = config.accounts[username];
+    const accountRef = resolveAccountEntry(ctx, config, username);
+    await writeConfigIfChanged(ctx, config, accountRef.changed);
+    assertAccountHostMatches(ctx, accountRef);
+    const account = accountRef.account;
     const privateKey = account?.privateKey ?? Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
     return { client, config };
@@ -3523,9 +3763,11 @@ function targetToAccountUi(target) {
     return patch;
 }
 
-function accountUiState(config, account) {
+function accountUiState(ctx, config, account) {
     if (!account) return {};
-    const key = account.username?.toLowerCase();
+    const key =
+        account.accountKey ??
+        (account.username ? accountKeyFor(ctx, account.username) : null);
     const stored = key ? config.accounts?.[key]?.ui : null;
     if (!stored || typeof stored !== "object") return {};
     return {
@@ -3543,9 +3785,14 @@ function accountUiState(config, account) {
 
 async function saveAccountUiState(ctx, account, patch) {
     const config = await readConfig(ctx.configPath);
-    const key = account?.username?.toLowerCase();
+    const key =
+        account?.accountKey ??
+        (account?.username ? accountKeyFor(ctx, account.username) : null);
     if (!key || !config.accounts[key]) return;
-    const current = accountUiState(config, config.accounts[key]);
+    const current = accountUiState(ctx, config, {
+        ...config.accounts[key],
+        accountKey: key,
+    });
     config.accounts[key] = {
         ...config.accounts[key],
         ui: {
