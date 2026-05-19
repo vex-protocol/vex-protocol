@@ -548,6 +548,37 @@ function deleteLocalAccount(ctx, config, username) {
     }
 }
 
+function formatRemovedDeviceLoginHint(ctx, username) {
+    const host = normalizeAccountHost(ctx.clientOptions.host);
+    return `Local device for ${username}@${host} is no longer on the account. Run vex auth login ${username} --host ${host} to add this machine as a new device.`;
+}
+
+function isMissingStoredDeviceError(err) {
+    if (err?.response?.status === 404) return true;
+    const message = err instanceof Error ? err.message : String(err ?? "");
+    return /\b(?:http|status(?: code)?)?\s*404\b|404[^\n]*not found|not found[^\n]*404/i.test(
+        message,
+    );
+}
+
+function isRemovedStoredDeviceError(err) {
+    return err?.name === "RemovedStoredDeviceError";
+}
+
+async function removeStoredDeviceAccount(ctx, config, accountRef) {
+    delete config.accounts[accountRef.key];
+    if (config.lastUsername === accountRef.key) {
+        delete config.lastUsername;
+    }
+    await writeConfig(ctx.configPath, config);
+}
+
+function removedStoredDeviceError(ctx, username) {
+    const err = new Error(formatRemovedDeviceLoginHint(ctx, username));
+    err.name = "RemovedStoredDeviceError";
+    return err;
+}
+
 async function register(ctx, args) {
     const requestedUsername = args[0] ?? ctx.username;
     const password = args[1] ?? ctx.password;
@@ -685,16 +716,33 @@ async function loginWithDeviceApproval(ctx, username) {
     await writeConfigIfChanged(ctx, config, accountRef.changed);
     assertAccountHostMatches(ctx, accountRef);
     if (accountRef.account) {
-        const { client } = await authenticate(ctx, accountRef.key);
+        let existing;
         try {
+            existing = await authenticate(ctx, accountRef.key);
+        } catch (err) {
+            if (!isRemovedStoredDeviceError(err)) {
+                throw err;
+            }
             console.log(
-                `${color(ROOT_ACCENT, "using")} ${color(userAccent(client.me.user().userID), accountRef.username)}`,
+                color(
+                    "yellow",
+                    `local device removed; requesting approval for ${accountRef.username} as a new device`,
+                ),
             );
-            printWhoami(client);
-        } finally {
-            await client.close().catch(() => {});
+            await removeStoredDeviceAccount(ctx, config, accountRef);
         }
-        return;
+        if (existing) {
+            const { client } = existing;
+            try {
+                console.log(
+                    `${color(ROOT_ACCENT, "using")} ${color(userAccent(client.me.user().userID), accountRef.username)}`,
+                );
+                printWhoami(client);
+            } finally {
+                await client.close().catch(() => {});
+            }
+            return;
+        }
     }
 
     const { username: accountUsername } = accountRef;
@@ -2957,6 +3005,11 @@ async function authenticate(ctx, explicitUsername) {
             account.pendingApproval,
         );
     }
+    if (deviceErr && isMissingStoredDeviceError(deviceErr)) {
+        await client.close().catch(() => {});
+        await removeStoredDeviceAccount(ctx, config, accountRef);
+        throw removedStoredDeviceError(ctx, username);
+    }
     if (deviceErr && ctx.password) {
         const loginResult = await client.login(username, ctx.password);
         if (!loginResult.ok)
@@ -3008,7 +3061,20 @@ async function authenticateOrRegister(ctx, explicitUsername) {
     await writeConfigIfChanged(ctx, config, accountRef.changed);
     assertAccountHostMatches(ctx, accountRef);
     if (accountRef.account) {
-        return authenticate(ctx, accountRef.key);
+        try {
+            return await authenticate(ctx, accountRef.key);
+        } catch (err) {
+            if (!isRemovedStoredDeviceError(err)) {
+                throw err;
+            }
+            await removeStoredDeviceAccount(ctx, config, accountRef);
+            console.log(
+                color(
+                    "yellow",
+                    `local device removed; setting up ${accountRef.username} as a new device`,
+                ),
+            );
+        }
     }
 
     const rl = createInterface({ input, output });
