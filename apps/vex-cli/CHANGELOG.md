@@ -1,5 +1,14 @@
 # @vex-chat/cli
 
+## 0.1.3
+
+### Patch Changes
+
+- [#116](https://github.com/vex-protocol/vex-protocol/pull/116) [`f90748d`](https://github.com/vex-protocol/vex-protocol/commit/f90748db61eb2438fd8beb999aeff9ed32da8aed) Thanks [@yuki111888](https://github.com/yuki111888)! - Publish the terminal CLI to npm as `@vex-chat/cli`, including the `vex-chat` binary and the same OIDC-backed provenance release flow as the other Vex packages.
+
+- Updated dependencies [[`517ea9b`](https://github.com/vex-protocol/vex-protocol/commit/517ea9b478c0f816cc76dd62bcd49e16a1ab890a), [`bf11197`](https://github.com/vex-protocol/vex-protocol/commit/bf11197978cca3cf9c87b10e133b680b5348ee9c)]:
+    - @vex-chat/libvex@6.6.0
+
 ## 0.1.2
 
 ### Patch Changes

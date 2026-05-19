@@ -220,20 +220,23 @@ async function createContext(flags) {
     );
     const debug = Boolean(flags.debug) || debugLevel !== "off";
     const local = Boolean(flags.local) || process.env.VEX_CHAT_LOCAL === "1";
+    const apiUrl = flags["api-url"];
+    const envApiUrl = process.env.VEX_CHAT_API_URL ?? process.env.API_URL;
     const host = String(
         local
             ? LOCAL_HOST
-            : (flags.host ??
+            : (hostFromApiUrl(apiUrl) ??
+                  flags.host ??
                   process.env.VEX_CHAT_HOST ??
                   process.env.API_HOST ??
-                  hostFromApiUrl(process.env.API_URL) ??
+                  hostFromApiUrl(envApiUrl) ??
                   DEFAULT_HOST),
     );
     const unsafeHttp =
         local ||
         Boolean(flags.http) ||
         process.env.VEX_CHAT_HTTP === "1" ||
-        httpFromApiUrl(process.env.API_URL) ||
+        httpFromApiUrl(apiUrl ?? envApiUrl) ||
         isLocalHost(host);
     if (unsafeHttp && !process.env.NODE_ENV) {
         process.env.NODE_ENV = "development";
@@ -4289,6 +4292,7 @@ Flags:
   --username <name>      local account to use
   --user <name>          alias for --username
   --password <password>  fallback password for login
+  --api-url <url>        API base URL, e.g. http://127.0.0.1:16777
   --host <host:port>     API host, default api.vex.wtf
   --local                connect to local Spire at 127.0.0.1:16777 over http/ws
   --http                 use http/ws
