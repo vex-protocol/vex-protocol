@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/spire",
-    "version": "1.11.2",
+    "version": "1.11.4",
     "description": "Vex server implementation in NodeJS.",
     "type": "module",
     "files": [

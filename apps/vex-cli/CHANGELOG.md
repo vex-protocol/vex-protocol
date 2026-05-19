@@ -1,5 +1,11 @@
 # @vex-chat/cli
 
+## 0.1.4
+
+### Patch Changes
+
+- [#156](https://github.com/vex-protocol/vex-protocol/pull/156) [`bb6f126`](https://github.com/vex-protocol/vex-protocol/commit/bb6f126c79c1dcfbdbb45aa17ae02305a0d87be2) Thanks [@yuki111888](https://github.com/yuki111888)! - Accounts are now stored and resolved by `username@host` key, so credentials for one server are never reused when connecting to a different host. Existing accounts are migrated automatically on first use.
+
 ## 0.1.3
 
 ### Patch Changes
