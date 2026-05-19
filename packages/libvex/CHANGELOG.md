@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.6.4
+
+### Patch Changes
+
+- [#166](https://github.com/vex-protocol/vex-protocol/pull/166) [`ccdb9dc`](https://github.com/vex-protocol/vex-protocol/commit/ccdb9dcab90ba66ab2df2028274d598b02904ff8) Thanks [@yuki111888](https://github.com/yuki111888)! - Allow file downloads to complete in React Native fetch environments that do not expose response body streams.
+
 ## 6.6.3
 
 ### Patch Changes
