@@ -110,7 +110,7 @@
         "parse-duration": "2.1.6",
         "tweetnacl": "1.0.3",
         "uuid": "catalog:",
-        "ws": "8.20.0",
+        "ws": "8.20.1",
         "zod": "catalog:"
     }
 }
