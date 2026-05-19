@@ -36,11 +36,13 @@ function createSpireHarness(
     clients: FakeClient[],
     subscriptions: NotificationSubscription[] = [],
     removeNotificationSubscription = vi.fn(() => Promise.resolve(true)),
+    hasMail = vi.fn(() => Promise.resolve(true)),
 ) {
     const retrieveNotificationSubscriptions = vi.fn(() =>
         Promise.resolve(subscriptions),
     );
     const db = {
+        hasMail,
         removeNotificationSubscription,
         retrieveNotificationSubscriptions,
     } as unknown as Database;
@@ -53,6 +55,7 @@ function createSpireHarness(
     return {
         clients: managers,
         db,
+        hasMail,
         notifications,
         removeNotificationSubscription,
         retrieveNotificationSubscriptions,
@@ -197,6 +200,112 @@ describe("Spire notify fanout", () => {
             headless: true,
             transmissionID: "00000000-0000-0000-0000-000000000007",
         });
+    });
+
+    it("skips Expo mail push when websocket delivery is acknowledged during the grace window", async () => {
+        vi.useFakeTimers();
+        const recipient = fakeClient({
+            getDeviceID: vi.fn(() => "device-b"),
+        });
+        const fetchMock = vi.fn();
+        const hasMail = vi.fn(() => Promise.resolve(false));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { notifications } = createSpireHarness(
+            [recipient],
+            [subscription],
+            undefined,
+            hasMail,
+        );
+        const mailNonce = new Uint8Array([1, 2, 3]);
+
+        notifications.notify({
+            deviceID: "device-b",
+            event: "mail",
+            mailNonce,
+            transmissionID: "00000000-0000-0000-0000-000000000010",
+            userID: "user-b",
+        });
+
+        expect(recipient.send).toHaveBeenCalledTimes(1);
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1500);
+
+        await vi.waitFor(() => {
+            expect(hasMail).toHaveBeenCalledWith(mailNonce, "device-b");
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("sends Expo mail push after the grace window when websocket mail remains pending", async () => {
+        vi.useFakeTimers();
+        const recipient = fakeClient({
+            getDeviceID: vi.fn(() => "device-b"),
+        });
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [{ id: "receipt-a", status: "ok" }],
+                }),
+            ok: true,
+        });
+        const hasMail = vi.fn(() => Promise.resolve(true));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { notifications } = createSpireHarness(
+            [recipient],
+            [subscription],
+            undefined,
+            hasMail,
+        );
+
+        notifications.notify({
+            deviceID: "device-b",
+            event: "mail",
+            mailNonce: new Uint8Array([4, 5, 6]),
+            transmissionID: "00000000-0000-0000-0000-000000000011",
+            userID: "user-b",
+        });
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1500);
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it("sends Expo mail push immediately when no websocket client was notified", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [{ id: "receipt-a", status: "ok" }],
+                }),
+            ok: true,
+        });
+        const hasMail = vi.fn(() => Promise.resolve(true));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { notifications } = createSpireHarness(
+            [],
+            [subscription],
+            undefined,
+            hasMail,
+        );
+
+        notifications.notify({
+            deviceID: "device-b",
+            event: "mail",
+            mailNonce: new Uint8Array([7, 8, 9]),
+            transmissionID: "00000000-0000-0000-0000-000000000012",
+            userID: "user-b",
+        });
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+        expect(hasMail).not.toHaveBeenCalled();
     });
 
     it("checks Expo receipts and removes unregistered devices", async () => {

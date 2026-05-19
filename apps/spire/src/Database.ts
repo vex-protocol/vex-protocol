@@ -665,6 +665,20 @@ export class Database extends EventEmitter {
         return count;
     }
 
+    public async hasMail(
+        nonce: Uint8Array,
+        deviceID: string,
+    ): Promise<boolean> {
+        const row = await this.db
+            .selectFrom("mail")
+            .select("nonce")
+            .where("nonce", "=", XUtils.encodeHex(nonce))
+            .where("recipient", "=", deviceID)
+            .limit(1)
+            .executeTakeFirst();
+        return row !== undefined;
+    }
+
     public async incrementRequestsTotal(by = 1): Promise<void> {
         if (!Number.isFinite(by) || by <= 0) {
             return;

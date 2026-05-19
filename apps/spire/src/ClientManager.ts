@@ -81,6 +81,7 @@ export class ClientManager extends EventEmitter {
         data?: unknown,
         deviceID?: string,
         headlessPushUserID?: string,
+        mailNonce?: Uint8Array,
     ) => void;
     private user: null | UserRecord;
     private userDetails: User;
@@ -95,6 +96,7 @@ export class ClientManager extends EventEmitter {
             data?: unknown,
             deviceID?: string,
             headlessPushUserID?: string,
+            mailNonce?: Uint8Array,
         ) => void,
         userDetails: User,
     ) {
@@ -309,6 +311,7 @@ export class ClientManager extends EventEmitter {
                             null,
                             mail.recipient,
                             mail.authorID,
+                            mail.nonce,
                         );
                     } catch (err: unknown) {
                         this.sendErr(msg.transmissionID, String(err));
