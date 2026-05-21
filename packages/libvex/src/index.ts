@@ -49,6 +49,34 @@ export type {
     HttpResponse,
 } from "./http.js";
 export {
+    createMessageEmbedExtra,
+    MESSAGE_EXTRA_VERSION,
+    parseMessageExtra,
+    serializeMessageExtra,
+} from "./messageExtra.js";
+export type {
+    EncryptedFileAttachmentReference,
+    MessageEmbed,
+    MessageEmbedAction,
+    MessageEmbedBlock,
+    MessageEmbedCodeBlock,
+    MessageEmbedDisplay,
+    MessageEmbedDividerBlock,
+    MessageEmbedField,
+    MessageEmbedFileBlock,
+    MessageEmbedGalleryBlock,
+    MessageEmbedMarkdownBlock,
+    MessageEmbedMediaBlock,
+    MessageEmbedMediaItem,
+    MessageEmbedMediaType,
+    MessageEmbedSource,
+    MessageEmbedTone,
+    MessageEmoji,
+    MessageExtra,
+    MessageReaction,
+    MessageReactionEvent,
+} from "./messageExtra.js";
+export {
     clampLocalMessageRetentionDays,
     effectiveMessageRetentionHintDays,
     MAX_LOCAL_MESSAGE_RETENTION_DAYS,
