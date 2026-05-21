@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 6.8.0
+
+### Minor Changes
+
+- [#179](https://github.com/vex-protocol/vex-protocol/pull/179) [`831e46c`](https://github.com/vex-protocol/vex-protocol/commit/831e46c7150753fb509a4881a6bc8623f02f2f48) Thanks [@yuki111888](https://github.com/yuki111888)! - Add exported message extra/embed types and helpers for encrypted rich message metadata.
+
 ## 6.7.0
 
 ### Minor Changes
