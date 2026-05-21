@@ -24,6 +24,11 @@ import type { EventEmitter } from "eventemitter3";
  * - Managing prekeys / one-time keys used for session setup
  * - Emitting lifecycle events (`ready`, `error`)
  */
+export interface MessageUpdatePatch {
+    extra?: null | string | undefined;
+    message?: string | undefined;
+}
+
 export interface Storage extends EventEmitter {
     /** Closes storage resources (connections, handles, transactions, etc.). */
     close: () => Promise<void>;
@@ -131,6 +136,12 @@ export interface Storage extends EventEmitter {
         preKeys: UnsavedPreKey[],
         oneTime: boolean,
     ) => Promise<PreKeysSQL[]>;
+
     /** Persists an encryption session. */
     saveSession: (session: Session) => Promise<void>;
+    /** Updates locally persisted message plaintext and/or encrypted extra by `mailID`. */
+    updateMessage: (
+        mailID: string,
+        patch: MessageUpdatePatch,
+    ) => Promise<boolean>;
 }
