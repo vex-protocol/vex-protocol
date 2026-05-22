@@ -663,6 +663,17 @@ export const initApp = (
             res.sendStatus(404);
             return;
         }
+        if (req.user?.userID !== device.owner) {
+            res.sendStatus(401);
+            return;
+        }
+        const passkeys = await db.retrievePasskeysByUser(device.owner);
+        if (passkeys.length === 0) {
+            res.status(403).send({
+                error: "A passkey must be registered before this device can connect.",
+            });
+            return;
+        }
 
         const regKey = await spireXSignOpenAsync(
             signed,

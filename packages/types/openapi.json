@@ -435,8 +435,8 @@
         "/auth": {
             "post": {
                 "operationId": "login",
-                "summary": "Login with username and password",
-                "description": "Authenticate with username and password credentials. Returns a JWT token and the authenticated user profile.",
+                "summary": "Login with username, password, and passkey when enrolled",
+                "description": "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys may use this session to enroll their first passkey before connecting a device.",
                 "tags": [
                     "auth"
                 ],
@@ -506,6 +506,9 @@
                     },
                     "401": {
                         "description": "Invalid credentials"
+                    },
+                    "403": {
+                        "description": "Passkey verification required for enrolled accounts"
                     }
                 }
             }
@@ -569,7 +572,7 @@
             "post": {
                 "operationId": "verifyDeviceChallenge",
                 "summary": "Verify device auth challenge",
-                "description": "Submit the signed challenge to complete device-key authentication. Returns a JWT token and the authenticated user profile.",
+                "description": "Submit the signed challenge with a fresh passkey-scoped bearer token when the account already has passkeys. Accounts with no passkeys may use the resulting session to enroll their first passkey before connecting a device.",
                 "tags": [
                     "auth"
                 ],
@@ -636,6 +639,9 @@
                                 }
                             }
                         }
+                    },
+                    "403": {
+                        "description": "Passkey verification required for enrolled accounts"
                     }
                 }
             }
@@ -644,7 +650,7 @@
             "post": {
                 "operationId": "register",
                 "summary": "Register a new user account",
-                "description": "Create a new user account with cryptographic device registration. Requires a signed registration payload with Ed25519 keys.",
+                "description": "Create a new user account with cryptographic device registration. Requires a signed registration payload with Ed25519 keys; the account must enroll a passkey before the device can connect.",
                 "tags": [
                     "auth"
                 ],
@@ -708,25 +714,76 @@
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "lastSeen": {
-                                            "type": "string",
-                                            "description": "Last activity timestamp"
+                                        "device": {
+                                            "type": "object",
+                                            "properties": {
+                                                "deleted": {
+                                                    "type": "boolean",
+                                                    "description": "Soft-delete flag"
+                                                },
+                                                "deviceID": {
+                                                    "type": "string",
+                                                    "description": "Unique device identifier"
+                                                },
+                                                "lastLogin": {
+                                                    "type": "string",
+                                                    "description": "Last login timestamp"
+                                                },
+                                                "name": {
+                                                    "type": "string",
+                                                    "description": "Device display name"
+                                                },
+                                                "owner": {
+                                                    "type": "string",
+                                                    "description": "Owner user ID"
+                                                },
+                                                "signKey": {
+                                                    "type": "string",
+                                                    "description": "Ed25519 signing public key (hex)"
+                                                }
+                                            },
+                                            "required": [
+                                                "deleted",
+                                                "deviceID",
+                                                "lastLogin",
+                                                "name",
+                                                "owner",
+                                                "signKey"
+                                            ],
+                                            "description": "Device registration record"
                                         },
-                                        "userID": {
-                                            "type": "string",
-                                            "description": "Unique user identifier"
+                                        "token": {
+                                            "type": "string"
                                         },
-                                        "username": {
-                                            "type": "string",
-                                            "description": "Display username"
+                                        "user": {
+                                            "type": "object",
+                                            "properties": {
+                                                "lastSeen": {
+                                                    "type": "string",
+                                                    "description": "Last activity timestamp"
+                                                },
+                                                "userID": {
+                                                    "type": "string",
+                                                    "description": "Unique user identifier"
+                                                },
+                                                "username": {
+                                                    "type": "string",
+                                                    "description": "Display username"
+                                                }
+                                            },
+                                            "required": [
+                                                "lastSeen",
+                                                "userID",
+                                                "username"
+                                            ],
+                                            "description": "Public user profile"
                                         }
                                     },
                                     "required": [
-                                        "lastSeen",
-                                        "userID",
-                                        "username"
-                                    ],
-                                    "description": "Public user profile"
+                                        "device",
+                                        "token",
+                                        "user"
+                                    ]
                                 }
                             }
                         }

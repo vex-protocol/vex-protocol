@@ -127,6 +127,26 @@ interface ValidatedMailBatchEntry {
     recipientDevice: Device;
 }
 
+export async function passkeySecondFactorError(
+    db: Database,
+    userID: string,
+    passkeyID: string | undefined,
+    mismatchError: string,
+): Promise<null | string> {
+    const passkeys = await db.retrievePasskeysByUser(userID);
+    if (passkeys.length === 0) {
+        return null;
+    }
+    if (!passkeyID) {
+        return "Passkey verification required.";
+    }
+    const passkey = await db.retrievePasskeyInternal(passkeyID);
+    if (!passkey || passkey.userID !== userID) {
+        return mismatchError;
+    }
+    return null;
+}
+
 const notificationSubscribePayload = z.object({
     channel: z.literal("expo"),
     events: z.array(z.string().min(1)).default(["mail"]),
@@ -774,6 +794,18 @@ export class Spire extends EventEmitter {
                         .send({ error: "Device owner not found." });
                 }
 
+                const passkeyError = await passkeySecondFactorError(
+                    this.db,
+                    user.userID,
+                    req.passkey?.passkeyID,
+                    "Passkey verification does not match this device.",
+                );
+                if (passkeyError) {
+                    return res.status(403).send({
+                        error: passkeyError,
+                    });
+                }
+
                 // Issue short-lived JWT (1 hour, not 7 days)
                 const token = jwt.sign(
                     { user: censorUser(user) },
@@ -860,20 +892,10 @@ export class Spire extends EventEmitter {
                 return;
             }
 
-            const results: MailBatchResult[] = parsed.data.mails.map(
-                ({ mail }, index) => ({
-                    error: "Mail was not processed.",
-                    index,
-                    mailID: mail.mailID,
-                    ok: false,
-                    recipient: mail.recipient,
-                    status: 500,
-                }),
-            );
+            const results: MailBatchResult[] = [];
             const validEntries: ValidatedMailBatchEntry[] = [];
-
-            for (const [index, entry] of parsed.data.mails.entries()) {
-                const { header, mail } = entry;
+            for (const [index, item] of parsed.data.mails.entries()) {
+                const { header, mail } = item;
                 try {
                     const { recipientDevice } = await validateMailIngress(
                         this.db,
@@ -888,16 +910,19 @@ export class Spire extends EventEmitter {
                         recipientDevice,
                     });
                 } catch (err: unknown) {
+                    const status =
+                        err instanceof MailIngressValidationError
+                            ? err.status
+                            : 500;
+                    const message =
+                        err instanceof Error ? err.message : String(err);
                     results[index] = {
-                        error: err instanceof Error ? err.message : String(err),
+                        error: message,
                         index,
                         mailID: mail.mailID,
                         ok: false,
                         recipient: mail.recipient,
-                        status:
-                            err instanceof MailIngressValidationError
-                                ? err.status
-                                : 500,
+                        status,
                     };
                 }
             }
@@ -1062,6 +1087,19 @@ export class Spire extends EventEmitter {
                     await this.db.rehashPassword(userEntry.userID, newHash);
                 }
 
+                const passkeyError = await passkeySecondFactorError(
+                    this.db,
+                    userEntry.userID,
+                    req.passkey?.passkeyID,
+                    "Passkey verification does not match this account.",
+                );
+                if (passkeyError) {
+                    res.status(403).send({
+                        error: passkeyError,
+                    });
+                    return;
+                }
+
                 const token = jwt.sign(
                     { user: censorUser(userEntry) },
                     getJwtSecret(),
@@ -1185,7 +1223,27 @@ export class Spire extends EventEmitter {
                             res.sendStatus(500);
                             return;
                         }
-                        res.send(msgpack.encode(censorUser(user)));
+                        const device = await this.db.retrieveDevice(
+                            normalizedPayload.signKey,
+                        );
+                        if (!device) {
+                            res.sendStatus(500);
+                            return;
+                        }
+                        const censored = censorUser(user);
+                        const token = jwt.sign(
+                            { user: censored },
+                            getJwtSecret(),
+                            { expiresIn: JWT_EXPIRY },
+                        );
+                        jwt.verify(token, getJwtSecret());
+                        res.send(
+                            msgpack.encode({
+                                device,
+                                token,
+                                user: censored,
+                            }),
+                        );
                     }
                 } else if (regKey && regKey.length !== 16) {
                     res.status(400).send({

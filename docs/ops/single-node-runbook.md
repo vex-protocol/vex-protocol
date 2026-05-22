@@ -44,6 +44,12 @@ NODE_ENV=production
 SPIRE_FIPS=false
 CORS_ORIGINS=
 SPIRE_MAIL_RETENTION_TTL=30d
+# Optional passkey support when this host is the RP host:
+# SPIRE_PASSKEY_RP_ID=api.vex.wtf
+# SPIRE_PASSKEY_RP_NAME=Vex
+# SPIRE_PASSKEY_ORIGINS=https://api.vex.wtf,ios:bundle-id:chat.vex.mobile
+# SPIRE_PASSKEY_ANDROID_PACKAGE=chat.vex.mobile
+# SPIRE_PASSKEY_ANDROID_FINGERPRINTS=<EAS Android SHA-256 cert fingerprint>
 ```
 
 Notes:
@@ -53,6 +59,8 @@ Notes:
   values such as `6h`, `24h`, `7d`, or `30d`.
 - In production, set `CORS_ORIGINS` if browser clients need cross-origin access.
   Non-browser clients do not use CORS.
+- To enable passkeys, set the `SPIRE_PASSKEY_*` values for the exact RP host,
+  bundle/package ID, and signing certificate used by the app environment.
 - Do not set `DEV_API_KEY` or `SPIRE_DISABLE_RATE_LIMITS` in production.
 
 ## Start
