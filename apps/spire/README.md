@@ -64,11 +64,11 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 
 ### Required
 
-| Variable     | Description                                                                                                                                                                                                                                           |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable     | Description                                                                                                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SPK`        | Server private key, hex-encoded. **tweetnacl:** `pnpm --filter @vex-chat/spire gen-spk` (Ed25519). **FIPS:** `pnpm --filter @vex-chat/spire gen-spk-fips` and set `SPIRE_FIPS=true` (P-256 PKCS#8). Each command prints compose-safe `SPK` and `JWT_SECRET` lines. |
-| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                      |
-| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                                                                       |
+| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                                   |
+| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                                                                                    |
 
 ### Optional
 
