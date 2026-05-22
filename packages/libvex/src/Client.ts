@@ -867,12 +867,35 @@ const messageSchema: z.ZodType<Message> = z.object({
 
 const MESSAGE_BLOB_PREFIX = "vex-message:1\n";
 const MAIL_FANOUT_CONCURRENCY = 8;
+const MAIL_BATCH_MAX_SIZE = 32;
+const MAIL_BATCH_FLUSH_DELAY_MS = 8;
 
 interface DecodedMessagePlaintext {
     extra?: null | string | undefined;
     message: string;
     retentionHintDays?: number | undefined;
 }
+
+interface PendingMailBatchDelivery {
+    header: Uint8Array;
+    mail: MailWS;
+    msg: ResourceMsg;
+    reject: (err: unknown) => void;
+    resolve: () => void;
+}
+
+const mailBatchResponseSchema = z.object({
+    results: z.array(
+        z.object({
+            error: z.string().optional(),
+            index: z.number().int().nonnegative(),
+            mailID: z.string().optional(),
+            ok: z.boolean(),
+            recipient: z.string().optional(),
+            status: z.number().int().optional(),
+        }),
+    ),
+});
 
 function decodeMessageBlob(body: string): DecodedMessagePlaintext {
     if (!body.startsWith(MESSAGE_BLOB_PREFIX)) {
@@ -1558,6 +1581,9 @@ export class Client {
     private localMessageRetentionDays: number;
     private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
         null;
+    private mailBatchFlushTimer: null | ReturnType<typeof setTimeout> = null;
+    private readonly mailBatchQueue: PendingMailBatchDelivery[] = [];
+    private mailBatchUnsupported = false;
     private readonly mailInterval?: NodeJS.Timeout;
 
     private manuallyClosing: boolean = false;
@@ -1879,6 +1905,14 @@ export class Client {
 
         if (this.mailInterval) {
             clearInterval(this.mailInterval);
+        }
+        if (this.mailBatchFlushTimer) {
+            clearTimeout(this.mailBatchFlushTimer);
+            this.mailBatchFlushTimer = null;
+        }
+        const pendingMailBatch = this.mailBatchQueue.splice(0);
+        for (const pending of pendingMailBatch) {
+            pending.reject(new Error("Client closed before mail batch sent."));
         }
         if (this.localRetentionPurgeTimer) {
             clearInterval(this.localRetentionPurgeTimer);
@@ -2815,37 +2849,7 @@ export class Client {
                 this.emitter.emit("message", emitMsg);
             }
 
-            // send mail and wait for response
-            await new Promise((res, rej) => {
-                const callback = (packedMsg: Uint8Array) => {
-                    const [_header, receivedMsg] =
-                        XUtils.unpackMessage(packedMsg);
-                    if (receivedMsg.transmissionID === msg.transmissionID) {
-                        this.socket.off("message", callback);
-                        const parsed = WSMessageSchema.safeParse(receivedMsg);
-                        if (parsed.success && parsed.data.type === "success") {
-                            res(parsed.data.data);
-                        } else {
-                            rej(
-                                new Error(
-                                    "Mail delivery failed: " +
-                                        JSON.stringify(receivedMsg),
-                                ),
-                            );
-                        }
-                    }
-                };
-                this.socket.on("message", callback);
-                // Forward send failures to the outer promise instead
-                // of leaking them as an unhandled rejection: the
-                // listener above can never resolve if the send didn't
-                // make it onto the wire, so without this the caller
-                // would hang for the full 30s send-loop timeout.
-                this.send(msg, hmac).catch((err: unknown) => {
-                    this.socket.off("message", callback);
-                    rej(err instanceof Error ? err : new Error(String(err)));
-                });
-            });
+            await this.deliverMailResource(msg, hmac, mail);
         });
     }
 
@@ -2885,6 +2889,59 @@ export class Client {
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
+    private deliverMailResource(
+        msg: ResourceMsg,
+        header: Uint8Array,
+        mail: MailWS,
+    ): Promise<void> {
+        if (this.mailBatchUnsupported) {
+            return this.deliverMailResourceOverSocket(msg, header);
+        }
+        return new Promise<void>((resolve, reject) => {
+            this.mailBatchQueue.push({
+                header,
+                mail,
+                msg,
+                reject,
+                resolve,
+            });
+            if (this.mailBatchQueue.length >= MAIL_BATCH_MAX_SIZE) {
+                void this.flushMailBatchQueue();
+            } else {
+                this.scheduleMailBatchFlush();
+            }
+        });
+    }
+    private async deliverMailResourceOverSocket(
+        msg: ResourceMsg,
+        header: Uint8Array,
+    ): Promise<void> {
+        await new Promise<void>((res, rej) => {
+            const callback = (packedMsg: Uint8Array) => {
+                const [_header, receivedMsg] = XUtils.unpackMessage(packedMsg);
+                if (receivedMsg.transmissionID === msg.transmissionID) {
+                    this.socket.off("message", callback);
+                    const parsed = WSMessageSchema.safeParse(receivedMsg);
+                    if (parsed.success && parsed.data.type === "success") {
+                        res();
+                    } else {
+                        rej(
+                            new Error(
+                                "Mail delivery failed: " +
+                                    JSON.stringify(receivedMsg),
+                            ),
+                        );
+                    }
+                }
+            };
+            this.socket.on("message", callback);
+            this.send(msg, header).catch((err: unknown) => {
+                this.socket.off("message", callback);
+                rej(err instanceof Error ? err : new Error(String(err)));
+            });
+        });
+    }
+
     private deviceListFailureDetail(err: unknown): string {
         if (!isHttpError(err)) {
             return "";
@@ -2898,6 +2955,7 @@ export class Client {
         }
         return "";
     }
+
     /**
      * Gets a list of permissions for a server.
      *
@@ -3050,6 +3108,84 @@ export class Client {
             { headers: { "Content-Type": "application/msgpack" } },
         );
         return decodeHttpResponse(PasskeyCodec, response.data);
+    }
+
+    private async flushMailBatchOverSocket(
+        batch: PendingMailBatchDelivery[],
+    ): Promise<void> {
+        await Promise.all(
+            batch.map(async (item) => {
+                try {
+                    await this.deliverMailResourceOverSocket(
+                        item.msg,
+                        item.header,
+                    );
+                    item.resolve();
+                } catch (err: unknown) {
+                    item.reject(err);
+                }
+            }),
+        );
+    }
+
+    private async flushMailBatchQueue(): Promise<void> {
+        if (this.mailBatchFlushTimer) {
+            clearTimeout(this.mailBatchFlushTimer);
+            this.mailBatchFlushTimer = null;
+        }
+        const batch = this.mailBatchQueue.splice(0, MAIL_BATCH_MAX_SIZE);
+        if (this.mailBatchQueue.length > 0) {
+            this.scheduleMailBatchFlush();
+        }
+        if (batch.length === 0) {
+            return;
+        }
+        if (this.mailBatchUnsupported) {
+            await this.flushMailBatchOverSocket(batch);
+            return;
+        }
+
+        try {
+            const response = await this.http.post(
+                this.getHost() + "/mail/batch",
+                msgpack.encode({
+                    mails: batch.map((item) => ({
+                        header: item.header,
+                        mail: item.mail,
+                    })),
+                }),
+                { headers: { "Content-Type": "application/msgpack" } },
+            );
+            const decoded = mailBatchResponseSchema.parse(
+                msgpack.decode(new Uint8Array(response.data)),
+            );
+            const resultsByIndex = new Map(
+                decoded.results.map((result) => [result.index, result]),
+            );
+            for (const [index, item] of batch.entries()) {
+                const result = resultsByIndex.get(index);
+                if (result?.ok === true) {
+                    item.resolve();
+                    continue;
+                }
+                item.reject(
+                    new Error(
+                        "Mail delivery failed: " +
+                            (result?.error ??
+                                `missing batch result for index ${String(index)}`),
+                    ),
+                );
+            }
+        } catch (err: unknown) {
+            if (isHttpError(err) && err.response?.status === 404) {
+                this.mailBatchUnsupported = true;
+                await this.flushMailBatchOverSocket(batch);
+                return;
+            }
+            for (const item of batch) {
+                item.reject(err);
+            }
+        }
     }
 
     private async forward(message: Message) {
@@ -3478,8 +3614,6 @@ export class Client {
         return true;
     }
 
-    // ── Passkeys ────────────────────────────────────────────────────────
-
     /**
      * Initializes the keyring. This must be called before anything else.
      */
@@ -3498,8 +3632,6 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
-
-    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -4819,6 +4951,16 @@ export class Client {
         }
     }
 
+    private scheduleMailBatchFlush(): void {
+        if (this.mailBatchFlushTimer) {
+            return;
+        }
+        this.mailBatchFlushTimer = setTimeout(() => {
+            this.mailBatchFlushTimer = null;
+            void this.flushMailBatchQueue();
+        }, MAIL_BATCH_FLUSH_DELAY_MS);
+    }
+
     private scheduleReconnect(): void {
         if (
             !this.autoReconnectEnabled ||
@@ -5161,35 +5303,7 @@ export class Client {
             await this.database.saveSession(persisted);
             this.sessionRecords[XUtils.encodeHex(session.publicKey)] = session;
 
-            await new Promise((res, rej) => {
-                const callback = (packedMsg: Uint8Array) => {
-                    const [_header, receivedMsg] =
-                        XUtils.unpackMessage(packedMsg);
-                    if (receivedMsg.transmissionID === msgb.transmissionID) {
-                        this.socket.off("message", callback);
-                        const parsed = WSMessageSchema.safeParse(receivedMsg);
-                        if (parsed.success && parsed.data.type === "success") {
-                            res(parsed.data.data);
-                        } else {
-                            rej(
-                                new Error(
-                                    "Mail delivery failed: " +
-                                        JSON.stringify(receivedMsg),
-                                ),
-                            );
-                        }
-                    }
-                };
-                this.socket.on("message", callback);
-                // See the matching block above (sendMail handshake):
-                // forward send failures to the outer promise so the
-                // caller doesn't hang waiting for a response we never
-                // sent.
-                this.send(msgb, hmac).catch((err: unknown) => {
-                    this.socket.off("message", callback);
-                    rej(err instanceof Error ? err : new Error(String(err)));
-                });
-            });
+            await this.deliverMailResource(msgb, hmac, mail);
         } finally {
             this.sending.delete(device.deviceID);
         }

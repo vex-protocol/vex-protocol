@@ -4,7 +4,13 @@
  * Commercial licenses available at vex.wtf
  */
 
-import type { ActionToken, BaseMsg, User } from "@vex-chat/types";
+import type {
+    ActionToken,
+    BaseMsg,
+    Device,
+    MailWS,
+    User,
+} from "@vex-chat/types";
 import type { IncomingMessage, Server } from "http";
 
 import { EventEmitter } from "events";
@@ -100,6 +106,26 @@ const mailPostPayload = z.object({
     header: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
     mail: MailWSSchema,
 });
+const MAIL_BATCH_MAX_ITEMS = 256;
+const mailBatchPostPayload = z.object({
+    mails: z.array(mailPostPayload).min(1).max(MAIL_BATCH_MAX_ITEMS),
+});
+
+interface MailBatchResult {
+    error?: string;
+    index: number;
+    mailID?: string;
+    ok: boolean;
+    recipient?: string;
+    status?: number;
+}
+
+interface ValidatedMailBatchEntry {
+    header: Uint8Array;
+    index: number;
+    mail: MailWS;
+    recipientDevice: Device;
+}
 
 const notificationSubscribePayload = z.object({
     channel: z.literal("expo"),
@@ -815,6 +841,132 @@ export class Spire extends EventEmitter {
                 mail.authorID,
                 mail.nonce,
             );
+        });
+
+        this.api.post("/mail/batch", protect, async (req, res) => {
+            const senderDeviceDetails = req.device;
+            if (!senderDeviceDetails) {
+                res.sendStatus(401);
+                return;
+            }
+            const authorUserDetails = getUser(req);
+
+            const parsed = mailBatchPostPayload.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid mail batch payload",
+                    issues: parsed.error.issues,
+                });
+                return;
+            }
+
+            const results: MailBatchResult[] = parsed.data.mails.map(
+                ({ mail }, index) => ({
+                    error: "Mail was not processed.",
+                    index,
+                    mailID: mail.mailID,
+                    ok: false,
+                    recipient: mail.recipient,
+                    status: 500,
+                }),
+            );
+            const validEntries: ValidatedMailBatchEntry[] = [];
+
+            for (const [index, entry] of parsed.data.mails.entries()) {
+                const { header, mail } = entry;
+                try {
+                    const { recipientDevice } = await validateMailIngress(
+                        this.db,
+                        mail,
+                        senderDeviceDetails.deviceID,
+                        authorUserDetails.userID,
+                    );
+                    validEntries.push({
+                        header,
+                        index,
+                        mail,
+                        recipientDevice,
+                    });
+                } catch (err: unknown) {
+                    results[index] = {
+                        error: err instanceof Error ? err.message : String(err),
+                        index,
+                        mailID: mail.mailID,
+                        ok: false,
+                        recipient: mail.recipient,
+                        status:
+                            err instanceof MailIngressValidationError
+                                ? err.status
+                                : 500,
+                    };
+                }
+            }
+
+            const deliveredEntries: ValidatedMailBatchEntry[] = [];
+            if (validEntries.length > 0) {
+                try {
+                    await this.db.saveMailBatch(
+                        validEntries.map((entry) => ({
+                            header: entry.header,
+                            mail: entry.mail,
+                            senderDeviceID: senderDeviceDetails.deviceID,
+                            userID: authorUserDetails.userID,
+                        })),
+                    );
+                    for (const entry of validEntries) {
+                        deliveredEntries.push(entry);
+                        results[entry.index] = {
+                            index: entry.index,
+                            mailID: entry.mail.mailID,
+                            ok: true,
+                            recipient: entry.mail.recipient,
+                        };
+                    }
+                } catch {
+                    for (const entry of validEntries) {
+                        try {
+                            await this.db.saveMail(
+                                entry.mail,
+                                entry.header,
+                                senderDeviceDetails.deviceID,
+                                authorUserDetails.userID,
+                            );
+                            deliveredEntries.push(entry);
+                            results[entry.index] = {
+                                index: entry.index,
+                                mailID: entry.mail.mailID,
+                                ok: true,
+                                recipient: entry.mail.recipient,
+                            };
+                        } catch (err: unknown) {
+                            results[entry.index] = {
+                                error:
+                                    err instanceof Error
+                                        ? err.message
+                                        : String(err),
+                                index: entry.index,
+                                mailID: entry.mail.mailID,
+                                ok: false,
+                                recipient: entry.mail.recipient,
+                                status: 500,
+                            };
+                        }
+                    }
+                }
+            }
+
+            res.send(msgpack.encode({ results }));
+            for (const entry of deliveredEntries) {
+                this.notify(
+                    entry.recipientDevice.owner,
+                    "mail",
+                    crypto.randomUUID(),
+                    null,
+                    entry.mail.recipient,
+                    entry.mail.authorID,
+                    entry.mail.nonce,
+                );
+            }
         });
 
         this.api.post(

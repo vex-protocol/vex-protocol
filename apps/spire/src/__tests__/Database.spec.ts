@@ -231,6 +231,77 @@ describe("Database", () => {
         });
     });
 
+    describe("saveMailBatch", () => {
+        it("stores multiple queued mail rows in one insert", async () => {
+            expect.assertions(1);
+
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const mail = (
+                                mailID: string,
+                                nonce: number,
+                            ): MailWS => ({
+                                authorID: userID,
+                                cipher: new Uint8Array([1, nonce]),
+                                extra: new Uint8Array([2, nonce]),
+                                forward: false,
+                                group: null,
+                                mailID,
+                                mailType: MailType.initial,
+                                nonce: new Uint8Array([3, nonce]),
+                                readerID: userID,
+                                recipient: deviceID,
+                                sender: "sender-a",
+                            });
+
+                            await provider.saveMailBatch([
+                                {
+                                    header: new Uint8Array([4, 1]),
+                                    mail: mail(
+                                        "00000000-0000-0000-0000-000000000011",
+                                        1,
+                                    ),
+                                    senderDeviceID: "sender-a",
+                                    userID,
+                                },
+                                {
+                                    header: new Uint8Array([4, 2]),
+                                    mail: mail(
+                                        "00000000-0000-0000-0000-000000000012",
+                                        2,
+                                    ),
+                                    senderDeviceID: "sender-a",
+                                    userID,
+                                },
+                            ]);
+
+                            const result =
+                                await provider.retrieveMail(deviceID);
+                            expect(
+                                result.map(
+                                    ([, body]: [Uint8Array, MailWS, string]) =>
+                                        body.mailID,
+                                ),
+                            ).toEqual([
+                                "00000000-0000-0000-0000-000000000011",
+                                "00000000-0000-0000-0000-000000000012",
+                            ]);
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
+
     describe("notification subscriptions", () => {
         it("upserts and filters Expo push subscriptions by event", async () => {
             expect.assertions(7);
