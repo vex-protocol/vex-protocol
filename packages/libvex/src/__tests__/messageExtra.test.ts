@@ -38,6 +38,7 @@ describe("message extra", () => {
                 },
             ],
             display: "decorate",
+            iconAttachment: imageAttachment,
             kind: "git.workflow",
             title: "CI finished",
             version: 1,
