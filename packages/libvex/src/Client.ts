@@ -866,6 +866,7 @@ const messageSchema: z.ZodType<Message> = z.object({
 });
 
 const MESSAGE_BLOB_PREFIX = "vex-message:1\n";
+const MAIL_FANOUT_CONCURRENCY = 8;
 
 interface DecodedMessagePlaintext {
     extra?: null | string | undefined;
@@ -2674,7 +2675,8 @@ export class Client {
             // my keys
             const IK_A = this.xKeyRing.identityKeys.secretKey;
             const IK_AP = this.xKeyRing.identityKeys.publicKey;
-            const EK_A = this.xKeyRing.ephemeralKeys.secretKey;
+            const ephemeralKeys = await xBoxKeyPairAsync();
+            const EK_A = ephemeralKeys.secretKey;
 
             const fips = this.cryptoProfile === "fips";
             // their keys — FIPS: `signKey` in bundle is the peer P-256 ECDH identity (raw, typically 65B).
@@ -2732,13 +2734,13 @@ export class Client {
             const cipher = await xSecretboxAsync(message, nonce, SK);
 
             const signKeyWire = fips ? IK_AP : this.signKeys.publicKey;
-            const ephKeyWire = this.xKeyRing.ephemeralKeys.publicKey;
+            const ephKeyWire = ephemeralKeys.publicKey;
 
             const extra = fips
                 ? encodeFipsInitialExtraV1(signKeyWire, ephKeyWire, PK, AD, IDX)
                 : xConcat(
                       this.signKeys.publicKey,
-                      this.xKeyRing.ephemeralKeys.publicKey,
+                      ephemeralKeys.publicKey,
                       PK,
                       AD,
                       IDX,
@@ -2767,9 +2769,6 @@ export class Client {
                 transmissionID: uuid.v4(),
                 type: "resource",
             };
-
-            // discard the ephemeral keys
-            await this.newEphemeralKeys();
 
             const ratchet = await initRatchetSession(SK, "initiator");
             const sessionEntry: SessionSQL = {
@@ -3076,22 +3075,34 @@ export class Client {
             this.getUser().userID,
             "own",
         );
-        for (const device of devices) {
-            if (device.deviceID === this.getDevice().deviceID) {
-                continue;
-            }
-            try {
-                await this.sendMailWithRecovery(
-                    device,
-                    this.getUser(),
-                    msgBytes,
-                    null,
-                    copy.mailID,
-                    true,
-                );
-            } catch {
-                /* best-effort per device; parallel handshakes share ephemeral state */
-            }
+        const targetDevices = devices.filter(
+            (device) => device.deviceID !== this.getDevice().deviceID,
+        );
+        for (
+            let index = 0;
+            index < targetDevices.length;
+            index += MAIL_FANOUT_CONCURRENCY
+        ) {
+            const batch = targetDevices.slice(
+                index,
+                index + MAIL_FANOUT_CONCURRENCY,
+            );
+            await Promise.all(
+                batch.map(async (device) => {
+                    try {
+                        await this.sendMailWithRecovery(
+                            device,
+                            this.getUser(),
+                            msgBytes,
+                            null,
+                            copy.mailID,
+                            true,
+                        );
+                    } catch {
+                        /* best-effort per device */
+                    }
+                }),
+            );
         }
     }
 
@@ -3671,16 +3682,6 @@ export class Client {
         }
 
         await this.submitOTK(needs);
-    }
-
-    private async newEphemeralKeys() {
-        if (!this.xKeyRing) {
-            if (this.manuallyClosing) {
-                return;
-            }
-            throw new Error("Key ring not initialized.");
-        }
-        this.xKeyRing.ephemeralKeys = await xBoxKeyPairAsync();
     }
 
     /**
@@ -4963,27 +4964,49 @@ export class Client {
 
         let failCount = 0;
         let lastErr: unknown;
-        for (const device of stableDevices) {
-            const ownerRecord =
-                device.owner === myUserID
-                    ? this.getUser()
-                    : this.userRecords[device.owner];
-            if (!ownerRecord) {
-                failCount += 1;
-                continue;
+        for (
+            let index = 0;
+            index < stableDevices.length;
+            index += MAIL_FANOUT_CONCURRENCY
+        ) {
+            const batch = stableDevices.slice(
+                index,
+                index + MAIL_FANOUT_CONCURRENCY,
+            );
+            const results = await Promise.all(
+                batch.map(async (device): Promise<undefined | unknown> => {
+                    const ownerRecord =
+                        device.owner === myUserID
+                            ? this.getUser()
+                            : this.userRecords[device.owner];
+                    if (!ownerRecord) {
+                        return new Error(
+                            `Missing owner record for device ${device.deviceID}.`,
+                        );
+                    }
+                    try {
+                        await this.sendMailWithRecovery(
+                            device,
+                            ownerRecord,
+                            msgBytes,
+                            uuidToUint8(channelID),
+                            mailID,
+                            false,
+                        );
+                        return undefined;
+                    } catch (e) {
+                        return e;
+                    }
+                }),
+            );
+            for (const result of results) {
+                if (result !== undefined) {
+                    lastErr = result;
+                    failCount += 1;
+                }
             }
-            try {
-                await this.sendMailWithRecovery(
-                    device,
-                    ownerRecord,
-                    msgBytes,
-                    uuidToUint8(channelID),
-                    mailID,
-                    false,
-                );
-            } catch (e) {
-                lastErr = e;
-                failCount += 1;
+            if (failCount === stableDevices.length) {
+                break;
             }
         }
 
@@ -5265,38 +5288,60 @@ export class Client {
             // One logical DM fan-outs to multiple recipient devices. Reuse a
             // single mailID so local/UI dedupe treats it as one message.
             const messageMailID = uuid.v4();
-            for (const device of deviceList) {
-                try {
-                    if (libvexDebugDmEnabled()) {
-                        debugLibvexDm("sendMessage: sendMail start", {
-                            mailID: messageMailID,
-                            recipientDevice: device.deviceID,
-                        });
+            const msgBytes = XUtils.decodeUTF8(payload);
+            for (
+                let index = 0;
+                index < deviceList.length;
+                index += MAIL_FANOUT_CONCURRENCY
+            ) {
+                const batch = deviceList.slice(
+                    index,
+                    index + MAIL_FANOUT_CONCURRENCY,
+                );
+                const results = await Promise.all(
+                    batch.map(async (device): Promise<undefined | unknown> => {
+                        try {
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm("sendMessage: sendMail start", {
+                                    mailID: messageMailID,
+                                    recipientDevice: device.deviceID,
+                                });
+                            }
+                            await this.sendMailWithRecovery(
+                                device,
+                                userEntry,
+                                msgBytes,
+                                null,
+                                messageMailID,
+                                false,
+                            );
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm("sendMessage: sendMail ok", {
+                                    recipientDevice: device.deviceID,
+                                });
+                            }
+                            return undefined;
+                        } catch (e) {
+                            if (libvexDebugDmEnabled()) {
+                                // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
+                                console.error(
+                                    "[libvex:debug-dm] sendMessage: sendMail failed for device",
+                                    device.deviceID,
+                                    e,
+                                );
+                            }
+                            return e;
+                        }
+                    }),
+                );
+                for (const result of results) {
+                    if (result !== undefined) {
+                        lastErr = result;
+                        failCount += 1;
                     }
-                    await this.sendMailWithRecovery(
-                        device,
-                        userEntry,
-                        XUtils.decodeUTF8(payload),
-                        null,
-                        messageMailID,
-                        false,
-                    );
-                    if (libvexDebugDmEnabled()) {
-                        debugLibvexDm("sendMessage: sendMail ok", {
-                            recipientDevice: device.deviceID,
-                        });
-                    }
-                } catch (e) {
-                    if (libvexDebugDmEnabled()) {
-                        // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
-                        console.error(
-                            "[libvex:debug-dm] sendMessage: sendMail failed for device",
-                            device.deviceID,
-                            e,
-                        );
-                    }
-                    lastErr = e;
-                    failCount += 1;
+                }
+                if (failCount === deviceList.length) {
+                    break;
                 }
             }
             if (failCount > 0) {
