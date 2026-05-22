@@ -49,6 +49,7 @@ export type {
     HttpResponse,
 } from "./http.js";
 export {
+    createMessageDeleteBatchEventExtra,
     createMessageDeleteEventExtra,
     createMessageEmbedExtra,
     createMessageUpdateEventExtra,

@@ -17,7 +17,8 @@ export interface EncryptedFileAttachmentReference {
 export interface MessageDeleteEvent {
     action: "delete";
     deletedAt?: string | undefined;
-    targetMailID: string;
+    targetMailID?: string | undefined;
+    targetMailIDs?: string[] | undefined;
 }
 
 export interface MessageEmbed {
@@ -162,6 +163,20 @@ export interface MessageUpdateEvent {
     editedAt?: string | undefined;
     message: string;
     targetMailID: string;
+}
+
+export function createMessageDeleteBatchEventExtra(
+    targetMailIDs: string[],
+    currentExtra?: null | string,
+): null | string {
+    return serializeMessageExtra({
+        ...parseMessageExtra(currentExtra),
+        messageDeleteEvent: {
+            action: "delete",
+            targetMailIDs,
+        },
+        version: MESSAGE_EXTRA_VERSION,
+    });
 }
 
 export function createMessageDeleteEventExtra(
@@ -384,19 +399,41 @@ function parseAttachment(
 }
 
 function parseMessageDeleteEvent(value: unknown): MessageDeleteEvent | null {
-    if (
-        !isRecord(value) ||
-        value["action"] !== "delete" ||
-        typeof value["targetMailID"] !== "string"
-    ) {
+    if (!isRecord(value) || value["action"] !== "delete") {
+        return null;
+    }
+    const targetMailID =
+        typeof value["targetMailID"] === "string" &&
+        value["targetMailID"].length > 0
+            ? value["targetMailID"]
+            : undefined;
+    const targetMailIDs = parseMessageDeleteTargets(value["targetMailIDs"]);
+    if (!targetMailID && targetMailIDs.length === 0) {
         return null;
     }
     const event: MessageDeleteEvent = {
         action: "delete",
-        targetMailID: value["targetMailID"],
+        ...(targetMailID ? { targetMailID } : {}),
+        ...(targetMailIDs.length > 0 ? { targetMailIDs } : {}),
     };
     copyOptionalString(event, value, "deletedAt");
     return event;
+}
+
+function parseMessageDeleteTargets(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const targets: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+        if (typeof item !== "string" || item.length === 0 || seen.has(item)) {
+            continue;
+        }
+        seen.add(item);
+        targets.push(item);
+    }
+    return targets;
 }
 
 function parseMessageEmbed(value: unknown): MessageEmbed | null {
