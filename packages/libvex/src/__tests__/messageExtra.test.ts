@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    createMessageDeleteBatchEventExtra,
     createMessageDeleteEventExtra,
     createMessageEmbedExtra,
     createMessageUpdateEventExtra,
@@ -111,6 +112,20 @@ describe("message extra", () => {
         expect(parseMessageExtra(deleteExtra).messageDeleteEvent).toEqual({
             action: "delete",
             targetMailID: "m-target",
+        });
+    });
+
+    it("serializes and parses batched message delete events", () => {
+        const extra = createMessageDeleteBatchEventExtra([
+            "m-first",
+            "m-second",
+            "m-first",
+            "",
+        ]);
+
+        expect(parseMessageExtra(extra).messageDeleteEvent).toEqual({
+            action: "delete",
+            targetMailIDs: ["m-first", "m-second"],
         });
     });
 
