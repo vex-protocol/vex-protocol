@@ -13,16 +13,11 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 /** HTTP header carrying the dev API key (must match {@link process.env.DEV_API_KEY}). */
 export const DEV_API_KEY_HEADER = "x-dev-api-key";
 
-/**
- * When `DEV_API_KEY` is set in the environment, any request whose
- * `x-dev-api-key` header matches (constant-time) skips all in-process rate
- * limiters. Dev / load-testing escape hatch only — never set in production.
- * (Future: first-class API keys with scopes may reuse this header name.)
- */
-export function devApiKeySkipsRateLimits(req: Request): boolean {
-    if (disableRateLimitsByEnv()) {
-        return true;
-    }
+interface HeaderReader {
+    get(name: string): string | undefined;
+}
+
+export function devApiKeyMatches(req: HeaderReader): boolean {
     const configured = process.env["DEV_API_KEY"]?.trim() ?? "";
     if (configured.length === 0) {
         return false;
@@ -39,6 +34,19 @@ export function devApiKeySkipsRateLimits(req: Request): boolean {
     } catch {
         return false;
     }
+}
+
+/**
+ * When `DEV_API_KEY` is set in the environment, any request whose
+ * `x-dev-api-key` header matches (constant-time) skips all in-process rate
+ * limiters. Dev / load-testing escape hatch only — never set in production.
+ * (Future: first-class API keys with scopes may reuse this header name.)
+ */
+export function devApiKeySkipsRateLimits(req: HeaderReader): boolean {
+    if (disableRateLimitsByEnv()) {
+        return true;
+    }
+    return devApiKeyMatches(req);
 }
 
 function disableRateLimitsByEnv(): boolean {

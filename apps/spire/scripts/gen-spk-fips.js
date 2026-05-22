@@ -38,6 +38,6 @@ if (raw) {
     console.log(
         "Use with SPIRE_FIPS=true. SPK = PKCS#8 (P-256) hex; not compatible with gen-spk.js (Ed25519).",
     );
-    console.log(`SPK="${spk}"`);
-    console.log(`JWT_SECRET="${jwtSecret}"`);
+    console.log(`SPK=${spk}`);
+    console.log(`JWT_SECRET=${jwtSecret}`);
 }

@@ -192,17 +192,6 @@ export const getPasskeyRouter = (db: Database) => {
                 res.sendStatus(401);
                 return;
             }
-            // Passwords/passkey JWTs both come through `protect`; only
-            // a real device session may add a passkey to keep the
-            // recovery story symmetric with device delete (a passkey
-            // can't bootstrap another passkey).
-            if (!req.device) {
-                res.status(401).send({
-                    error: "Adding a passkey requires an authenticated device.",
-                });
-                return;
-            }
-
             const parsed = PasskeyRegistrationStartPayloadSchema.safeParse(
                 req.body,
             );
@@ -215,6 +204,16 @@ export const getPasskeyRouter = (db: Database) => {
             }
 
             const existing = await db.retrievePasskeysByUser(userID);
+            // A freshly registered account has a bearer token but cannot
+            // get a device token until its first passkey exists. Allow
+            // exactly that bootstrap case; every later passkey addition
+            // must come from an authenticated device session.
+            if (!req.device && existing.length > 0) {
+                res.status(401).send({
+                    error: "Adding another passkey requires an authenticated device.",
+                });
+                return;
+            }
             if (existing.length >= MAX_PASSKEYS_PER_USER) {
                 res.status(409).send({
                     error: `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
@@ -277,12 +276,6 @@ export const getPasskeyRouter = (db: Database) => {
                 res.sendStatus(401);
                 return;
             }
-            if (!req.device) {
-                res.status(401).send({
-                    error: "Adding a passkey requires an authenticated device.",
-                });
-                return;
-            }
 
             const parsed = PasskeyRegistrationFinishPayloadSchema.safeParse(
                 req.body,
@@ -291,6 +284,14 @@ export const getPasskeyRouter = (db: Database) => {
                 res.status(400).json({
                     error: "Invalid finish payload",
                     issues: parsed.error.issues,
+                });
+                return;
+            }
+
+            const existing = await db.retrievePasskeysByUser(userID);
+            if (!req.device && existing.length > 0) {
+                res.status(401).send({
+                    error: "Adding another passkey requires an authenticated device.",
                 });
                 return;
             }
@@ -407,6 +408,13 @@ export const getPasskeyRouter = (db: Database) => {
             const row = await db.retrievePasskeyInternal(passkeyID);
             if (!row || row.userID !== userID) {
                 res.sendStatus(404);
+                return;
+            }
+            const passkeys = await db.retrievePasskeysByUser(userID);
+            if (passkeys.length <= 1) {
+                res.status(400).send({
+                    error: "You can't delete your last passkey.",
+                });
                 return;
             }
             await db.deletePasskey(passkeyID);

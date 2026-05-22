@@ -72,9 +72,9 @@ registry.registerPath({
     method: "post",
     path: "/auth",
     operationId: "login",
-    summary: "Login with username and password",
+    summary: "Login with username, password, and passkey when enrolled",
     description:
-        "Authenticate with username and password credentials. Returns a JWT token and the authenticated user profile.",
+        "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys may use this session to enroll their first passkey before connecting a device.",
     tags: ["auth"],
     request: {
         body: {
@@ -101,6 +101,9 @@ registry.registerPath({
             },
         },
         401: { description: "Invalid credentials" },
+        403: {
+            description: "Passkey verification required for enrolled accounts",
+        },
     },
 });
 
@@ -145,7 +148,7 @@ registry.registerPath({
     operationId: "verifyDeviceChallenge",
     summary: "Verify device auth challenge",
     description:
-        "Submit the signed challenge to complete device-key authentication. Returns a JWT token and the authenticated user profile.",
+        "Submit the signed challenge with a fresh passkey-scoped bearer token when the account already has passkeys. Accounts with no passkeys may use the resulting session to enroll their first passkey before connecting a device.",
     tags: ["auth"],
     request: {
         body: {
@@ -171,6 +174,9 @@ registry.registerPath({
                 },
             },
         },
+        403: {
+            description: "Passkey verification required for enrolled accounts",
+        },
     },
 });
 
@@ -180,7 +186,7 @@ registry.registerPath({
     operationId: "register",
     summary: "Register a new user account",
     description:
-        "Create a new user account with cryptographic device registration. Requires a signed registration payload with Ed25519 keys.",
+        "Create a new user account with cryptographic device registration. Requires a signed registration payload with Ed25519 keys; the account must enroll a passkey before the device can connect.",
     tags: ["auth"],
     request: {
         body: {
@@ -193,7 +199,13 @@ registry.registerPath({
         200: {
             description: "Registration successful",
             content: {
-                "application/msgpack": { schema: user },
+                "application/msgpack": {
+                    schema: z.object({
+                        device,
+                        token: z.string(),
+                        user,
+                    }),
+                },
             },
         },
     },
