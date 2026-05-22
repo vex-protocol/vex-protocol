@@ -801,9 +801,13 @@ export class Spire extends EventEmitter {
                     "Passkey verification does not match this device.",
                 );
                 if (passkeyError) {
-                    return res.status(403).send({
+                    const body: { error: string; username?: string } = {
                         error: passkeyError,
-                    });
+                    };
+                    if (passkeyError === "Passkey verification required.") {
+                        body.username = user.username;
+                    }
+                    return res.status(403).send(body);
                 }
 
                 // Issue short-lived JWT (1 hour, not 7 days)
