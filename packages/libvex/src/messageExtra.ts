@@ -14,6 +14,12 @@ export interface EncryptedFileAttachmentReference {
     key: string;
 }
 
+export interface MessageDeleteEvent {
+    action: "delete";
+    deletedAt?: string | undefined;
+    targetMailID: string;
+}
+
 export interface MessageEmbed {
     actions?: MessageEmbedAction[] | undefined;
     blocks?: MessageEmbedBlock[] | undefined;
@@ -132,6 +138,8 @@ export type MessageEmoji =
 export interface MessageExtra {
     [key: string]: unknown;
     embed?: MessageEmbed | undefined;
+    messageDeleteEvent?: MessageDeleteEvent | undefined;
+    messageUpdateEvent?: MessageUpdateEvent | undefined;
     reactionEvent?: MessageReactionEvent | undefined;
     reactions?: MessageReaction[] | undefined;
     version: typeof MESSAGE_EXTRA_VERSION;
@@ -148,6 +156,27 @@ export interface MessageReactionEvent {
     targetMailID: string;
 }
 
+export interface MessageUpdateEvent {
+    action: "update";
+    editedAt?: string | undefined;
+    message: string;
+    targetMailID: string;
+}
+
+export function createMessageDeleteEventExtra(
+    targetMailID: string,
+    currentExtra?: null | string,
+): null | string {
+    return serializeMessageExtra({
+        ...parseMessageExtra(currentExtra),
+        messageDeleteEvent: {
+            action: "delete",
+            targetMailID,
+        },
+        version: MESSAGE_EXTRA_VERSION,
+    });
+}
+
 export function createMessageEmbedExtra(
     embed: MessageEmbed,
     currentExtra?: null | string,
@@ -155,6 +184,22 @@ export function createMessageEmbedExtra(
     return serializeMessageExtra({
         ...parseMessageExtra(currentExtra),
         embed,
+        version: MESSAGE_EXTRA_VERSION,
+    });
+}
+
+export function createMessageUpdateEventExtra(
+    targetMailID: string,
+    message: string,
+    currentExtra?: null | string,
+): null | string {
+    return serializeMessageExtra({
+        ...parseMessageExtra(currentExtra),
+        messageUpdateEvent: {
+            action: "update",
+            message,
+            targetMailID,
+        },
         version: MESSAGE_EXTRA_VERSION,
     });
 }
@@ -173,17 +218,27 @@ export function parseMessageExtra(
         }
         const rest: Record<string, unknown> = { ...raw };
         delete rest["embed"];
+        delete rest["messageDeleteEvent"];
+        delete rest["messageUpdateEvent"];
         delete rest["reactionEvent"];
         delete rest["reactions"];
         delete rest["version"];
 
         const embed = parseMessageEmbed(raw["embed"]);
+        const messageDeleteEvent = parseMessageDeleteEvent(
+            raw["messageDeleteEvent"],
+        );
+        const messageUpdateEvent = parseMessageUpdateEvent(
+            raw["messageUpdateEvent"],
+        );
         const reactionEvent = parseMessageReactionEvent(raw["reactionEvent"]);
         const reactions = parseMessageReactions(raw["reactions"]);
 
         return {
             ...rest,
             ...(embed ? { embed } : {}),
+            ...(messageDeleteEvent ? { messageDeleteEvent } : {}),
+            ...(messageUpdateEvent ? { messageUpdateEvent } : {}),
             ...(reactionEvent ? { reactionEvent } : {}),
             ...(reactions.length > 0 ? { reactions } : {}),
             version: MESSAGE_EXTRA_VERSION,
@@ -262,6 +317,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeMessageExtra(extra: MessageExtra): MessageExtra {
     const embed = parseMessageEmbed(extra.embed);
+    const messageDeleteEvent = parseMessageDeleteEvent(
+        extra.messageDeleteEvent,
+    );
+    const messageUpdateEvent = parseMessageUpdateEvent(
+        extra.messageUpdateEvent,
+    );
     const reactionEvent = parseMessageReactionEvent(extra.reactionEvent);
     const reactions = parseMessageReactions(extra.reactions);
     const normalized: MessageExtra = {
@@ -273,6 +334,16 @@ function normalizeMessageExtra(extra: MessageExtra): MessageExtra {
         normalized.embed = embed;
     } else {
         delete normalized.embed;
+    }
+    if (messageDeleteEvent) {
+        normalized.messageDeleteEvent = messageDeleteEvent;
+    } else {
+        delete normalized.messageDeleteEvent;
+    }
+    if (messageUpdateEvent) {
+        normalized.messageUpdateEvent = messageUpdateEvent;
+    } else {
+        delete normalized.messageUpdateEvent;
     }
     if (reactionEvent) {
         normalized.reactionEvent = reactionEvent;
@@ -309,6 +380,22 @@ function parseAttachment(
         fileSize: Math.max(0, Math.round(fileSize)),
         key,
     };
+}
+
+function parseMessageDeleteEvent(value: unknown): MessageDeleteEvent | null {
+    if (
+        !isRecord(value) ||
+        value["action"] !== "delete" ||
+        typeof value["targetMailID"] !== "string"
+    ) {
+        return null;
+    }
+    const event: MessageDeleteEvent = {
+        action: "delete",
+        targetMailID: value["targetMailID"],
+    };
+    copyOptionalString(event, value, "deletedAt");
+    return event;
 }
 
 function parseMessageEmbed(value: unknown): MessageEmbed | null {
@@ -582,4 +669,22 @@ function parseMessageReactions(value: unknown): MessageReaction[] {
         const reaction = parseMessageReaction(item);
         return reaction ? [reaction] : [];
     });
+}
+
+function parseMessageUpdateEvent(value: unknown): MessageUpdateEvent | null {
+    if (
+        !isRecord(value) ||
+        value["action"] !== "update" ||
+        typeof value["message"] !== "string" ||
+        typeof value["targetMailID"] !== "string"
+    ) {
+        return null;
+    }
+    const event: MessageUpdateEvent = {
+        action: "update",
+        message: value["message"],
+        targetMailID: value["targetMailID"],
+    };
+    copyOptionalString(event, value, "editedAt");
+    return event;
 }

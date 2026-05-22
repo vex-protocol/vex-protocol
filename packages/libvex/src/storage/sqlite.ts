@@ -5,7 +5,7 @@
  */
 
 import type { Message } from "../index.js";
-import type { Storage } from "../Storage.js";
+import type { MessageUpdatePatch, Storage } from "../Storage.js";
 import type {
     PreKeysCrypto,
     SessionCrypto,
@@ -597,8 +597,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
     }
 
-    // ── Devices ──────────────────────────────────────────────────────────────
-
     async savePreKeys(
         preKeys: UnsavedPreKey[],
         oneTime: boolean,
@@ -636,6 +634,8 @@ export class SqliteStorage extends EventEmitter implements Storage {
 
         return saved;
     }
+
+    // ── Devices ──────────────────────────────────────────────────────────────
 
     async saveSession(session: SessionSQL): Promise<void> {
         if (this.closing) {
@@ -701,6 +701,68 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 throw err;
             }
         }
+    }
+
+    async updateMessage(
+        mailID: string,
+        patch: MessageUpdatePatch,
+    ): Promise<boolean> {
+        if (this.isClosingNow()) {
+            return false;
+        }
+        await this.untilReady();
+        if (
+            patch.message === undefined &&
+            !Object.prototype.hasOwnProperty.call(patch, "extra")
+        ) {
+            return false;
+        }
+
+        const row = await this.db
+            .selectFrom("messages")
+            .selectAll()
+            .where("mailID", "=", mailID)
+            .executeTakeFirst();
+        if (!row) {
+            return false;
+        }
+
+        const current = (await this.decryptMessagesAsync([row]))[0];
+        if (!current) {
+            return false;
+        }
+        const next: Message = {
+            ...current,
+            ...(patch.message !== undefined ? { message: patch.message } : {}),
+            ...(Object.prototype.hasOwnProperty.call(patch, "extra")
+                ? { extra: patch.extra }
+                : {}),
+        };
+        const storedPlaintext = encodeStoredMessagePlaintext(next);
+        const fips = getCryptoProfile() === "fips";
+        const ct = fips
+            ? await xSecretboxAsync(
+                  XUtils.decodeUTF8(storedPlaintext),
+                  XUtils.decodeHex(row.nonce),
+                  this.atRestAesKey,
+              )
+            : xSecretbox(
+                  XUtils.decodeUTF8(storedPlaintext),
+                  XUtils.decodeHex(row.nonce),
+                  this.atRestAesKey,
+              );
+        if (this.isClosingNow()) {
+            return false;
+        }
+        const result = await this.db
+            .updateTable("messages")
+            .set({
+                extra: null,
+                message: XUtils.encodeHex(ct),
+            })
+            .where("mailID", "=", mailID)
+            .executeTakeFirst();
+        return Number(result.numUpdatedRows) > 0;
     }
 
     // ── Purge ────────────────────────────────────────────────────────────────
