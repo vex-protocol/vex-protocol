@@ -26,6 +26,7 @@ export interface MessageEmbed {
     display: MessageEmbedDisplay;
     fields?: MessageEmbedField[] | undefined;
     icon?: string | undefined;
+    iconAttachment?: EncryptedFileAttachmentReference | undefined;
     kind: string;
     source?: MessageEmbedSource | undefined;
     subtitle?: string | undefined;
@@ -418,6 +419,8 @@ function parseMessageEmbed(value: unknown): MessageEmbed | null {
         version: MESSAGE_EXTRA_VERSION,
     };
     copyOptionalString(embed, value, "icon");
+    const iconAttachment = parseAttachment(value["iconAttachment"]);
+    if (iconAttachment) embed.iconAttachment = iconAttachment;
     copyOptionalString(embed, value, "subtitle");
     copyOptionalBoolean(embed, value, "suppressLinkPreview");
     copyOptionalString(embed, value, "timestamp");
