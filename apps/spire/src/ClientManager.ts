@@ -112,6 +112,10 @@ export class ClientManager extends EventEmitter {
         this.challenge();
     }
 
+    public disconnect(): void {
+        this.fail();
+    }
+
     public getDevice(): Device {
         if (!this.device) {
             throw new Error("No device set on this client.");

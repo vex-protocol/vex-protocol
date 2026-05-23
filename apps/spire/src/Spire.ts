@@ -390,6 +390,19 @@ export class Spire extends EventEmitter {
         }
     }
 
+    private disconnectDevices(deviceIDs: string[]): void {
+        if (deviceIDs.length === 0) {
+            return;
+        }
+        const ids = new Set(deviceIDs);
+        for (const client of [...this.clients]) {
+            const deviceID = client.getDeviceID();
+            if (deviceID !== null && ids.has(deviceID)) {
+                client.disconnect();
+            }
+        }
+    }
+
     private init(apiPort: number): void {
         // Request traces (UUIDs and device public-key path segments redacted
         // in the `url` token). Enabled in all envs, including production.
@@ -427,6 +440,7 @@ export class Spire extends EventEmitter {
             this.validateToken.bind(this),
             this.signKeys,
             this.notify.bind(this),
+            this.disconnectDevices.bind(this),
         );
 
         // WS auth: client sends { type: "auth", token } as first message

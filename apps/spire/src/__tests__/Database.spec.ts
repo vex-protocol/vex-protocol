@@ -5,7 +5,7 @@
  */
 
 import type { SpireOptions } from "../Spire.ts";
-import type { MailWS, PreKeysWS } from "@vex-chat/types";
+import type { DevicePayload, MailWS, PreKeysWS } from "@vex-chat/types";
 
 import { XUtils } from "@vex-chat/crypto";
 import { MailType } from "@vex-chat/types";
@@ -63,6 +63,19 @@ describe("Database", () => {
         publicKey,
         signature,
     };
+
+    const devicePayload = (
+        deviceName: string,
+        signKey: string,
+    ): DevicePayload => ({
+        deviceName,
+        preKey: testSQLPreKey.publicKey,
+        preKeyIndex: 1,
+        preKeySignature: testSQLPreKey.signature,
+        signed: "00",
+        signKey,
+        username: "alice",
+    });
 
     const options: SpireOptions = {
         dbType: "sqlite3mem",
@@ -146,6 +159,100 @@ describe("Database", () => {
                             await provider.close();
                             resolve();
                         } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
+
+    describe("recoverDevice", () => {
+        it("creates a new device and revokes all previous devices for the user", async () => {
+            expect.assertions(8);
+
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const oldA = await provider.createDevice(
+                                userID,
+                                devicePayload("old-a", "a".repeat(64)),
+                            );
+                            const oldB = await provider.createDevice(
+                                userID,
+                                devicePayload("old-b", "b".repeat(64)),
+                            );
+                            await provider.saveOTK(userID, oldA.deviceID, [
+                                {
+                                    deviceID: oldA.deviceID,
+                                    index: 1,
+                                    publicKey,
+                                    signature,
+                                },
+                            ]);
+                            await provider.saveNotificationSubscription({
+                                channel: "expo",
+                                deviceID: oldA.deviceID,
+                                events: ["deviceRequest"],
+                                platform: "ios",
+                                token: "ExponentPushToken[old-a]",
+                                userID,
+                            });
+                            await provider.saveNotificationSubscription({
+                                channel: "expo",
+                                deviceID: oldB.deviceID,
+                                events: ["*"],
+                                platform: "android",
+                                token: "ExponentPushToken[old-b]",
+                                userID,
+                            });
+
+                            const recovered = await provider.recoverDevice(
+                                userID,
+                                devicePayload("recovered", "c".repeat(64)),
+                            );
+
+                            expect(recovered.revokedDeviceIDs.sort()).toEqual(
+                                [oldA.deviceID, oldB.deviceID].sort(),
+                            );
+                            expect(
+                                await provider.retrieveDevice(oldA.deviceID),
+                            ).toBeNull();
+                            expect(
+                                await provider.retrieveDevice(oldB.deviceID),
+                            ).toBeNull();
+                            expect(
+                                await provider.retrieveDevice(
+                                    recovered.device.deviceID,
+                                ),
+                            ).toEqual(recovered.device);
+                            expect(
+                                await provider.retrieveUserDeviceList([userID]),
+                            ).toEqual([recovered.device]);
+                            expect(
+                                await provider.getPreKeys(oldA.deviceID),
+                            ).toBeNull();
+                            expect(
+                                await provider.getOTK(oldA.deviceID),
+                            ).toBeNull();
+                            expect(
+                                await provider.retrieveNotificationSubscriptions(
+                                    {
+                                        event: "deviceRequest",
+                                        userID,
+                                    },
+                                ),
+                            ).toEqual([]);
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            await provider.close().catch(() => {
+                                /* ignore cleanup failure */
+                            });
                             reject(
                                 e instanceof Error ? e : new Error(String(e)),
                             );
@@ -304,7 +411,7 @@ describe("Database", () => {
 
     describe("notification subscriptions", () => {
         it("upserts and filters Expo push subscriptions by event", async () => {
-            expect.assertions(7);
+            expect.assertions(8);
 
             const provider = new Database(options);
             await new Promise<void>((resolve, reject) => {
@@ -367,6 +474,17 @@ describe("Database", () => {
                                     },
                                 );
                             expect(deviceSubsAfterUpdate).toHaveLength(1);
+
+                            await provider.deleteDevice(deviceID);
+                            expect(
+                                await provider.retrieveNotificationSubscriptions(
+                                    {
+                                        deviceID,
+                                        event: "deviceRequest",
+                                        userID,
+                                    },
+                                ),
+                            ).toEqual([]);
 
                             await provider.close();
                             resolve();

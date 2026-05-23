@@ -126,6 +126,72 @@ export function createPendingDeviceEnrollmentRequest(
  * The device-auth caller is expected to have already verified the
  * approving device's signature before invoking this helper.
  */
+export async function recoverDeviceEnrollmentRequest(args: {
+    db: Database;
+    notify: (
+        userID: string,
+        event: string,
+        transmissionID: string,
+        data?: unknown,
+        deviceID?: string,
+    ) => void;
+    requestID: string;
+    userID: string;
+}): Promise<
+    | { device: Device; kind: "ok"; revokedDeviceIDs: string[] }
+    | { error: string; kind: "err"; status: number }
+> {
+    pruneDeviceEnrollmentRequests();
+    const pending = deviceEnrollments.get(args.requestID);
+    if (!pending || pending.userID !== args.userID) {
+        return { error: "Request not found.", kind: "err", status: 404 };
+    }
+    if (pending.status !== "pending") {
+        return {
+            error: "Request is not pending.",
+            kind: "err",
+            status: 409,
+        };
+    }
+    if (Date.now() - pending.createdAt > DEVICE_REQUEST_TTL_MS) {
+        pending.status = "expired";
+        pending.resolvedAt = Date.now();
+        pending.error = "Request expired.";
+        deviceEnrollments.set(args.requestID, pending);
+        return { error: "Request expired.", kind: "err", status: 410 };
+    }
+
+    try {
+        const { device, revokedDeviceIDs } = await args.db.recoverDevice(
+            args.userID,
+            pending.devicePayload,
+        );
+        pending.status = "approved";
+        pending.approvedDeviceID = device.deviceID;
+        pending.resolvedAt = Date.now();
+        deviceEnrollments.set(args.requestID, pending);
+        args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: args.requestID,
+            status: "approved",
+        });
+        return { device, kind: "ok", revokedDeviceIDs };
+    } catch {
+        pending.status = "rejected";
+        pending.error = "Could not recover device.";
+        pending.resolvedAt = Date.now();
+        deviceEnrollments.set(args.requestID, pending);
+        args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
+            requestID: args.requestID,
+            status: "rejected",
+        });
+        return {
+            error: "Could not recover device.",
+            kind: "err",
+            status: 470,
+        };
+    }
+}
+
 export async function resolveDeviceEnrollmentRequest(args: {
     action: "approve" | "reject";
     db: Database;

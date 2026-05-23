@@ -204,7 +204,7 @@ export const protect: express.RequestHandler = (req, res, next) => {
  * Restrict a route to passkey-scoped JWTs (used by the parallel
  * `/user/:id/passkey/devices/...` admin/recovery routes). A
  * passkey-authenticated caller can list devices, delete devices, and
- * approve/reject pending enrollments — and nothing else.
+ * recover or reject pending enrollments — and nothing else.
  */
 export const protectPasskey: express.RequestHandler = (req, res, next) => {
     if (!req.user || !req.passkey) {
@@ -247,6 +247,7 @@ export const initApp = (
         data?: unknown,
         deviceID?: string,
     ) => void,
+    disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
     // INIT ROUTERS
     const userRouter = getUserRouter(db, tokenValidator, notify);
@@ -254,7 +255,11 @@ export const initApp = (
     const avatarRouter = getAvatarRouter();
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
     const passkeyRouter = getPasskeyRouter(db);
-    const passkeyDeviceRouter = getPasskeyDeviceRouter(db, notify);
+    const passkeyDeviceRouter = getPasskeyDeviceRouter(
+        db,
+        notify,
+        disconnectDevices,
+    );
 
     // MIDDLEWARE
 
