@@ -584,12 +584,7 @@ export class Database extends EventEmitter {
             getCryptoProfile() === "fips"
                 ? await fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(signKeyBytes)
                 : signKeyBytes;
-        const keyBundle: KeyBundle = {
-            otk,
-            preKey,
-            signKey,
-        };
-        return keyBundle;
+        return { otk, preKey, signKey };
     }
 
     public async getOTK(deviceID: string): Promise<null | PreKeysWS> {
@@ -642,13 +637,12 @@ export class Database extends EventEmitter {
         if (!preKeyInfo) {
             return null;
         }
-        const preKey: PreKeysWS = {
+        return {
             deviceID: preKeyInfo.deviceID,
             index: preKeyInfo.index,
             publicKey: XUtils.decodeHex(preKeyInfo.publicKey),
             signature: XUtils.decodeHex(preKeyInfo.signature),
         };
-        return preKey;
     }
 
     public async getRequestsTotal(): Promise<number> {
@@ -801,57 +795,54 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveChannel(channelID: string): Promise<Channel | null> {
-        const channels: Channel[] = await this.db
-            .selectFrom("channels")
-            .selectAll()
-            .where("channelID", "=", channelID)
-            .limit(1)
-            .execute();
-
-        return channels[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("channels")
+                .selectAll()
+                .where("channelID", "=", channelID)
+                .limit(1)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     public async retrieveChannels(serverID: string): Promise<Channel[]> {
-        const channels: Channel[] = await this.db
+        return this.db
             .selectFrom("channels")
             .selectAll()
             .where("serverID", "=", serverID)
             .execute();
-        return channels;
     }
 
     public async retrieveDevice(deviceID: string): Promise<Device | null> {
         if (uuidValidate(deviceID)) {
-            const rows = await this.db
+            const device = await this.db
                 .selectFrom("devices")
                 .selectAll()
                 .where("deviceID", "=", deviceID)
                 .where("deleted", "=", 0)
-                .execute();
-
-            const device = rows[0];
+                .executeTakeFirst();
             return device ? toDevice(device) : null;
         }
         if (pubkeyRegex.test(deviceID)) {
-            const rows = await this.db
+            const device = await this.db
                 .selectFrom("devices")
                 .selectAll()
                 .where("signKey", "=", deviceID)
                 .where("deleted", "=", 0)
-                .execute();
-            const device = rows[0];
+                .executeTakeFirst();
             return device ? toDevice(device) : null;
         }
         return null;
     }
 
     public async retrieveEmoji(emojiID: string): Promise<Emoji | null> {
-        const rows = await this.db
-            .selectFrom("emojis")
-            .selectAll()
-            .where("emojiID", "=", emojiID)
-            .execute();
-        return rows[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("emojis")
+                .selectAll()
+                .where("emojiID", "=", emojiID)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     public async retrieveEmojiList(serverID: string): Promise<Emoji[]> {
@@ -876,12 +867,13 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveFile(fileID: string): Promise<FileSQL | null> {
-        const file = await this.db
-            .selectFrom("files")
-            .selectAll()
-            .where("fileID", "=", fileID)
-            .execute();
-        return file[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("files")
+                .selectAll()
+                .where("fileID", "=", fileID)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     public async retrieveGroupMembers(
@@ -909,12 +901,13 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveInvite(inviteID: string): Promise<Invite | null> {
-        const rows = await this.db
-            .selectFrom("invites")
-            .selectAll()
-            .where("inviteID", "=", inviteID)
-            .execute();
-        return rows[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("invites")
+                .selectAll()
+                .where("inviteID", "=", inviteID)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     public async retrieveMail(
@@ -930,11 +923,8 @@ export class Database extends EventEmitter {
             .orderBy("sender", "asc")
             .orderBy("mailType", "asc")
             .execute();
-        const rows: MailSQL[] = rawRows.map(toMailSQL);
-
-        const fixMail: (mail: MailSQL) => [Uint8Array, MailWS, string] = (
-            mail,
-        ) => {
+        return rawRows.map((row): [Uint8Array, MailWS, string] => {
+            const mail = toMailSQL(row);
             const msgb: MailWS = {
                 authorID: mail.authorID,
                 cipher: XUtils.decodeHex(mail.cipher),
@@ -951,11 +941,7 @@ export class Database extends EventEmitter {
 
             const msgh = XUtils.decodeHex(mail.header);
             return [msgh, msgb, mail.time];
-        };
-
-        const allMail = rows.map(fixMail);
-
-        return allMail;
+        });
     }
 
     public async retrieveNotificationSubscriptions(args: {
@@ -989,13 +975,14 @@ export class Database extends EventEmitter {
     public async retrievePasskeyByCredentialID(
         credentialID: string,
     ): Promise<null | PasskeyRow> {
-        const rows = await this.db
-            .selectFrom("passkeys")
-            .selectAll()
-            .where("credentialID", "=", credentialID)
-            .limit(1)
-            .execute();
-        return rows[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("passkeys")
+                .selectAll()
+                .where("credentialID", "=", credentialID)
+                .limit(1)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     /**
@@ -1007,13 +994,14 @@ export class Database extends EventEmitter {
     public async retrievePasskeyInternal(
         passkeyID: string,
     ): Promise<null | PasskeyRow> {
-        const rows = await this.db
-            .selectFrom("passkeys")
-            .selectAll()
-            .where("passkeyID", "=", passkeyID)
-            .limit(1)
-            .execute();
-        return rows[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("passkeys")
+                .selectAll()
+                .where("passkeyID", "=", passkeyID)
+                .limit(1)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     /**
@@ -1032,13 +1020,13 @@ export class Database extends EventEmitter {
     public async retrievePermission(
         permissionID: string,
     ): Promise<null | Permission> {
-        const rows = await this.db
-            .selectFrom("permissions")
-            .selectAll()
-            .where("permissionID", "=", permissionID)
-            .execute();
-
-        return rows[0] ?? null;
+        return (
+            (await this.db
+                .selectFrom("permissions")
+                .selectAll()
+                .where("permissionID", "=", permissionID)
+                .executeTakeFirst()) ?? null
+        );
     }
 
     public async retrievePermissions(
@@ -1073,13 +1061,12 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveServer(serverID: string): Promise<null | Server> {
-        const rows = await this.db
+        const row = await this.db
             .selectFrom("servers")
             .selectAll()
             .where("serverID", "=", serverID)
             .limit(1)
-            .execute();
-        const row = rows[0];
+            .executeTakeFirst();
         return row ? toServer(row) : null;
     }
 
@@ -1179,25 +1166,24 @@ export class Database extends EventEmitter {
     public async retrieveUser(
         userIdentifier: string,
     ): Promise<InternalUserRecord | null> {
-        let rows;
+        let row;
         if (uuidValidate(userIdentifier)) {
-            rows = await this.db
+            row = await this.db
                 .selectFrom("users")
                 .selectAll()
                 .where("userID", "=", userIdentifier)
                 .limit(1)
-                .execute();
+                .executeTakeFirst();
         } else {
             const normalized = userIdentifier.toLowerCase();
-            rows = await this.db
+            row = await this.db
                 .selectFrom("users")
                 .selectAll()
                 .where(sql<string>`lower(username)`, "=", normalized)
                 .limit(1)
-                .execute();
+                .executeTakeFirst();
         }
 
-        const row = rows[0];
         return row ? toUserRecord(row) : null;
     }
 

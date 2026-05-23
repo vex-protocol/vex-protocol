@@ -12,42 +12,9 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { stressHttpGet, stressHttpPost } from "./stress-http.ts";
 import { STRESS_ISSUE_BUNDLE_PATH } from "./stress-issue-bundle.ts";
-import {
-    firstClientProtocolCall,
-    formatHarnessCallNotation,
-} from "./stress-request-context.ts";
-
-export { firstClientProtocolCall, formatHarnessCallNotation };
 
 export const STRESS_LLM_TRIAGE_DEFAULT_URL =
     "http://127.0.0.1:1234/v1/chat/completions";
-
-/** @deprecated Use {@link isStressLlmFullAutoEnabled}. Kept for grep compatibility. */
-export function isStressLlmAutoEnabled(): boolean {
-    return isStressLlmFullAutoEnabled();
-}
-
-/**
- * Auto **full** LLM triage (long markdown) on the stress dashboard — opt-in only.
- * Set `SPIRE_STRESS_LLM_AUTO=1` to re-enable the old always-on behaviour.
- */
-export function isStressLlmFullAutoEnabled(): boolean {
-    const v = process.env["SPIRE_STRESS_LLM_AUTO"]?.trim().toLowerCase() ?? "";
-    return v === "1" || v === "true" || v === "on" || v === "yes";
-}
-
-/**
- * Auto short **TITLE:** lines for issue rows — on by default when an LLM URL is used.
- * Set `SPIRE_STRESS_LLM_TITLE_AUTO=0` to use heuristics only.
- */
-export function isStressLlmTitleAutoEnabled(): boolean {
-    const v =
-        process.env["SPIRE_STRESS_LLM_TITLE_AUTO"]?.trim().toLowerCase() ?? "";
-    if (v === "0" || v === "false" || v === "off" || v === "no") {
-        return false;
-    }
-    return true;
-}
 
 export const LIVE_TRIAGE_SCHEMA = "spire-stress-live-triage@1";
 
@@ -72,58 +39,6 @@ export type LlmTriageOk = {
 };
 
 export type LlmTriageResult = LlmTriageErr | LlmTriageOk;
-
-export function buildFacetErrorTriageBundle(input: {
-    readonly focus: {
-        readonly clientSurfaceKey: string;
-        readonly correlationKey: string;
-        readonly primaryClientPath: string;
-        readonly protocolPath: string;
-        readonly sampleMessage: string;
-        readonly surfaceTitle?: string;
-    };
-    readonly run: Readonly<Record<string, unknown>>;
-    readonly samples: readonly unknown[];
-}): Record<string, unknown> {
-    return {
-        focus: {
-            clientSurfaceKey: input.focus.clientSurfaceKey,
-            correlationKey: input.focus.correlationKey,
-            primaryClientPath: input.focus.primaryClientPath,
-            protocolPath: input.focus.protocolPath,
-            sampleMessage: input.focus.sampleMessage,
-            surfaceTitle: input.focus.surfaceTitle,
-        },
-        generatedAt: new Date().toISOString(),
-        run: input.run,
-        samples: input.samples,
-        schema: FACET_ERROR_SCHEMA,
-    };
-}
-
-export function buildLiveTriageBundle(
-    snapshot: unknown,
-    run: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-    let failureGroups: unknown = [];
-    if (typeof snapshot === "object" && snapshot !== null) {
-        /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Reflect.get typed as any */
-        const fg = Reflect.get(snapshot, "failureGroups");
-        if (Array.isArray(fg)) {
-            failureGroups = fg;
-        }
-    }
-    return {
-        correlation: { failureGroups },
-        generatedAt: new Date().toISOString(),
-        run: {
-            ...run,
-            note: "Live dashboard triage (not a post-fatal issue bundle).",
-        },
-        schema: LIVE_TRIAGE_SCHEMA,
-        telemetry: snapshot,
-    };
-}
 
 export function extractChoiceContent(data: unknown): string | undefined {
     /* eslint-disable @typescript-eslint/no-unsafe-assignment */
@@ -222,101 +137,6 @@ export function readJsonFile(path: string): unknown {
     const parsed = JSON.parse(text);
     /* eslint-enable @typescript-eslint/no-unsafe-assignment */
     return parsed as unknown;
-}
-
-/**
- * Cheap auto-naming: one `TITLE:` line, tiny payload (no full triage markdown).
- */
-export async function runLlmIssueTitleOnly(input: {
-    readonly focus: {
-        readonly correlationKey: string;
-        readonly primaryClientPath: string;
-        readonly protocolPath: string;
-        readonly sampleMessage: string;
-        readonly surfaceTitle?: string;
-    };
-    readonly http?: Readonly<Record<string, unknown>>;
-}): Promise<LlmTriageResult> {
-    const url =
-        process.env["SPIRE_STRESS_LLM_URL"]?.trim() ||
-        STRESS_LLM_TRIAGE_DEFAULT_URL;
-    const apiKey = process.env["SPIRE_STRESS_LLM_API_KEY"]?.trim();
-
-    const getHeaders: Record<string, string> = {};
-    if (apiKey !== undefined && apiKey.length > 0) {
-        getHeaders["Authorization"] = `Bearer ${apiKey}`;
-    }
-
-    const envModel = process.env["SPIRE_STRESS_LLM_MODEL"]?.trim();
-    let model =
-        envModel !== undefined && envModel.length > 0
-            ? envModel
-            : await pickFirstListedModelId(url, getHeaders);
-    if (model === undefined || model.length === 0) {
-        model = "local-model";
-    }
-
-    const userPayload = JSON.stringify(input, null, 0).slice(0, 8000);
-    const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...getHeaders,
-    };
-
-    const system =
-        "You name stress-run incidents for engineers. Reply with exactly one line, no code fences: TITLE: <short plain-language name, max 72 characters>. Use only facts from the JSON. No other text.";
-
-    const res = await stressHttpPost(
-        url,
-        {
-            max_tokens: 96,
-            messages: [
-                { content: system, role: "system" },
-                { content: `Issue JSON:\n${userPayload}`, role: "user" },
-            ],
-            model,
-            temperature: 0.1,
-        },
-        { headers, timeout: 25_000, validateStatus: () => true },
-    );
-
-    if (res.status < 200 || res.status >= 300) {
-        let detail: string | undefined;
-        try {
-            detail = JSON.stringify(res.data).slice(0, 4000);
-        } catch {
-            detail = undefined;
-        }
-        return {
-            detail,
-            httpStatus: res.status,
-            message: `LLM HTTP ${String(res.status)}`,
-            ok: false,
-        };
-    }
-
-    const text = extractChoiceContent(res.data);
-    if (typeof text === "string" && text.length > 0) {
-        const firstLine = text.trim().split("\n")[0]?.trim() ?? text.trim();
-        const m = /TITLE:\s*(.+)/i.exec(firstLine);
-        const titleRaw = m?.[1]?.trim();
-        const title =
-            titleRaw !== undefined && titleRaw.length > 0
-                ? titleRaw.length > 120
-                    ? `${titleRaw.slice(0, 117)}…`
-                    : titleRaw
-                : undefined;
-        return {
-            endpoint: url,
-            markdown: "",
-            model,
-            ok: true,
-            ...(title !== undefined ? { title } : {}),
-        };
-    }
-    return {
-        message: "LLM returned empty content",
-        ok: false,
-    };
 }
 
 export async function runLlmTriage(input: {

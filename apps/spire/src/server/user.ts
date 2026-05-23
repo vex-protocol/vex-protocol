@@ -136,10 +136,11 @@ export async function resolveDeviceEnrollmentRequest(args: {
         data?: unknown,
         deviceID?: string,
     ) => void;
+    rejectError?: string;
     requestID: string;
     userID: string;
 }): Promise<
-    | { device: Device; kind: "ok" }
+    | { device?: Device; kind: "ok" }
     | { error: string; kind: "err"; status: number }
 > {
     pruneDeviceEnrollmentRequests();
@@ -163,29 +164,16 @@ export async function resolveDeviceEnrollmentRequest(args: {
     }
 
     if (args.action === "reject") {
+        const error = args.rejectError ?? "Rejected.";
         pending.status = "rejected";
         pending.resolvedAt = Date.now();
-        pending.error = "Rejected.";
+        pending.error = error;
         deviceEnrollments.set(args.requestID, pending);
         args.notify(args.userID, "deviceRequest", crypto.randomUUID(), {
             requestID: args.requestID,
             status: "rejected",
         });
-        // Caller maps `kind: "ok"` without device to a 200; reuse the
-        // ok shape with a placeholder device since the type insists
-        // on one. The reject flow doesn't return a body, the caller
-        // discards `device`.
-        return {
-            device: {
-                deleted: false,
-                deviceID: "",
-                lastLogin: "",
-                name: "",
-                owner: args.userID,
-                signKey: "",
-            },
-            kind: "ok",
-        };
+        return { kind: "ok" };
     }
 
     try {
@@ -277,6 +265,24 @@ function requestSummary(req: DeviceEnrollmentRequest): {
     };
 }
 
+function sendVerifiedPendingError(
+    res: express.Response,
+    result: Extract<VerifiedPendingResult, { ok: false }>,
+): void {
+    if (result.status === 400) {
+        res.status(400).json({
+            error: result.error,
+            ...(result.issues !== undefined ? { issues: result.issues } : {}),
+        });
+        return;
+    }
+    if (result.status === 404) {
+        res.sendStatus(404);
+        return;
+    }
+    res.status(result.status).send({ error: result.error });
+}
+
 async function tryGetVerifiedPendingEnrollment(
     req: express.Request,
 ): Promise<VerifiedPendingResult> {
@@ -336,18 +342,7 @@ export const getUserRouter = (
         pruneDeviceEnrollmentRequests();
         const v = await tryGetVerifiedPendingEnrollment(req);
         if (!v.ok) {
-            if (v.status === 400) {
-                res.status(400).json({
-                    error: v.error,
-                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
-                });
-                return;
-            }
-            if (v.status === 404) {
-                res.sendStatus(404);
-                return;
-            }
-            res.status(v.status).send({ error: v.error });
+            sendVerifiedPendingError(res, v);
             return;
         }
         res.send(msgpack.encode(requestSummary(v.pending)));
@@ -363,18 +358,7 @@ export const getUserRouter = (
         pruneDeviceEnrollmentRequests();
         const v = await tryGetVerifiedPendingEnrollment(req);
         if (!v.ok) {
-            if (v.status === 400) {
-                res.status(400).json({
-                    error: v.error,
-                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
-                });
-                return;
-            }
-            if (v.status === 404) {
-                res.sendStatus(404);
-                return;
-            }
-            res.status(v.status).send({ error: v.error });
+            sendVerifiedPendingError(res, v);
             return;
         }
         const { pending } = v;
@@ -396,18 +380,7 @@ export const getUserRouter = (
         pruneDeviceEnrollmentRequests();
         const v = await tryGetVerifiedPendingEnrollment(req);
         if (!v.ok) {
-            if (v.status === 400) {
-                res.status(400).json({
-                    error: v.error,
-                    ...(v.issues !== undefined ? { issues: v.issues } : {}),
-                });
-                return;
-            }
-            if (v.status === 404) {
-                res.sendStatus(404);
-                return;
-            }
-            res.status(v.status).send({ error: v.error });
+            sendVerifiedPendingError(res, v);
             return;
         }
         const { pending } = v;
@@ -662,40 +635,34 @@ export const getUserRouter = (
                 return;
             }
 
-            try {
-                const device = await db.createDevice(
-                    userID,
-                    pending.devicePayload,
-                );
-                pending.status = "approved";
-                pending.approvedDeviceID = device.deviceID;
-                pending.resolvedAt = Date.now();
-                deviceEnrollments.set(requestID, pending);
-                notify(userID, "deviceRequest", crypto.randomUUID(), {
-                    requestID,
-                    status: "approved",
-                });
-                res.send(msgpack.encode(device));
+            const result = await resolveDeviceEnrollmentRequest({
+                action: "approve",
+                db,
+                notify,
+                requestID,
+                userID,
+            });
+            if (result.kind === "ok") {
+                if (result.device === undefined) {
+                    res.sendStatus(500);
+                    return;
+                }
+                res.send(msgpack.encode(result.device));
                 return;
-            } catch {
-                pending.status = "rejected";
-                pending.error = "Could not create approved device.";
-                pending.resolvedAt = Date.now();
-                deviceEnrollments.set(requestID, pending);
-                notify(userID, "deviceRequest", crypto.randomUUID(), {
-                    requestID,
-                    status: "rejected",
-                });
+            }
+            if (result.status === 470) {
                 res.sendStatus(470);
                 return;
             }
+            res.status(result.status).send({ error: result.error });
+            return;
         },
     );
 
     router.post(
         "/:id/devices/requests/:requestID/reject",
         protect,
-        (req, res) => {
+        async (req, res) => {
             pruneDeviceEnrollmentRequests();
             const userDetails = getUser(req);
             const userID = getParam(req, "id");
@@ -712,25 +679,19 @@ export const getUserRouter = (
             }
 
             const requestID = getParam(req, "requestID");
-            const pending = deviceEnrollments.get(requestID);
-            if (!pending || pending.userID !== userID) {
-                res.sendStatus(404);
-                return;
-            }
-            if (pending.status !== "pending") {
-                res.status(409).send({ error: "Request is not pending." });
-                return;
-            }
-
-            pending.status = "rejected";
-            pending.resolvedAt = Date.now();
-            pending.error = "Rejected by existing device.";
-            deviceEnrollments.set(requestID, pending);
-            notify(userID, "deviceRequest", crypto.randomUUID(), {
+            const result = await resolveDeviceEnrollmentRequest({
+                action: "reject",
+                db,
+                notify,
+                rejectError: "Rejected by existing device.",
                 requestID,
-                status: "rejected",
+                userID,
             });
-            res.sendStatus(200);
+            if (result.kind === "ok") {
+                res.sendStatus(200);
+                return;
+            }
+            res.status(result.status).send({ error: result.error });
         },
     );
 
