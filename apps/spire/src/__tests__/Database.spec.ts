@@ -171,7 +171,7 @@ describe("Database", () => {
 
     describe("recoverDevice", () => {
         it("creates a new device and revokes all previous devices for the user", async () => {
-            expect.assertions(7);
+            expect.assertions(8);
 
             const provider = new Database(options);
             await new Promise<void>((resolve, reject) => {
@@ -194,6 +194,22 @@ describe("Database", () => {
                                     signature,
                                 },
                             ]);
+                            await provider.saveNotificationSubscription({
+                                channel: "expo",
+                                deviceID: oldA.deviceID,
+                                events: ["deviceRequest"],
+                                platform: "ios",
+                                token: "ExponentPushToken[old-a]",
+                                userID,
+                            });
+                            await provider.saveNotificationSubscription({
+                                channel: "expo",
+                                deviceID: oldB.deviceID,
+                                events: ["*"],
+                                platform: "android",
+                                token: "ExponentPushToken[old-b]",
+                                userID,
+                            });
 
                             const recovered = await provider.recoverDevice(
                                 userID,
@@ -223,6 +239,14 @@ describe("Database", () => {
                             expect(
                                 await provider.getOTK(oldA.deviceID),
                             ).toBeNull();
+                            expect(
+                                await provider.retrieveNotificationSubscriptions(
+                                    {
+                                        event: "deviceRequest",
+                                        userID,
+                                    },
+                                ),
+                            ).toEqual([]);
                             await provider.close();
                             resolve();
                         } catch (e: unknown) {
@@ -387,7 +411,7 @@ describe("Database", () => {
 
     describe("notification subscriptions", () => {
         it("upserts and filters Expo push subscriptions by event", async () => {
-            expect.assertions(7);
+            expect.assertions(8);
 
             const provider = new Database(options);
             await new Promise<void>((resolve, reject) => {
@@ -450,6 +474,17 @@ describe("Database", () => {
                                     },
                                 );
                             expect(deviceSubsAfterUpdate).toHaveLength(1);
+
+                            await provider.deleteDevice(deviceID);
+                            expect(
+                                await provider.retrieveNotificationSubscriptions(
+                                    {
+                                        deviceID,
+                                        event: "deviceRequest",
+                                        userID,
+                                    },
+                                ),
+                            ).toEqual([]);
 
                             await provider.close();
                             resolve();

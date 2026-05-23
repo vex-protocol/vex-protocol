@@ -442,6 +442,11 @@ export class Database extends EventEmitter {
             .execute();
 
         await this.db
+            .deleteFrom("notification_subscriptions")
+            .where("deviceID", "=", deviceID)
+            .execute();
+
+        await this.db
             .updateTable("devices")
             .set({ deleted: 1 })
             .where("deviceID", "=", deviceID)
@@ -787,6 +792,10 @@ export class Database extends EventEmitter {
                     .execute();
                 await trx
                     .deleteFrom("oneTimeKeys")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .deleteFrom("notification_subscriptions")
                     .where("deviceID", "in", revokedDeviceIDs)
                     .execute();
                 await trx
