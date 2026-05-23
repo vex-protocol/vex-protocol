@@ -705,8 +705,6 @@ export interface NotificationSubscriptionInput {
  * @public
  */
 export interface Passkeys {
-    /** Approves a pending device-enrollment request using the passkey session. */
-    approveDeviceRequest: (requestID: string) => Promise<Device>;
     /** Begin a public passkey authentication ceremony for `username`. */
     beginAuthentication: (username: string) => Promise<{
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
@@ -748,6 +746,12 @@ export interface Passkeys {
     list: () => Promise<Passkey[]>;
     /** List all of the account's devices using the passkey session. */
     listDevices: () => Promise<Device[]>;
+    /**
+     * Recover the account onto a pending device using the passkey
+     * session. The server approves the pending device and revokes all
+     * previously-active devices for the account.
+     */
+    recoverDeviceRequest: (requestID: string) => Promise<Device>;
     /** Reject a pending device-enrollment request using the passkey session. */
     rejectDeviceRequest: (requestID: string) => Promise<void>;
 }
@@ -1430,16 +1434,15 @@ export class Client {
      * Passkey ("recovery credential") methods.
      *
      * Passkeys are an account-bound second-class credential that can
-     * authenticate the owning user, list devices, delete devices, and
-     * approve/reject pending device-enrollment requests — i.e.
-     * provisioning + recovery. They cannot send/decrypt mail.
+     * authenticate the owning user, list devices, delete devices, recover a
+     * pending device enrollment, and reject pending device-enrollment
+     * requests. They cannot send/decrypt mail.
      *
      * The host app drives the WebAuthn ceremony (e.g. via
      * `@simplewebauthn/browser`) and hands the JSON response to
      * `finish*`.
      */
     public passkeys: Passkeys = {
-        approveDeviceRequest: this.passkeyApproveDeviceRequest.bind(this),
         beginAuthentication: this.beginPasskeyAuthentication.bind(this),
         beginRegistration: this.beginPasskeyRegistration.bind(this),
         delete: this.deletePasskey.bind(this),
@@ -1448,6 +1451,7 @@ export class Client {
         finishRegistration: this.finishPasskeyRegistration.bind(this),
         list: this.listPasskeys.bind(this),
         listDevices: this.passkeyListDevices.bind(this),
+        recoverDeviceRequest: this.passkeyRecoverDeviceRequest.bind(this),
         rejectDeviceRequest: this.passkeyRejectDeviceRequest.bind(this),
     };
 
@@ -3843,21 +3847,6 @@ export class Client {
         this.scheduleRetentionPurge();
     };
 
-    private async passkeyApproveDeviceRequest(
-        requestID: string,
-    ): Promise<Device> {
-        const userID = this.getUser().userID;
-        const response = await this.http.post(
-            this.getHost() +
-                "/user/" +
-                userID +
-                "/passkey/devices/requests/" +
-                requestID +
-                "/approve",
-        );
-        return decodeHttpResponse(DeviceCodec, response.data);
-    }
-
     private async passkeyDeleteDevice(deviceID: string): Promise<void> {
         const userID = this.getUser().userID;
         await this.http.delete(
@@ -3871,6 +3860,20 @@ export class Client {
             this.getHost() + "/user/" + userID + "/passkey/devices",
         );
         return decodeHttpResponse(DeviceArrayCodec, response.data);
+    }
+
+    private async passkeyRecoverDeviceRequest(
+        requestID: string,
+    ): Promise<Device> {
+        const userID = this.getUser().userID;
+        const response = await this.http.post(
+            this.getHost() +
+                "/user/" +
+                userID +
+                "/passkey/recover/devices/requests/" +
+                requestID,
+        );
+        return decodeHttpResponse(DeviceCodec, response.data);
     }
 
     private async passkeyRejectDeviceRequest(requestID: string): Promise<void> {

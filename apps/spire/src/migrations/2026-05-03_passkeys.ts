@@ -13,8 +13,8 @@ export async function down(db: Kysely<unknown>): Promise<void> {
 // Passkeys are an administrative second-class credential alongside
 // `devices`. They cannot send/decrypt mail (no ratchet keys), but they
 // can authenticate the owning user, list devices, delete devices, and
-// approve/reject pending device-enrollment requests — i.e. account
-// recovery and provisioning.
+// recover/reject pending device-enrollment requests — i.e. account
+// recovery without additive passkey-only provisioning.
 //
 // `credentialID` is the WebAuthn credential id (base64url, opaque), and
 // is unique across all passkeys. `publicKey` is the COSE_Key bytes

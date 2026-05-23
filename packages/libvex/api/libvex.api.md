@@ -647,7 +647,6 @@ export { Passkey }
 
 // @public
 export interface Passkeys {
-    approveDeviceRequest: (requestID: string) => Promise<Device>;
     beginAuthentication: (username: string) => Promise<{
         options: any;
         requestID: string;
@@ -673,6 +672,7 @@ export interface Passkeys {
     }) => Promise<Passkey>;
     list: () => Promise<Passkey[]>;
     listDevices: () => Promise<Device[]>;
+    recoverDeviceRequest: (requestID: string) => Promise<Device>;
     rejectDeviceRequest: (requestID: string) => Promise<void>;
 }
 

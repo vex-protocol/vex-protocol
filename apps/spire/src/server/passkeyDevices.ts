@@ -10,7 +10,10 @@ import express from "express";
 
 import { msgpack } from "../utils/msgpack.ts";
 
-import { resolveDeviceEnrollmentRequest } from "./user.ts";
+import {
+    recoverDeviceEnrollmentRequest,
+    resolveDeviceEnrollmentRequest,
+} from "./user.ts";
 import { getParam, getUser } from "./utils.ts";
 
 import { protectPasskey } from "./index.ts";
@@ -21,8 +24,8 @@ import { protectPasskey } from "./index.ts";
  *
  * - `GET    /user/:id/passkey/devices`                              — list
  * - `DELETE /user/:id/passkey/devices/:deviceID`                    — remove
- * - `POST   /user/:id/passkey/devices/requests/:requestID/approve`  — approve
  * - `POST   /user/:id/passkey/devices/requests/:requestID/reject`   — reject
+ * - `POST   /user/:id/passkey/recover/devices/requests/:requestID`  — recover
  *
  * The route family is parallel to `/user/:id/devices/...` so the
  * existing device-authenticated flow stays untouched (and there's no
@@ -42,6 +45,7 @@ export const getPasskeyDeviceRouter = (
         data?: unknown,
         deviceID?: string,
     ) => void,
+    disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
     const router = express.Router();
 
@@ -79,10 +83,9 @@ export const getPasskeyDeviceRouter = (
             // The device-auth `DELETE /user/:id/devices/:deviceID`
             // refuses to delete the user's last device (a device
             // can't lock itself out). Passkeys may delete the last
-            // device on purpose: that's the entire recovery story —
+            // device on purpose: that's part of the recovery story —
             // "I lost my phone, sign in with the passkey, wipe the
-            // old device, then enroll a new one with the passkey
-            // standing in as the approver."
+            // old device, then recover onto a new one."
             await db.deleteDevice(deviceID);
             // Tell whoever's online that the device-list shape
             // changed; clients use this to refresh the Settings →
@@ -93,7 +96,7 @@ export const getPasskeyDeviceRouter = (
     );
 
     router.post(
-        "/user/:id/passkey/devices/requests/:requestID/approve",
+        "/user/:id/passkey/recover/devices/requests/:requestID",
         protectPasskey,
         async (req, res) => {
             const userDetails = getUser(req);
@@ -103,20 +106,20 @@ export const getPasskeyDeviceRouter = (
                 res.sendStatus(401);
                 return;
             }
-            // No second-factor signature here: the passkey JWT itself
-            // is fresh proof of user presence (5 min TTL, freshly
-            // minted from a WebAuthn ceremony with userVerification).
-            // Reusing it within those 5 minutes to approve an
-            // enrollment is fine — the equivalent guarantee that the
-            // device flow gets from a per-request Ed25519 sig.
-            const result = await resolveDeviceEnrollmentRequest({
-                action: "approve",
+            // Recovery is intentionally the only passkey-backed
+            // provisioning path: it provisions the pending device and
+            // revokes every previously-active device for the account in
+            // one server-side operation. Clients cannot accidentally
+            // restore an account while leaving lost devices trusted.
+            const result = await recoverDeviceEnrollmentRequest({
                 db,
                 notify,
                 requestID,
                 userID,
             });
             if (result.kind === "ok") {
+                notify(userID, "deviceListChanged", crypto.randomUUID());
+                disconnectDevices?.(result.revokedDeviceIDs);
                 res.send(msgpack.encode(result.device));
                 return;
             }

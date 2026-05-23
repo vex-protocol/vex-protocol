@@ -747,6 +747,62 @@ export class Database extends EventEmitter {
             .executeTakeFirst();
     }
 
+    public async recoverDevice(
+        owner: string,
+        payload: DevicePayload,
+    ): Promise<{ device: Device; revokedDeviceIDs: string[] }> {
+        const device = {
+            deleted: 0,
+            deviceID: crypto.randomUUID(),
+            lastLogin: new Date().toISOString(),
+            name: payload.deviceName,
+            owner,
+            signKey: payload.signKey,
+        };
+        const medPreKeys = {
+            deviceID: device.deviceID,
+            index: payload.preKeyIndex,
+            keyID: crypto.randomUUID(),
+            publicKey: payload.preKey,
+            signature: payload.preKeySignature,
+            userID: owner,
+        };
+
+        return this.db.transaction().execute(async (trx) => {
+            const activeRows = await trx
+                .selectFrom("devices")
+                .select("deviceID")
+                .where("owner", "=", owner)
+                .where("deleted", "=", 0)
+                .execute();
+            const revokedDeviceIDs = activeRows.map((row) => row.deviceID);
+
+            await trx.insertInto("devices").values(device).execute();
+            await trx.insertInto("preKeys").values(medPreKeys).execute();
+
+            if (revokedDeviceIDs.length > 0) {
+                await trx
+                    .deleteFrom("preKeys")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .deleteFrom("oneTimeKeys")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .updateTable("devices")
+                    .set({ deleted: 1 })
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+            }
+
+            return {
+                device: toDevice(device),
+                revokedDeviceIDs,
+            };
+        });
+    }
+
     public async rehashPassword(
         userID: string,
         newHash: string,
