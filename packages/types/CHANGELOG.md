@@ -1,5 +1,11 @@
 # @vex-chat/types
 
+## 4.0.0
+
+### Major Changes
+
+- [#189](https://github.com/vex-protocol/vex-protocol/pull/189) [`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327) Thanks [@yuki111888](https://github.com/yuki111888)! - Require passkey verification as a second factor for full account sessions once an account has enrolled passkeys. Accounts with no passkeys may still obtain a short account session by password or device key so they can enroll their first passkey, but device connect remains blocked until that first passkey exists. New registrations now receive a device-aware response, and the OpenAPI spec reflects the stricter auth contract.
+
 ## 3.3.1
 
 ### Patch Changes

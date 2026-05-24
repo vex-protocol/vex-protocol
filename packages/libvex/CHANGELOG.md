@@ -1,5 +1,35 @@
 # @vex-chat/libvex
 
+## 7.0.0
+
+### Major Changes
+
+- [#192](https://github.com/vex-protocol/vex-protocol/pull/192) [`a27c2f6`](https://github.com/vex-protocol/vex-protocol/commit/a27c2f6a62c2545475d6456dde8a9a81629d88f5) Thanks [@yuki111888](https://github.com/yuki111888)! - Passkey-authenticated device enrollment is now recovery-only. Use
+  `client.passkeys.recoverDeviceRequest(requestID)` and Spire's
+  `POST /user/:id/passkey/recover/devices/requests/:requestID` endpoint to
+  provision a new device from a passkey; the old passkey approval endpoint and
+  `client.passkeys.approveDeviceRequest()` API have been removed so recovery
+  always revokes previously trusted devices and their push subscriptions
+  server-side.
+
+### Minor Changes
+
+- [#185](https://github.com/vex-protocol/vex-protocol/pull/185) [`c5526a8`](https://github.com/vex-protocol/vex-protocol/commit/c5526a84404c1ed92f1283c9b56cf996c42e260d) Thanks [@yuki111888](https://github.com/yuki111888)! - Add batched message delete event extras for deleting multiple authored messages with one encrypted control message.
+
+- [#184](https://github.com/vex-protocol/vex-protocol/pull/184) [`2c049ff`](https://github.com/vex-protocol/vex-protocol/commit/2c049ff31bf36102953db26a9c7e39a6da2681e8) Thanks [@yuki111888](https://github.com/yuki111888)! - `MessageEmbed` gains an optional `iconAttachment` field (`EncryptedFileAttachmentReference`) so clients can attach an encrypted file as the embed icon instead of a plain icon URL string.
+
+- [#183](https://github.com/vex-protocol/vex-protocol/pull/183) [`69d369a`](https://github.com/vex-protocol/vex-protocol/commit/69d369aeb0f12855559d30788c77deae325dbf5c) Thanks [@yuki111888](https://github.com/yuki111888)! - Add `MessageDeleteEvent` and `MessageUpdateEvent` types, `MessageUpdatePatch` type, and `createMessageDeleteEventExtra` / `createMessageUpdateEventExtra` helpers so clients can signal message edits and deletions via the encrypted extra metadata field.
+
+### Patch Changes
+
+- [#187](https://github.com/vex-protocol/vex-protocol/pull/187) [`bdb4e87`](https://github.com/vex-protocol/vex-protocol/commit/bdb4e87e819a3c2310c056b77abfd66800ba2758) Thanks [@yuki111888](https://github.com/yuki111888)! - Add a batched mail delivery endpoint and have libvex coalesce concurrent mail sends through it, falling back to the existing WebSocket send path when batching is unavailable.
+
+- [#186](https://github.com/vex-protocol/vex-protocol/pull/186) [`270a40e`](https://github.com/vex-protocol/vex-protocol/commit/270a40ed341ddc0c55c118e8d5c99fd6dfb2ca38) Thanks [@yuki111888](https://github.com/yuki111888)! - Reduce client-side send latency for large recipient fanout by sending mail to devices with bounded concurrency while preserving per-device encryption and recovery behavior.
+
+- Updated dependencies [[`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327)]:
+    - @vex-chat/types@4.0.0
+    - @vex-chat/crypto@7.0.0
+
 ## 6.8.0
 
 ### Minor Changes
