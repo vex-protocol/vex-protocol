@@ -49,13 +49,17 @@ export type {
     HttpResponse,
 } from "./http.js";
 export {
+    createMessageDeleteBatchEventExtra,
+    createMessageDeleteEventExtra,
     createMessageEmbedExtra,
+    createMessageUpdateEventExtra,
     MESSAGE_EXTRA_VERSION,
     parseMessageExtra,
     serializeMessageExtra,
 } from "./messageExtra.js";
 export type {
     EncryptedFileAttachmentReference,
+    MessageDeleteEvent,
     MessageEmbed,
     MessageEmbedAction,
     MessageEmbedBlock,
@@ -75,13 +79,14 @@ export type {
     MessageExtra,
     MessageReaction,
     MessageReactionEvent,
+    MessageUpdateEvent,
 } from "./messageExtra.js";
 export {
     clampLocalMessageRetentionDays,
     effectiveMessageRetentionHintDays,
     MAX_LOCAL_MESSAGE_RETENTION_DAYS,
 } from "./retention.js";
-export type { Storage } from "./Storage.js";
+export type { MessageUpdatePatch, Storage } from "./Storage.js";
 export type {
     KeyPair,
     KeyStore,

@@ -705,8 +705,6 @@ export interface NotificationSubscriptionInput {
  * @public
  */
 export interface Passkeys {
-    /** Approves a pending device-enrollment request using the passkey session. */
-    approveDeviceRequest: (requestID: string) => Promise<Device>;
     /** Begin a public passkey authentication ceremony for `username`. */
     beginAuthentication: (username: string) => Promise<{
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
@@ -748,6 +746,12 @@ export interface Passkeys {
     list: () => Promise<Passkey[]>;
     /** List all of the account's devices using the passkey session. */
     listDevices: () => Promise<Device[]>;
+    /**
+     * Recover the account onto a pending device using the passkey
+     * session. The server approves the pending device and revokes all
+     * previously-active devices for the account.
+     */
+    recoverDeviceRequest: (requestID: string) => Promise<Device>;
     /** Reject a pending device-enrollment request using the passkey session. */
     rejectDeviceRequest: (requestID: string) => Promise<void>;
 }
@@ -866,12 +870,36 @@ const messageSchema: z.ZodType<Message> = z.object({
 });
 
 const MESSAGE_BLOB_PREFIX = "vex-message:1\n";
+const MAIL_FANOUT_CONCURRENCY = 8;
+const MAIL_BATCH_MAX_SIZE = 32;
+const MAIL_BATCH_FLUSH_DELAY_MS = 8;
 
 interface DecodedMessagePlaintext {
     extra?: null | string | undefined;
     message: string;
     retentionHintDays?: number | undefined;
 }
+
+interface PendingMailBatchDelivery {
+    header: Uint8Array;
+    mail: MailWS;
+    msg: ResourceMsg;
+    reject: (err: unknown) => void;
+    resolve: () => void;
+}
+
+const mailBatchResponseSchema = z.object({
+    results: z.array(
+        z.object({
+            error: z.string().optional(),
+            index: z.number().int().nonnegative(),
+            mailID: z.string().optional(),
+            ok: z.boolean(),
+            recipient: z.string().optional(),
+            status: z.number().int().optional(),
+        }),
+    ),
+});
 
 function decodeMessageBlob(body: string): DecodedMessagePlaintext {
     if (!body.startsWith(MESSAGE_BLOB_PREFIX)) {
@@ -1406,16 +1434,15 @@ export class Client {
      * Passkey ("recovery credential") methods.
      *
      * Passkeys are an account-bound second-class credential that can
-     * authenticate the owning user, list devices, delete devices, and
-     * approve/reject pending device-enrollment requests — i.e.
-     * provisioning + recovery. They cannot send/decrypt mail.
+     * authenticate the owning user, list devices, delete devices, recover a
+     * pending device enrollment, and reject pending device-enrollment
+     * requests. They cannot send/decrypt mail.
      *
      * The host app drives the WebAuthn ceremony (e.g. via
      * `@simplewebauthn/browser`) and hands the JSON response to
      * `finish*`.
      */
     public passkeys: Passkeys = {
-        approveDeviceRequest: this.passkeyApproveDeviceRequest.bind(this),
         beginAuthentication: this.beginPasskeyAuthentication.bind(this),
         beginRegistration: this.beginPasskeyRegistration.bind(this),
         delete: this.deletePasskey.bind(this),
@@ -1424,6 +1451,7 @@ export class Client {
         finishRegistration: this.finishPasskeyRegistration.bind(this),
         list: this.listPasskeys.bind(this),
         listDevices: this.passkeyListDevices.bind(this),
+        recoverDeviceRequest: this.passkeyRecoverDeviceRequest.bind(this),
         rejectDeviceRequest: this.passkeyRejectDeviceRequest.bind(this),
     };
 
@@ -1557,6 +1585,9 @@ export class Client {
     private localMessageRetentionDays: number;
     private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
         null;
+    private mailBatchFlushTimer: null | ReturnType<typeof setTimeout> = null;
+    private readonly mailBatchQueue: PendingMailBatchDelivery[] = [];
+    private mailBatchUnsupported = false;
     private readonly mailInterval?: NodeJS.Timeout;
 
     private manuallyClosing: boolean = false;
@@ -1878,6 +1909,14 @@ export class Client {
 
         if (this.mailInterval) {
             clearInterval(this.mailInterval);
+        }
+        if (this.mailBatchFlushTimer) {
+            clearTimeout(this.mailBatchFlushTimer);
+            this.mailBatchFlushTimer = null;
+        }
+        const pendingMailBatch = this.mailBatchQueue.splice(0);
+        for (const pending of pendingMailBatch) {
+            pending.reject(new Error("Client closed before mail batch sent."));
         }
         if (this.localRetentionPurgeTimer) {
             clearInterval(this.localRetentionPurgeTimer);
@@ -2674,7 +2713,8 @@ export class Client {
             // my keys
             const IK_A = this.xKeyRing.identityKeys.secretKey;
             const IK_AP = this.xKeyRing.identityKeys.publicKey;
-            const EK_A = this.xKeyRing.ephemeralKeys.secretKey;
+            const ephemeralKeys = await xBoxKeyPairAsync();
+            const EK_A = ephemeralKeys.secretKey;
 
             const fips = this.cryptoProfile === "fips";
             // their keys — FIPS: `signKey` in bundle is the peer P-256 ECDH identity (raw, typically 65B).
@@ -2732,13 +2772,13 @@ export class Client {
             const cipher = await xSecretboxAsync(message, nonce, SK);
 
             const signKeyWire = fips ? IK_AP : this.signKeys.publicKey;
-            const ephKeyWire = this.xKeyRing.ephemeralKeys.publicKey;
+            const ephKeyWire = ephemeralKeys.publicKey;
 
             const extra = fips
                 ? encodeFipsInitialExtraV1(signKeyWire, ephKeyWire, PK, AD, IDX)
                 : xConcat(
                       this.signKeys.publicKey,
-                      this.xKeyRing.ephemeralKeys.publicKey,
+                      ephemeralKeys.publicKey,
                       PK,
                       AD,
                       IDX,
@@ -2767,9 +2807,6 @@ export class Client {
                 transmissionID: uuid.v4(),
                 type: "resource",
             };
-
-            // discard the ephemeral keys
-            await this.newEphemeralKeys();
 
             const ratchet = await initRatchetSession(SK, "initiator");
             const sessionEntry: SessionSQL = {
@@ -2816,37 +2853,7 @@ export class Client {
                 this.emitter.emit("message", emitMsg);
             }
 
-            // send mail and wait for response
-            await new Promise((res, rej) => {
-                const callback = (packedMsg: Uint8Array) => {
-                    const [_header, receivedMsg] =
-                        XUtils.unpackMessage(packedMsg);
-                    if (receivedMsg.transmissionID === msg.transmissionID) {
-                        this.socket.off("message", callback);
-                        const parsed = WSMessageSchema.safeParse(receivedMsg);
-                        if (parsed.success && parsed.data.type === "success") {
-                            res(parsed.data.data);
-                        } else {
-                            rej(
-                                new Error(
-                                    "Mail delivery failed: " +
-                                        JSON.stringify(receivedMsg),
-                                ),
-                            );
-                        }
-                    }
-                };
-                this.socket.on("message", callback);
-                // Forward send failures to the outer promise instead
-                // of leaking them as an unhandled rejection: the
-                // listener above can never resolve if the send didn't
-                // make it onto the wire, so without this the caller
-                // would hang for the full 30s send-loop timeout.
-                this.send(msg, hmac).catch((err: unknown) => {
-                    this.socket.off("message", callback);
-                    rej(err instanceof Error ? err : new Error(String(err)));
-                });
-            });
+            await this.deliverMailResource(msg, hmac, mail);
         });
     }
 
@@ -2886,6 +2893,59 @@ export class Client {
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
+    private deliverMailResource(
+        msg: ResourceMsg,
+        header: Uint8Array,
+        mail: MailWS,
+    ): Promise<void> {
+        if (this.mailBatchUnsupported) {
+            return this.deliverMailResourceOverSocket(msg, header);
+        }
+        return new Promise<void>((resolve, reject) => {
+            this.mailBatchQueue.push({
+                header,
+                mail,
+                msg,
+                reject,
+                resolve,
+            });
+            if (this.mailBatchQueue.length >= MAIL_BATCH_MAX_SIZE) {
+                void this.flushMailBatchQueue();
+            } else {
+                this.scheduleMailBatchFlush();
+            }
+        });
+    }
+    private async deliverMailResourceOverSocket(
+        msg: ResourceMsg,
+        header: Uint8Array,
+    ): Promise<void> {
+        await new Promise<void>((res, rej) => {
+            const callback = (packedMsg: Uint8Array) => {
+                const [_header, receivedMsg] = XUtils.unpackMessage(packedMsg);
+                if (receivedMsg.transmissionID === msg.transmissionID) {
+                    this.socket.off("message", callback);
+                    const parsed = WSMessageSchema.safeParse(receivedMsg);
+                    if (parsed.success && parsed.data.type === "success") {
+                        res();
+                    } else {
+                        rej(
+                            new Error(
+                                "Mail delivery failed: " +
+                                    JSON.stringify(receivedMsg),
+                            ),
+                        );
+                    }
+                }
+            };
+            this.socket.on("message", callback);
+            this.send(msg, header).catch((err: unknown) => {
+                this.socket.off("message", callback);
+                rej(err instanceof Error ? err : new Error(String(err)));
+            });
+        });
+    }
+
     private deviceListFailureDetail(err: unknown): string {
         if (!isHttpError(err)) {
             return "";
@@ -2899,6 +2959,7 @@ export class Client {
         }
         return "";
     }
+
     /**
      * Gets a list of permissions for a server.
      *
@@ -3053,6 +3114,84 @@ export class Client {
         return decodeHttpResponse(PasskeyCodec, response.data);
     }
 
+    private async flushMailBatchOverSocket(
+        batch: PendingMailBatchDelivery[],
+    ): Promise<void> {
+        await Promise.all(
+            batch.map(async (item) => {
+                try {
+                    await this.deliverMailResourceOverSocket(
+                        item.msg,
+                        item.header,
+                    );
+                    item.resolve();
+                } catch (err: unknown) {
+                    item.reject(err);
+                }
+            }),
+        );
+    }
+
+    private async flushMailBatchQueue(): Promise<void> {
+        if (this.mailBatchFlushTimer) {
+            clearTimeout(this.mailBatchFlushTimer);
+            this.mailBatchFlushTimer = null;
+        }
+        const batch = this.mailBatchQueue.splice(0, MAIL_BATCH_MAX_SIZE);
+        if (this.mailBatchQueue.length > 0) {
+            this.scheduleMailBatchFlush();
+        }
+        if (batch.length === 0) {
+            return;
+        }
+        if (this.mailBatchUnsupported) {
+            await this.flushMailBatchOverSocket(batch);
+            return;
+        }
+
+        try {
+            const response = await this.http.post(
+                this.getHost() + "/mail/batch",
+                msgpack.encode({
+                    mails: batch.map((item) => ({
+                        header: item.header,
+                        mail: item.mail,
+                    })),
+                }),
+                { headers: { "Content-Type": "application/msgpack" } },
+            );
+            const decoded = mailBatchResponseSchema.parse(
+                msgpack.decode(new Uint8Array(response.data)),
+            );
+            const resultsByIndex = new Map(
+                decoded.results.map((result) => [result.index, result]),
+            );
+            for (const [index, item] of batch.entries()) {
+                const result = resultsByIndex.get(index);
+                if (result?.ok === true) {
+                    item.resolve();
+                    continue;
+                }
+                item.reject(
+                    new Error(
+                        "Mail delivery failed: " +
+                            (result?.error ??
+                                `missing batch result for index ${String(index)}`),
+                    ),
+                );
+            }
+        } catch (err: unknown) {
+            if (isHttpError(err) && err.response?.status === 404) {
+                this.mailBatchUnsupported = true;
+                await this.flushMailBatchOverSocket(batch);
+                return;
+            }
+            for (const item of batch) {
+                item.reject(err);
+            }
+        }
+    }
+
     private async forward(message: Message) {
         if (this.isManualCloseInFlight()) {
             return;
@@ -3076,22 +3215,34 @@ export class Client {
             this.getUser().userID,
             "own",
         );
-        for (const device of devices) {
-            if (device.deviceID === this.getDevice().deviceID) {
-                continue;
-            }
-            try {
-                await this.sendMailWithRecovery(
-                    device,
-                    this.getUser(),
-                    msgBytes,
-                    null,
-                    copy.mailID,
-                    true,
-                );
-            } catch {
-                /* best-effort per device; parallel handshakes share ephemeral state */
-            }
+        const targetDevices = devices.filter(
+            (device) => device.deviceID !== this.getDevice().deviceID,
+        );
+        for (
+            let index = 0;
+            index < targetDevices.length;
+            index += MAIL_FANOUT_CONCURRENCY
+        ) {
+            const batch = targetDevices.slice(
+                index,
+                index + MAIL_FANOUT_CONCURRENCY,
+            );
+            await Promise.all(
+                batch.map(async (device) => {
+                    try {
+                        await this.sendMailWithRecovery(
+                            device,
+                            this.getUser(),
+                            msgBytes,
+                            null,
+                            copy.mailID,
+                            true,
+                        );
+                    } catch {
+                        /* best-effort per device */
+                    }
+                }),
+            );
         }
     }
 
@@ -3467,8 +3618,6 @@ export class Client {
         return true;
     }
 
-    // ── Passkeys ────────────────────────────────────────────────────────
-
     /**
      * Initializes the keyring. This must be called before anything else.
      */
@@ -3487,8 +3636,6 @@ export class Client {
         );
         this.emitter.emit("ready");
     }
-
-    // ── Passkeys ────────────────────────────────────────────────────────
 
     private initSocket() {
         try {
@@ -3673,16 +3820,6 @@ export class Client {
         await this.submitOTK(needs);
     }
 
-    private async newEphemeralKeys() {
-        if (!this.xKeyRing) {
-            if (this.manuallyClosing) {
-                return;
-            }
-            throw new Error("Key ring not initialized.");
-        }
-        this.xKeyRing.ephemeralKeys = await xBoxKeyPairAsync();
-    }
-
     /**
      * Pipeline for decrypted messages — registered in `init`. After `close()` sets
      * `manuallyClosing`, this becomes a no-op so fire-and-forget `forward` does not
@@ -3710,21 +3847,6 @@ export class Client {
         this.scheduleRetentionPurge();
     };
 
-    private async passkeyApproveDeviceRequest(
-        requestID: string,
-    ): Promise<Device> {
-        const userID = this.getUser().userID;
-        const response = await this.http.post(
-            this.getHost() +
-                "/user/" +
-                userID +
-                "/passkey/devices/requests/" +
-                requestID +
-                "/approve",
-        );
-        return decodeHttpResponse(DeviceCodec, response.data);
-    }
-
     private async passkeyDeleteDevice(deviceID: string): Promise<void> {
         const userID = this.getUser().userID;
         await this.http.delete(
@@ -3738,6 +3860,20 @@ export class Client {
             this.getHost() + "/user/" + userID + "/passkey/devices",
         );
         return decodeHttpResponse(DeviceArrayCodec, response.data);
+    }
+
+    private async passkeyRecoverDeviceRequest(
+        requestID: string,
+    ): Promise<Device> {
+        const userID = this.getUser().userID;
+        const response = await this.http.post(
+            this.getHost() +
+                "/user/" +
+                userID +
+                "/passkey/recover/devices/requests/" +
+                requestID,
+        );
+        return decodeHttpResponse(DeviceCodec, response.data);
     }
 
     private async passkeyRejectDeviceRequest(requestID: string): Promise<void> {
@@ -4818,6 +4954,16 @@ export class Client {
         }
     }
 
+    private scheduleMailBatchFlush(): void {
+        if (this.mailBatchFlushTimer) {
+            return;
+        }
+        this.mailBatchFlushTimer = setTimeout(() => {
+            this.mailBatchFlushTimer = null;
+            void this.flushMailBatchQueue();
+        }, MAIL_BATCH_FLUSH_DELAY_MS);
+    }
+
     private scheduleReconnect(): void {
         if (
             !this.autoReconnectEnabled ||
@@ -4963,27 +5109,49 @@ export class Client {
 
         let failCount = 0;
         let lastErr: unknown;
-        for (const device of stableDevices) {
-            const ownerRecord =
-                device.owner === myUserID
-                    ? this.getUser()
-                    : this.userRecords[device.owner];
-            if (!ownerRecord) {
-                failCount += 1;
-                continue;
+        for (
+            let index = 0;
+            index < stableDevices.length;
+            index += MAIL_FANOUT_CONCURRENCY
+        ) {
+            const batch = stableDevices.slice(
+                index,
+                index + MAIL_FANOUT_CONCURRENCY,
+            );
+            const results = await Promise.all(
+                batch.map(async (device): Promise<undefined | unknown> => {
+                    const ownerRecord =
+                        device.owner === myUserID
+                            ? this.getUser()
+                            : this.userRecords[device.owner];
+                    if (!ownerRecord) {
+                        return new Error(
+                            `Missing owner record for device ${device.deviceID}.`,
+                        );
+                    }
+                    try {
+                        await this.sendMailWithRecovery(
+                            device,
+                            ownerRecord,
+                            msgBytes,
+                            uuidToUint8(channelID),
+                            mailID,
+                            false,
+                        );
+                        return undefined;
+                    } catch (e) {
+                        return e;
+                    }
+                }),
+            );
+            for (const result of results) {
+                if (result !== undefined) {
+                    lastErr = result;
+                    failCount += 1;
+                }
             }
-            try {
-                await this.sendMailWithRecovery(
-                    device,
-                    ownerRecord,
-                    msgBytes,
-                    uuidToUint8(channelID),
-                    mailID,
-                    false,
-                );
-            } catch (e) {
-                lastErr = e;
-                failCount += 1;
+            if (failCount === stableDevices.length) {
+                break;
             }
         }
 
@@ -5138,35 +5306,7 @@ export class Client {
             await this.database.saveSession(persisted);
             this.sessionRecords[XUtils.encodeHex(session.publicKey)] = session;
 
-            await new Promise((res, rej) => {
-                const callback = (packedMsg: Uint8Array) => {
-                    const [_header, receivedMsg] =
-                        XUtils.unpackMessage(packedMsg);
-                    if (receivedMsg.transmissionID === msgb.transmissionID) {
-                        this.socket.off("message", callback);
-                        const parsed = WSMessageSchema.safeParse(receivedMsg);
-                        if (parsed.success && parsed.data.type === "success") {
-                            res(parsed.data.data);
-                        } else {
-                            rej(
-                                new Error(
-                                    "Mail delivery failed: " +
-                                        JSON.stringify(receivedMsg),
-                                ),
-                            );
-                        }
-                    }
-                };
-                this.socket.on("message", callback);
-                // See the matching block above (sendMail handshake):
-                // forward send failures to the outer promise so the
-                // caller doesn't hang waiting for a response we never
-                // sent.
-                this.send(msgb, hmac).catch((err: unknown) => {
-                    this.socket.off("message", callback);
-                    rej(err instanceof Error ? err : new Error(String(err)));
-                });
-            });
+            await this.deliverMailResource(msgb, hmac, mail);
         } finally {
             this.sending.delete(device.deviceID);
         }
@@ -5265,38 +5405,60 @@ export class Client {
             // One logical DM fan-outs to multiple recipient devices. Reuse a
             // single mailID so local/UI dedupe treats it as one message.
             const messageMailID = uuid.v4();
-            for (const device of deviceList) {
-                try {
-                    if (libvexDebugDmEnabled()) {
-                        debugLibvexDm("sendMessage: sendMail start", {
-                            mailID: messageMailID,
-                            recipientDevice: device.deviceID,
-                        });
+            const msgBytes = XUtils.decodeUTF8(payload);
+            for (
+                let index = 0;
+                index < deviceList.length;
+                index += MAIL_FANOUT_CONCURRENCY
+            ) {
+                const batch = deviceList.slice(
+                    index,
+                    index + MAIL_FANOUT_CONCURRENCY,
+                );
+                const results = await Promise.all(
+                    batch.map(async (device): Promise<undefined | unknown> => {
+                        try {
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm("sendMessage: sendMail start", {
+                                    mailID: messageMailID,
+                                    recipientDevice: device.deviceID,
+                                });
+                            }
+                            await this.sendMailWithRecovery(
+                                device,
+                                userEntry,
+                                msgBytes,
+                                null,
+                                messageMailID,
+                                false,
+                            );
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm("sendMessage: sendMail ok", {
+                                    recipientDevice: device.deviceID,
+                                });
+                            }
+                            return undefined;
+                        } catch (e) {
+                            if (libvexDebugDmEnabled()) {
+                                // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
+                                console.error(
+                                    "[libvex:debug-dm] sendMessage: sendMail failed for device",
+                                    device.deviceID,
+                                    e,
+                                );
+                            }
+                            return e;
+                        }
+                    }),
+                );
+                for (const result of results) {
+                    if (result !== undefined) {
+                        lastErr = result;
+                        failCount += 1;
                     }
-                    await this.sendMailWithRecovery(
-                        device,
-                        userEntry,
-                        XUtils.decodeUTF8(payload),
-                        null,
-                        messageMailID,
-                        false,
-                    );
-                    if (libvexDebugDmEnabled()) {
-                        debugLibvexDm("sendMessage: sendMail ok", {
-                            recipientDevice: device.deviceID,
-                        });
-                    }
-                } catch (e) {
-                    if (libvexDebugDmEnabled()) {
-                        // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
-                        console.error(
-                            "[libvex:debug-dm] sendMessage: sendMail failed for device",
-                            device.deviceID,
-                            e,
-                        );
-                    }
-                    lastErr = e;
-                    failCount += 1;
+                }
+                if (failCount === deviceList.length) {
+                    break;
                 }
             }
             if (failCount > 0) {

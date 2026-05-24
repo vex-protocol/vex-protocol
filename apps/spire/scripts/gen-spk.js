@@ -17,7 +17,7 @@
  * These MUST be separate keys so compromise of one doesn't affect the other.
  *
  * Usage:
- *   node scripts/gen-spk.js           # SPK="..." + JWT_SECRET="..."
+ *   node scripts/gen-spk.js           # SPK=... + JWT_SECRET=...
  *   node scripts/gen-spk.js --raw     # hex only, no wrappers
  */
 
@@ -35,6 +35,6 @@ if (raw) {
     console.log(spk);
     console.log(jwtSecret);
 } else {
-    console.log(`SPK="${spk}"`);
-    console.log(`JWT_SECRET="${jwtSecret}"`);
+    console.log(`SPK=${spk}`);
+    console.log(`JWT_SECRET=${jwtSecret}`);
 }

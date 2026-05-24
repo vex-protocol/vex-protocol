@@ -5,7 +5,7 @@
  */
 
 import type { Message } from "../../index.js";
-import type { Storage } from "../../Storage.js";
+import type { MessageUpdatePatch, Storage } from "../../Storage.js";
 import type {
     PreKeysCrypto,
     SessionCrypto,
@@ -274,6 +274,47 @@ export class MemoryStorage extends EventEmitter implements Storage {
             this.sessions.push(session);
         }
         return Promise.resolve();
+    }
+
+    async updateMessage(
+        mailID: string,
+        patch: MessageUpdatePatch,
+    ): Promise<boolean> {
+        const idx = this.messages.findIndex((m) => m.mailID === mailID);
+        if (idx < 0) {
+            return false;
+        }
+        if (
+            patch.message === undefined &&
+            !Object.prototype.hasOwnProperty.call(patch, "extra")
+        ) {
+            return false;
+        }
+        const current = this.messages[idx];
+        if (!current) {
+            return false;
+        }
+        const next = { ...current };
+        if (Object.prototype.hasOwnProperty.call(patch, "extra")) {
+            next.extra = patch.extra;
+        }
+        if (patch.message !== undefined) {
+            const fips = getCryptoProfile() === "fips";
+            const ct = fips
+                ? await xSecretboxAsync(
+                      XUtils.decodeUTF8(patch.message),
+                      XUtils.decodeHex(current.nonce),
+                      this.atRestAesKey,
+                  )
+                : xSecretbox(
+                      XUtils.decodeUTF8(patch.message),
+                      XUtils.decodeHex(current.nonce),
+                      this.atRestAesKey,
+                  );
+            next.message = XUtils.encodeHex(ct);
+        }
+        this.messages[idx] = next;
+        return true;
     }
 
     private async decryptMessage(msg: Message): Promise<Message> {

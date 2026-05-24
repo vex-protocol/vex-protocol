@@ -6,7 +6,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    createMessageDeleteBatchEventExtra,
+    createMessageDeleteEventExtra,
     createMessageEmbedExtra,
+    createMessageUpdateEventExtra,
     type MessageEmbed,
     parseMessageExtra,
     serializeMessageExtra,
@@ -36,6 +39,7 @@ describe("message extra", () => {
                 },
             ],
             display: "decorate",
+            iconAttachment: imageAttachment,
             kind: "git.workflow",
             title: "CI finished",
             version: 1,
@@ -79,6 +83,8 @@ describe("message extra", () => {
         const parsed = parseMessageExtra(
             JSON.stringify({
                 embed: { display: "replace", kind: 123 },
+                messageDeleteEvent: { action: "delete" },
+                messageUpdateEvent: { action: "update", targetMailID: "m1" },
                 reactionEvent: { action: "toggle", targetMailID: "m1" },
                 vendor: { ok: true },
                 version: 999,
@@ -88,6 +94,38 @@ describe("message extra", () => {
         expect(parsed).toEqual({
             vendor: { ok: true },
             version: 1,
+        });
+    });
+
+    it("serializes and parses message update and delete events", () => {
+        const updateExtra = createMessageUpdateEventExtra(
+            "m-target",
+            "edited text",
+        );
+        const deleteExtra = createMessageDeleteEventExtra("m-target");
+
+        expect(parseMessageExtra(updateExtra).messageUpdateEvent).toEqual({
+            action: "update",
+            message: "edited text",
+            targetMailID: "m-target",
+        });
+        expect(parseMessageExtra(deleteExtra).messageDeleteEvent).toEqual({
+            action: "delete",
+            targetMailID: "m-target",
+        });
+    });
+
+    it("serializes and parses batched message delete events", () => {
+        const extra = createMessageDeleteBatchEventExtra([
+            "m-first",
+            "m-second",
+            "m-first",
+            "",
+        ]);
+
+        expect(parseMessageExtra(extra).messageDeleteEvent).toEqual({
+            action: "delete",
+            targetMailIDs: ["m-first", "m-second"],
         });
     });
 

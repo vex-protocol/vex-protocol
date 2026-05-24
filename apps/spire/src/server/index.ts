@@ -42,7 +42,11 @@ import {
     hasPermission,
     userHasPermission,
 } from "./permissions.ts";
-import { globalLimiter, keyBundleLimiter } from "./rateLimit.ts";
+import {
+    devApiKeyMatches,
+    globalLimiter,
+    keyBundleLimiter,
+} from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -200,7 +204,7 @@ export const protect: express.RequestHandler = (req, res, next) => {
  * Restrict a route to passkey-scoped JWTs (used by the parallel
  * `/user/:id/passkey/devices/...` admin/recovery routes). A
  * passkey-authenticated caller can list devices, delete devices, and
- * approve/reject pending enrollments — and nothing else.
+ * recover or reject pending enrollments — and nothing else.
  */
 export const protectPasskey: express.RequestHandler = (req, res, next) => {
     if (!req.user || !req.passkey) {
@@ -243,6 +247,7 @@ export const initApp = (
         data?: unknown,
         deviceID?: string,
     ) => void,
+    disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
     // INIT ROUTERS
     const userRouter = getUserRouter(db, tokenValidator, notify);
@@ -250,7 +255,11 @@ export const initApp = (
     const avatarRouter = getAvatarRouter();
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
     const passkeyRouter = getPasskeyRouter(db);
-    const passkeyDeviceRouter = getPasskeyDeviceRouter(db, notify);
+    const passkeyDeviceRouter = getPasskeyDeviceRouter(
+        db,
+        notify,
+        disconnectDevices,
+    );
 
     // MIDDLEWARE
 
@@ -661,6 +670,20 @@ export const initApp = (
         const device = await db.retrieveDevice(getParam(req, "id"));
         if (!device) {
             res.sendStatus(404);
+            return;
+        }
+        if (req.user?.userID !== device.owner) {
+            res.sendStatus(401);
+            return;
+        }
+        const passkeys = await db.retrievePasskeysByUser(device.owner);
+        // The CLI stress harness cannot perform a WebAuthn ceremony.
+        // Keep normal clients gated, but let the existing dev/load-test key
+        // exercise device connect on disposable accounts.
+        if (passkeys.length === 0 && !devApiKeyMatches(req)) {
+            res.status(403).send({
+                error: "A passkey must be registered before this device can connect.",
+            });
             return;
         }
 

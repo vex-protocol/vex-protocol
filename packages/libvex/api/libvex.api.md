@@ -132,6 +132,18 @@ export function createCodec<T extends z.ZodType>(schema: T): {
     encodeSafe: (msg: z.core.output<T>) => Uint8Array;
 };
 
+// @public (undocumented)
+export function createMessageDeleteBatchEventExtra(targetMailIDs: string[], currentExtra?: null | string): null | string;
+
+// @public (undocumented)
+export function createMessageDeleteEventExtra(targetMailID: string, currentExtra?: null | string): null | string;
+
+// @public (undocumented)
+export function createMessageEmbedExtra(embed: MessageEmbed, currentExtra?: null | string): null | string;
+
+// @public (undocumented)
+export function createMessageUpdateEventExtra(targetMailID: string, message: string, currentExtra?: null | string): null | string;
+
 export { Device }
 
 // @public
@@ -186,6 +198,20 @@ export interface Emojis {
     create: (emoji: Uint8Array, name: string, serverID: string) => Promise<Emoji | null>;
     retrieve: (emojiID: string) => Promise<Emoji | null>;
     retrieveList: (serverID: string) => Promise<Emoji[]>;
+}
+
+// @public (undocumented)
+export interface EncryptedFileAttachmentReference {
+    // (undocumented)
+    contentType: string;
+    // (undocumented)
+    fileID: string;
+    // (undocumented)
+    fileName: string;
+    // (undocumented)
+    fileSize: number;
+    // (undocumented)
+    key: string;
 }
 
 // @public
@@ -319,6 +345,217 @@ export interface Message {
     timestamp: string;
 }
 
+// @public
+export const MESSAGE_EXTRA_VERSION = 1;
+
+// @public (undocumented)
+export interface MessageDeleteEvent {
+    // (undocumented)
+    action: "delete";
+    // (undocumented)
+    deletedAt?: string | undefined;
+    // (undocumented)
+    targetMailID?: string | undefined;
+    // (undocumented)
+    targetMailIDs?: string[] | undefined;
+}
+
+// @public (undocumented)
+export interface MessageEmbed {
+    // (undocumented)
+    actions?: MessageEmbedAction[] | undefined;
+    // (undocumented)
+    blocks?: MessageEmbedBlock[] | undefined;
+    // (undocumented)
+    display: MessageEmbedDisplay;
+    // (undocumented)
+    fields?: MessageEmbedField[] | undefined;
+    // (undocumented)
+    icon?: string | undefined;
+    // (undocumented)
+    iconAttachment?: EncryptedFileAttachmentReference | undefined;
+    // (undocumented)
+    kind: string;
+    // (undocumented)
+    source?: MessageEmbedSource | undefined;
+    // (undocumented)
+    subtitle?: string | undefined;
+    // (undocumented)
+    suppressLinkPreview?: boolean | undefined;
+    // (undocumented)
+    timestamp?: string | undefined;
+    // (undocumented)
+    title: string;
+    // (undocumented)
+    tone?: MessageEmbedTone | undefined;
+    // (undocumented)
+    version: typeof MESSAGE_EXTRA_VERSION;
+}
+
+// @public (undocumented)
+export interface MessageEmbedAction {
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    type: "link";
+    // (undocumented)
+    url: string;
+}
+
+// @public (undocumented)
+export type MessageEmbedBlock = MessageEmbedCodeBlock | MessageEmbedDividerBlock | MessageEmbedFileBlock | MessageEmbedGalleryBlock | MessageEmbedMarkdownBlock | MessageEmbedMediaBlock;
+
+// @public (undocumented)
+export interface MessageEmbedCodeBlock {
+    // (undocumented)
+    code: string;
+    // (undocumented)
+    language?: string | undefined;
+    // (undocumented)
+    type: "code";
+}
+
+// @public (undocumented)
+export type MessageEmbedDisplay = "decorate" | "replace";
+
+// @public (undocumented)
+export interface MessageEmbedDividerBlock {
+    // (undocumented)
+    type: "divider";
+}
+
+// @public (undocumented)
+export interface MessageEmbedField {
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    mono?: boolean | undefined;
+    // (undocumented)
+    short?: boolean | undefined;
+    // (undocumented)
+    value: string;
+}
+
+// @public (undocumented)
+export interface MessageEmbedFileBlock {
+    // (undocumented)
+    attachment: EncryptedFileAttachmentReference;
+    // (undocumented)
+    role?: string | undefined;
+    // (undocumented)
+    type: "file";
+}
+
+// @public (undocumented)
+export interface MessageEmbedGalleryBlock {
+    // (undocumented)
+    items: MessageEmbedMediaItem[];
+    // (undocumented)
+    type: "gallery";
+}
+
+// @public (undocumented)
+export interface MessageEmbedMarkdownBlock {
+    // (undocumented)
+    maxLines?: number | undefined;
+    // (undocumented)
+    source?: "message" | undefined;
+    // (undocumented)
+    text?: string | undefined;
+    // (undocumented)
+    type: "markdown";
+}
+
+// @public (undocumented)
+export interface MessageEmbedMediaBlock extends MessageEmbedMediaItem {
+    // (undocumented)
+    type: "media";
+}
+
+// @public (undocumented)
+export interface MessageEmbedMediaItem {
+    // (undocumented)
+    alt?: string | undefined;
+    // (undocumented)
+    aspectRatio?: number | undefined;
+    // (undocumented)
+    attachment: EncryptedFileAttachmentReference;
+    // (undocumented)
+    caption?: string | undefined;
+    // (undocumented)
+    mediaType: MessageEmbedMediaType;
+    // (undocumented)
+    thumbnail?: EncryptedFileAttachmentReference | undefined;
+    // (undocumented)
+    title?: string | undefined;
+}
+
+// @public (undocumented)
+export type MessageEmbedMediaType = "audio" | "file" | "image" | "svg" | "video";
+
+// @public (undocumented)
+export interface MessageEmbedSource {
+    // (undocumented)
+    id?: string | undefined;
+    // (undocumented)
+    mailID?: string | undefined;
+    // (undocumented)
+    provider?: string | undefined;
+    // (undocumented)
+    url?: string | undefined;
+}
+
+// @public (undocumented)
+export type MessageEmbedTone = "danger" | "default" | "info" | "success" | "warning";
+
+// @public (undocumented)
+export type MessageEmoji = {
+    imageUrl?: string | undefined;
+    kind: "custom";
+    name: string;
+    sourceID?: string | undefined;
+} | {
+    kind: "unicode";
+    shortcode?: string | undefined;
+    value: string;
+};
+
+// @public (undocumented)
+export interface MessageExtra {
+    // (undocumented)
+    [key: string]: unknown;
+    // (undocumented)
+    embed?: MessageEmbed | undefined;
+    // (undocumented)
+    messageDeleteEvent?: MessageDeleteEvent | undefined;
+    // (undocumented)
+    messageUpdateEvent?: MessageUpdateEvent | undefined;
+    // (undocumented)
+    reactionEvent?: MessageReactionEvent | undefined;
+    // (undocumented)
+    reactions?: MessageReaction[] | undefined;
+    // (undocumented)
+    version: typeof MESSAGE_EXTRA_VERSION;
+}
+
+// @public (undocumented)
+export interface MessageReaction {
+    // (undocumented)
+    emoji: MessageEmoji;
+    // (undocumented)
+    userIDs: string[];
+}
+
+// @public (undocumented)
+export interface MessageReactionEvent {
+    // (undocumented)
+    action: "toggle";
+    // (undocumented)
+    emoji: MessageEmoji;
+    // (undocumented)
+    targetMailID: string;
+}
+
 // @public (undocumented)
 export interface Messages {
     delete: (userOrChannelID: string) => Promise<void>;
@@ -333,6 +570,26 @@ export interface Messages {
 export interface MessageSendOptions {
     extra?: null | string | undefined;
     retentionHintDays?: number | undefined;
+}
+
+// @public (undocumented)
+export interface MessageUpdateEvent {
+    // (undocumented)
+    action: "update";
+    // (undocumented)
+    editedAt?: string | undefined;
+    // (undocumented)
+    message: string;
+    // (undocumented)
+    targetMailID: string;
+}
+
+// @public
+export interface MessageUpdatePatch {
+    // (undocumented)
+    extra?: null | string | undefined;
+    // (undocumented)
+    message?: string | undefined;
 }
 
 // @public (undocumented)
@@ -383,11 +640,13 @@ export interface NotificationSubscriptionInput {
     token: string;
 }
 
+// @public (undocumented)
+export function parseMessageExtra(extra: null | string | undefined): MessageExtra;
+
 export { Passkey }
 
 // @public
 export interface Passkeys {
-    approveDeviceRequest: (requestID: string) => Promise<Device>;
     beginAuthentication: (username: string) => Promise<{
         options: any;
         requestID: string;
@@ -413,6 +672,7 @@ export interface Passkeys {
     }) => Promise<Passkey>;
     list: () => Promise<Passkey[]>;
     listDevices: () => Promise<Device[]>;
+    recoverDeviceRequest: (requestID: string) => Promise<Device>;
     rejectDeviceRequest: (requestID: string) => Promise<void>;
 }
 
@@ -468,6 +728,9 @@ export interface PreKeysCrypto extends UnsavedPreKey {
     // (undocumented)
     index: number;
 }
+
+// @public (undocumented)
+export function serializeMessageExtra(extra: MessageExtra): null | string;
 
 export { Server }
 
@@ -532,7 +795,7 @@ export interface Sessions {
     verify: (session: SessionSQL) => string;
 }
 
-// @public
+// @public (undocumented)
 interface Storage_2 extends EventEmitter {
     close: () => Promise<void>;
     deleteHistory: (channelOrUserID: string) => Promise<void>;
@@ -560,6 +823,7 @@ interface Storage_2 extends EventEmitter {
     saveMessage: (message: Message) => Promise<void>;
     savePreKeys: (preKeys: UnsavedPreKey[], oneTime: boolean) => Promise<PreKeysSQL[]>;
     saveSession: (session: Session) => Promise<void>;
+    updateMessage: (mailID: string, patch: MessageUpdatePatch) => Promise<boolean>;
 }
 export { Storage_2 as Storage }
 

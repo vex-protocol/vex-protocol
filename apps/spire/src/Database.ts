@@ -442,6 +442,11 @@ export class Database extends EventEmitter {
             .execute();
 
         await this.db
+            .deleteFrom("notification_subscriptions")
+            .where("deviceID", "=", deviceID)
+            .execute();
+
+        await this.db
             .updateTable("devices")
             .set({ deleted: 1 })
             .where("deviceID", "=", deviceID)
@@ -745,6 +750,66 @@ export class Database extends EventEmitter {
             .deleteFrom("mail")
             .where("time", "<", cutoff)
             .executeTakeFirst();
+    }
+
+    public async recoverDevice(
+        owner: string,
+        payload: DevicePayload,
+    ): Promise<{ device: Device; revokedDeviceIDs: string[] }> {
+        const device = {
+            deleted: 0,
+            deviceID: crypto.randomUUID(),
+            lastLogin: new Date().toISOString(),
+            name: payload.deviceName,
+            owner,
+            signKey: payload.signKey,
+        };
+        const medPreKeys = {
+            deviceID: device.deviceID,
+            index: payload.preKeyIndex,
+            keyID: crypto.randomUUID(),
+            publicKey: payload.preKey,
+            signature: payload.preKeySignature,
+            userID: owner,
+        };
+
+        return this.db.transaction().execute(async (trx) => {
+            const activeRows = await trx
+                .selectFrom("devices")
+                .select("deviceID")
+                .where("owner", "=", owner)
+                .where("deleted", "=", 0)
+                .execute();
+            const revokedDeviceIDs = activeRows.map((row) => row.deviceID);
+
+            await trx.insertInto("devices").values(device).execute();
+            await trx.insertInto("preKeys").values(medPreKeys).execute();
+
+            if (revokedDeviceIDs.length > 0) {
+                await trx
+                    .deleteFrom("preKeys")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .deleteFrom("oneTimeKeys")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .deleteFrom("notification_subscriptions")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .updateTable("devices")
+                    .set({ deleted: 1 })
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+            }
+
+            return {
+                device: toDevice(device),
+                revokedDeviceIDs,
+            };
+        });
     }
 
     public async rehashPassword(
@@ -1228,22 +1293,7 @@ export class Database extends EventEmitter {
         deviceID: string,
         userID: string,
     ): Promise<void> {
-        const entry: MailSQL = {
-            authorID: userID,
-            cipher: XUtils.encodeHex(mail.cipher),
-            // Opaque transport metadata (X3DH initial payload or ratchet header).
-            extra: XUtils.encodeHex(mail.extra),
-            forward: mail.forward,
-            group: mail.group ? XUtils.encodeHex(mail.group) : null,
-            header: XUtils.encodeHex(header),
-            mailID: mail.mailID,
-            mailType: mail.mailType,
-            nonce: XUtils.encodeHex(mail.nonce),
-            readerID: mail.readerID,
-            recipient: mail.recipient,
-            sender: deviceID,
-            time: new Date().toISOString(),
-        };
+        const entry = this.mailSqlEntry(mail, header, deviceID, userID);
 
         await this.db
             .insertInto("mail")
@@ -1253,6 +1303,37 @@ export class Database extends EventEmitter {
                 time: entry.time,
             })
             .execute();
+    }
+
+    public async saveMailBatch(
+        entries: {
+            header: Uint8Array;
+            mail: MailWS;
+            senderDeviceID: string;
+            userID: string;
+        }[],
+    ): Promise<void> {
+        if (entries.length === 0) {
+            return;
+        }
+
+        const now = new Date().toISOString();
+        const values = entries.map((entry) => {
+            const mail = this.mailSqlEntry(
+                entry.mail,
+                entry.header,
+                entry.senderDeviceID,
+                entry.userID,
+                now,
+            );
+            return {
+                ...mail,
+                forward: mail.forward ? 1 : 0,
+                time: mail.time,
+            };
+        });
+
+        await this.db.insertInto("mail").values(values).execute();
     }
 
     public async saveNotificationSubscription(
@@ -1326,6 +1407,31 @@ export class Database extends EventEmitter {
             return;
         }
         this.emit("ready");
+    }
+
+    private mailSqlEntry(
+        mail: MailWS,
+        header: Uint8Array,
+        deviceID: string,
+        userID: string,
+        time = new Date().toISOString(),
+    ): MailSQL {
+        return {
+            authorID: userID,
+            cipher: XUtils.encodeHex(mail.cipher),
+            // Opaque transport metadata (X3DH initial payload or ratchet header).
+            extra: XUtils.encodeHex(mail.extra),
+            forward: mail.forward,
+            group: mail.group ? XUtils.encodeHex(mail.group) : null,
+            header: XUtils.encodeHex(header),
+            mailID: mail.mailID,
+            mailType: mail.mailType,
+            nonce: XUtils.encodeHex(mail.nonce),
+            readerID: mail.readerID,
+            recipient: mail.recipient,
+            sender: deviceID,
+            time,
+        };
     }
 }
 
