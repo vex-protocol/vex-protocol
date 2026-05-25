@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.0.1
+
+### Patch Changes
+
+- [#195](https://github.com/vex-protocol/vex-protocol/pull/195) [`cea8fe5`](https://github.com/vex-protocol/vex-protocol/commit/cea8fe50fef156dc8ea451cc604e9bba880a00c7) Thanks [@yuki111888](https://github.com/yuki111888)! - Play the default notification sound for visible iOS Expo pushes while keeping Android push payloads on their channel-managed sound behavior.
+
 ## 2.0.0
 
 ### Major Changes
