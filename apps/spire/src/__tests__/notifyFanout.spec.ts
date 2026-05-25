@@ -517,12 +517,14 @@ describe("Spire notify fanout", () => {
             collapseId?: string;
             data?: Record<string, unknown>;
             priority?: string;
+            sound?: string;
             tag?: string;
             title?: string;
         }>;
         expect(messages[0]?.collapseId).toBe("vex-message-summary");
         expect(messages[0]?.channelId).toBe("vex-push-messages-v2");
         expect(messages[0]?.priority).toBe("high");
+        expect(messages[0]).not.toHaveProperty("sound");
         expect(messages[0]?.tag).toBe("vex-message-summary");
         expect(messages[0]?.title).toBe("New Message");
         expect(messages[0]).not.toHaveProperty("body");
@@ -531,6 +533,48 @@ describe("Spire notify fanout", () => {
             title: "New Message",
             transmissionID: "00000000-0000-0000-0000-000000000006",
         });
+    });
+
+    it("requests the default sound for iOS visible Expo pushes only", async () => {
+        const iosSubscription: NotificationSubscription = {
+            ...subscription,
+            platform: "ios",
+            subscriptionID: "sub-ios",
+        };
+        const fetchMock = vi.fn().mockResolvedValueOnce({
+            json: () =>
+                Promise.resolve({
+                    data: [{ id: "receipt-a", status: "ok" }],
+                }),
+            ok: true,
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { db } = createSpireHarness([], [iosSubscription]);
+        const service = new NotificationService(db, [], () => {});
+
+        await service["notifyPush"]({
+            deviceID: iosSubscription.deviceID,
+            event: "mail",
+            transmissionID: "00000000-0000-0000-0000-000000000016",
+            userID: iosSubscription.userID,
+        });
+
+        const init = fetchMock.mock.calls[0]?.[1] as
+            | undefined
+            | { body?: unknown };
+        const messages = JSON.parse(String(init?.body)) as Array<{
+            channelId?: string;
+            priority?: string;
+            sound?: string;
+            tag?: string;
+            title?: string;
+        }>;
+        expect(messages[0]?.sound).toBe("default");
+        expect(messages[0]).not.toHaveProperty("channelId");
+        expect(messages[0]).not.toHaveProperty("priority");
+        expect(messages[0]).not.toHaveProperty("tag");
+        expect(messages[0]?.title).toBe("New Message");
     });
 
     it("awaits ticket error cleanup so rejection stays on notifyPush", async () => {

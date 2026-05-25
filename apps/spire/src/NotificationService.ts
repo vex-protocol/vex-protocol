@@ -474,13 +474,12 @@ function expoMessageForSubscription(
                 : undefined,
         data,
         priority: subscription.platform === "android" ? "high" : undefined,
-        // Do not set `sound: "default"` here. Current mobile native
-        // notification modules can treat it as a custom sound resource named
-        // "default" instead of the platform default, which causes warnings when
-        // no such bundled resource exists.
         title,
         to: subscription.token,
     };
+    if (subscription.platform === "ios") {
+        message["sound"] = "default";
+    }
     if (body) {
         message["body"] = body;
     }
