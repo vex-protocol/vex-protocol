@@ -171,7 +171,7 @@ describe("Database", () => {
 
     describe("recoverDevice", () => {
         it("creates a new device and revokes all previous devices for the user", async () => {
-            expect.assertions(8);
+            expect.assertions(9);
 
             const provider = new Database(options);
             await new Promise<void>((resolve, reject) => {
@@ -181,6 +181,7 @@ describe("Database", () => {
                             const oldA = await provider.createDevice(
                                 userID,
                                 devicePayload("old-a", "a".repeat(64)),
+                                { approvedByPasskeyID: "old-passkey" },
                             );
                             const oldB = await provider.createDevice(
                                 userID,
@@ -247,6 +248,12 @@ describe("Database", () => {
                                     },
                                 ),
                             ).toEqual([]);
+                            expect(
+                                await provider.isDevicePasskeyApproved(
+                                    userID,
+                                    oldA.deviceID,
+                                ),
+                            ).toBe(false);
                             await provider.close();
                             resolve();
                         } catch (e: unknown) {

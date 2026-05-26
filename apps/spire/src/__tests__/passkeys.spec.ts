@@ -42,6 +42,17 @@ const samplePasskey = {
     transports: ["usb", "nfc"],
 };
 
+const sampleDevicePayload = {
+    deviceName: "iPhone",
+    preKey: "30c2d0294c1cfdbb73c6b3bbe6010088c2dba8384b04ff2e2b92172431d66b5e",
+    preKeyIndex: 1,
+    preKeySignature:
+        "dd0665079426c3efcf4dce9b1487e4aca132f8147581b3294c3f23ddd2b4ba8240a10082bd06805d7eb320d91af971da3306e11b60073ccc3d829710f5036004000030c2d0294c1cfdbb73c6b3bbe6010088c2dba8384b04ff2e2b92172431d66b5e",
+    signed: "00",
+    signKey: "a".repeat(64),
+    username: "alice",
+};
+
 async function withDb<T>(fn: (db: Database) => Promise<T>): Promise<T> {
     const provider = new Database(options);
     return new Promise<T>((resolve, reject) => {
@@ -233,6 +244,68 @@ describe("Database passkeys", () => {
                         "mismatch",
                     ),
                 ).resolves.toBeNull();
+            });
+        });
+
+        it("allows device-key auth for devices provisioned under passkey approval", async () => {
+            expect.assertions(3);
+            await withDb(async (db) => {
+                const created = await db.createPasskey(
+                    userID,
+                    samplePasskey.name,
+                    samplePasskey.credentialID,
+                    samplePasskey.publicKeyHex,
+                    samplePasskey.algorithm,
+                    samplePasskey.transports,
+                );
+                const device = await db.createDevice(
+                    userID,
+                    sampleDevicePayload,
+                    { approvedByPasskeyID: created.passkeyID },
+                );
+
+                await expect(
+                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
+                ).resolves.toBe("Passkey verification required.");
+                await expect(
+                    db.isDevicePasskeyApproved(userID, device.deviceID),
+                ).resolves.toBe(true);
+                await expect(
+                    passkeySecondFactorError(
+                        db,
+                        userID,
+                        undefined,
+                        "mismatch",
+                        { trustedDeviceID: device.deviceID },
+                    ),
+                ).resolves.toBeNull();
+            });
+        });
+
+        it("clears passkey approval trust when a device is deleted", async () => {
+            expect.assertions(2);
+            await withDb(async (db) => {
+                const created = await db.createPasskey(
+                    userID,
+                    samplePasskey.name,
+                    samplePasskey.credentialID,
+                    samplePasskey.publicKeyHex,
+                    samplePasskey.algorithm,
+                    samplePasskey.transports,
+                );
+                const device = await db.createDevice(
+                    userID,
+                    sampleDevicePayload,
+                    { approvedByPasskeyID: created.passkeyID },
+                );
+
+                await expect(
+                    db.isDevicePasskeyApproved(userID, device.deviceID),
+                ).resolves.toBe(true);
+                await db.deleteDevice(device.deviceID);
+                await expect(
+                    db.isDevicePasskeyApproved(userID, device.deviceID),
+                ).resolves.toBe(false);
             });
         });
     });
