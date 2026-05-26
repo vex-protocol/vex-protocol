@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 7.0.1
+
+### Patch Changes
+
+- [#198](https://github.com/vex-protocol/vex-protocol/pull/198) [`fd536d4`](https://github.com/vex-protocol/vex-protocol/commit/fd536d4829e69fc2147947fc4bc82b3754abae0a) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
 ## 7.0.0
 
 ### Major Changes
