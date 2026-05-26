@@ -19,6 +19,7 @@ import { z } from "zod/v4";
 import { msgpack } from "../utils/msgpack.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
+import { passkeySecondFactorError } from "./passkeySecondFactor.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 
 import { protect } from "./index.ts";
@@ -127,6 +128,7 @@ export function createPendingDeviceEnrollmentRequest(
  * approving device's signature before invoking this helper.
  */
 export async function recoverDeviceEnrollmentRequest(args: {
+    approvedByPasskeyID?: string;
     db: Database;
     notify: (
         userID: string,
@@ -165,6 +167,9 @@ export async function recoverDeviceEnrollmentRequest(args: {
         const { device, revokedDeviceIDs } = await args.db.recoverDevice(
             args.userID,
             pending.devicePayload,
+            args.approvedByPasskeyID
+                ? { approvedByPasskeyID: args.approvedByPasskeyID }
+                : undefined,
         );
         pending.status = "approved";
         pending.approvedDeviceID = device.deviceID;
@@ -710,6 +715,17 @@ export const getUserRouter = (
                 return;
             }
 
+            const passkeyError = await passkeySecondFactorError(
+                db,
+                userID,
+                req.passkey?.passkeyID,
+                "Passkey verification does not match this account.",
+            );
+            if (passkeyError) {
+                res.status(403).send({ error: passkeyError });
+                return;
+            }
+
             const opened = await spireXSignOpenAsync(
                 XUtils.decodeHex(parsedApprove.data.signed),
                 XUtils.decodeHex(approverDevice.signKey),
@@ -732,6 +748,12 @@ export const getUserRouter = (
                 const device = await db.createDevice(
                     userID,
                     pending.devicePayload,
+                    req.passkey
+                        ? {
+                              approvedByDeviceID: approverDevice.deviceID,
+                              approvedByPasskeyID: req.passkey.passkeyID,
+                          }
+                        : undefined,
                 );
                 pending.status = "approved";
                 pending.approvedDeviceID = device.deviceID;

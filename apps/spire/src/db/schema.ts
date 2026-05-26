@@ -18,6 +18,16 @@ export interface ChannelsTable {
 
 export type ChannelUpdate = Updateable<ChannelsTable>;
 
+export type DevicePasskeyApprovalRow = Selectable<DevicePasskeyApprovalsTable>;
+
+export interface DevicePasskeyApprovalsTable {
+    approvedAt: string;
+    approvedByDeviceID: null | string;
+    approvedByPasskeyID: string;
+    deviceID: string;
+    userID: string;
+}
+
 export type DeviceRow = Selectable<DevicesTable>;
 
 export interface DevicesTable {
@@ -85,6 +95,7 @@ export type MailUpdate = Updateable<MailTable>;
 export type NewChannel = Insertable<ChannelsTable>;
 
 export type NewDevice = Insertable<DevicesTable>;
+export type NewDevicePasskeyApproval = Insertable<DevicePasskeyApprovalsTable>;
 export type NewEmoji = Insertable<EmojisTable>;
 export type NewFile = Insertable<FilesTable>;
 
@@ -167,6 +178,7 @@ export interface PreKeysTable {
 export type PreKeyUpdate = Updateable<PreKeysTable>;
 export interface ServerDatabase {
     channels: ChannelsTable;
+    device_passkey_approvals: DevicePasskeyApprovalsTable;
     devices: DevicesTable;
     emojis: EmojisTable;
     files: FilesTable;
