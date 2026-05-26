@@ -152,6 +152,11 @@ export interface SaveNotificationSubscriptionInput {
     userID: string;
 }
 
+interface DevicePasskeyApprovalInput {
+    approvedByDeviceID?: null | string;
+    approvedByPasskeyID: string;
+}
+
 export class Database extends EventEmitter {
     private static readonly EMOJI_LIST_CACHE_TTL_MS = 10_000;
 
@@ -226,17 +231,17 @@ export class Database extends EventEmitter {
     public async createDevice(
         owner: string,
         payload: DevicePayload,
+        passkeyApproval?: DevicePasskeyApprovalInput,
     ): Promise<Device> {
+        const now = new Date().toISOString();
         const device = {
             deleted: 0,
             deviceID: crypto.randomUUID(),
-            lastLogin: new Date().toISOString(),
+            lastLogin: now,
             name: payload.deviceName,
             owner,
             signKey: payload.signKey,
         };
-
-        await this.db.insertInto("devices").values(device).execute();
 
         const medPreKeys = {
             deviceID: device.deviceID,
@@ -247,7 +252,34 @@ export class Database extends EventEmitter {
             userID: owner,
         };
 
-        await this.db.insertInto("preKeys").values(medPreKeys).execute();
+        await this.db.transaction().execute(async (trx) => {
+            await trx.insertInto("devices").values(device).execute();
+            await trx.insertInto("preKeys").values(medPreKeys).execute();
+            if (passkeyApproval) {
+                await trx
+                    .insertInto("device_passkey_approvals")
+                    .values({
+                        approvedAt: now,
+                        approvedByDeviceID:
+                            passkeyApproval.approvedByDeviceID ?? null,
+                        approvedByPasskeyID:
+                            passkeyApproval.approvedByPasskeyID,
+                        deviceID: device.deviceID,
+                        userID: owner,
+                    })
+                    .onConflict((oc) =>
+                        oc.column("deviceID").doUpdateSet({
+                            approvedAt: now,
+                            approvedByDeviceID:
+                                passkeyApproval.approvedByDeviceID ?? null,
+                            approvedByPasskeyID:
+                                passkeyApproval.approvedByPasskeyID,
+                            userID: owner,
+                        }),
+                    )
+                    .execute();
+            }
+        });
 
         return toDevice(device);
     }
@@ -443,6 +475,11 @@ export class Database extends EventEmitter {
 
         await this.db
             .deleteFrom("notification_subscriptions")
+            .where("deviceID", "=", deviceID)
+            .execute();
+
+        await this.db
+            .deleteFrom("device_passkey_approvals")
             .where("deviceID", "=", deviceID)
             .execute();
 
@@ -697,6 +734,20 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    public async isDevicePasskeyApproved(
+        userID: string,
+        deviceID: string,
+    ): Promise<boolean> {
+        const row = await this.db
+            .selectFrom("device_passkey_approvals")
+            .select("deviceID")
+            .where("userID", "=", userID)
+            .where("deviceID", "=", deviceID)
+            .limit(1)
+            .executeTakeFirst();
+        return row !== undefined;
+    }
+
     public async isHealthy(): Promise<boolean> {
         try {
             await sql`select 1 as ok`.execute(this.db);
@@ -755,11 +806,13 @@ export class Database extends EventEmitter {
     public async recoverDevice(
         owner: string,
         payload: DevicePayload,
+        passkeyApproval?: DevicePasskeyApprovalInput,
     ): Promise<{ device: Device; revokedDeviceIDs: string[] }> {
+        const now = new Date().toISOString();
         const device = {
             deleted: 0,
             deviceID: crypto.randomUUID(),
-            lastLogin: new Date().toISOString(),
+            lastLogin: now,
             name: payload.deviceName,
             owner,
             signKey: payload.signKey,
@@ -784,6 +837,30 @@ export class Database extends EventEmitter {
 
             await trx.insertInto("devices").values(device).execute();
             await trx.insertInto("preKeys").values(medPreKeys).execute();
+            if (passkeyApproval) {
+                await trx
+                    .insertInto("device_passkey_approvals")
+                    .values({
+                        approvedAt: now,
+                        approvedByDeviceID:
+                            passkeyApproval.approvedByDeviceID ?? null,
+                        approvedByPasskeyID:
+                            passkeyApproval.approvedByPasskeyID,
+                        deviceID: device.deviceID,
+                        userID: owner,
+                    })
+                    .onConflict((oc) =>
+                        oc.column("deviceID").doUpdateSet({
+                            approvedAt: now,
+                            approvedByDeviceID:
+                                passkeyApproval.approvedByDeviceID ?? null,
+                            approvedByPasskeyID:
+                                passkeyApproval.approvedByPasskeyID,
+                            userID: owner,
+                        }),
+                    )
+                    .execute();
+            }
 
             if (revokedDeviceIDs.length > 0) {
                 await trx
@@ -796,6 +873,10 @@ export class Database extends EventEmitter {
                     .execute();
                 await trx
                     .deleteFrom("notification_subscriptions")
+                    .where("deviceID", "in", revokedDeviceIDs)
+                    .execute();
+                await trx
+                    .deleteFrom("device_passkey_approvals")
                     .where("deviceID", "in", revokedDeviceIDs)
                     .execute();
                 await trx

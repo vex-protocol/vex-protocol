@@ -422,7 +422,12 @@ export interface Devices {
         challenge: string;
         requestID: string;
     }) => Promise<void>;
-    /** Approves a pending device registration request as the current device. */
+    /**
+     * Approves a pending device registration request as the current device.
+     * Servers with required passkeys expect the current bearer token to be a
+     * fresh passkey session while the current device token identifies the
+     * approving device.
+     */
     approveRequest: (requestID: string) => Promise<Device>;
     /** Deletes one of the account's devices (except the currently active one). */
     delete: (deviceID: string) => Promise<void>;
