@@ -247,7 +247,7 @@ describe("Database passkeys", () => {
             });
         });
 
-        it("allows device-key auth for devices provisioned under passkey approval", async () => {
+        it("does not treat device approval as future passkey verification", async () => {
             expect.assertions(3);
             await withDb(async (db) => {
                 const created = await db.createPasskey(
@@ -271,14 +271,8 @@ describe("Database passkeys", () => {
                     db.isDevicePasskeyApproved(userID, device.deviceID),
                 ).resolves.toBe(true);
                 await expect(
-                    passkeySecondFactorError(
-                        db,
-                        userID,
-                        undefined,
-                        "mismatch",
-                        { trustedDeviceID: device.deviceID },
-                    ),
-                ).resolves.toBeNull();
+                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
+                ).resolves.toBe("Passkey verification required.");
             });
         });
 
