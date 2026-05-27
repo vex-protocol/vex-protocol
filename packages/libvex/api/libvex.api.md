@@ -173,7 +173,21 @@ export interface Devices {
         requestID: string;
     }) => Promise<void>;
     approveRequest: (requestID: string) => Promise<Device>;
+    beginPendingPasskeyRegistration: (args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+    }) => Promise<{
+        options: any;
+        requestID: string;
+    }>;
     delete: (deviceID: string) => Promise<void>;
+    finishPendingPasskeyRegistration: (args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<Passkey>;
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
     list: () => Promise<Device[]>;
     listRequests: () => Promise<PendingDeviceRequest[]>;
