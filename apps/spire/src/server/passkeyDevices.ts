@@ -106,12 +106,18 @@ export const getPasskeyDeviceRouter = (
                 res.sendStatus(401);
                 return;
             }
+            const passkeyID = req.passkey?.passkeyID;
+            if (!passkeyID) {
+                res.sendStatus(401);
+                return;
+            }
             // Recovery is intentionally the only passkey-backed
             // provisioning path: it provisions the pending device and
             // revokes every previously-active device for the account in
             // one server-side operation. Clients cannot accidentally
             // restore an account while leaving lost devices trusted.
             const result = await recoverDeviceEnrollmentRequest({
+                approvedByPasskeyID: passkeyID,
                 db,
                 notify,
                 requestID,

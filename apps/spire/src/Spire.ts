@@ -51,6 +51,7 @@ import {
     MailIngressValidationError,
     validateMailIngress,
 } from "./server/mailIngress.ts";
+import { passkeySecondFactorError } from "./server/passkeySecondFactor.ts";
 import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
 import { createPendingDeviceEnrollmentRequest } from "./server/user.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
@@ -58,6 +59,8 @@ import { resolveSpireListenPort } from "./spireListenPort.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
 import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
+
+export { passkeySecondFactorError } from "./server/passkeySecondFactor.ts";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
@@ -125,26 +128,6 @@ interface ValidatedMailBatchEntry {
     index: number;
     mail: MailWS;
     recipientDevice: Device;
-}
-
-export async function passkeySecondFactorError(
-    db: Database,
-    userID: string,
-    passkeyID: string | undefined,
-    mismatchError: string,
-): Promise<null | string> {
-    const passkeys = await db.retrievePasskeysByUser(userID);
-    if (passkeys.length === 0) {
-        return null;
-    }
-    if (!passkeyID) {
-        return "Passkey verification required.";
-    }
-    const passkey = await db.retrievePasskeyInternal(passkeyID);
-    if (!passkey || passkey.userID !== userID) {
-        return mismatchError;
-    }
-    return null;
 }
 
 const notificationSubscribePayload = z.object({
@@ -813,6 +796,7 @@ export class Spire extends EventEmitter {
                     user.userID,
                     req.passkey?.passkeyID,
                     "Passkey verification does not match this device.",
+                    { trustedDeviceID: device.deviceID },
                 );
                 if (passkeyError) {
                     const body: { error: string; username?: string } = {
