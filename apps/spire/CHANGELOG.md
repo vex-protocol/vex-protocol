@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.2.0
+
+### Minor Changes
+
+- [#201](https://github.com/vex-protocol/vex-protocol/pull/201) [`73250db`](https://github.com/vex-protocol/vex-protocol/commit/73250db0f2b8bf6fdb178d1d70d471ec756d39a6) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
 ## 2.1.0
 
 ### Minor Changes
