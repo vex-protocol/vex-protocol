@@ -429,8 +429,32 @@ export interface Devices {
      * approving device.
      */
     approveRequest: (requestID: string) => Promise<Device>;
+    /**
+     * Begin creating a passkey from a newly approved, still pending device
+     * enrollment. Proves possession of the requesting device key by signing
+     * the original pending-registration challenge.
+     */
+    beginPendingPasskeyRegistration: (args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+    }) => Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }>;
     /** Deletes one of the account's devices (except the currently active one). */
     delete: (deviceID: string) => Promise<void>;
+    /**
+     * Finish creating a passkey for a newly approved pending device
+     * enrollment.
+     */
+    finishPendingPasskeyRegistration: (args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }) => Promise<Passkey>;
     /** Fetches one pending registration request by ID for the current user. */
     getRequest: (requestID: string) => Promise<null | PendingDeviceRequest>;
     /** Lists every device belonging to the current account. */
@@ -1303,7 +1327,11 @@ export class Client {
         abortPendingRegistration:
             this.abortPendingDeviceRegistration.bind(this),
         approveRequest: this.approveDeviceRequest.bind(this),
+        beginPendingPasskeyRegistration:
+            this.beginPendingDevicePasskeyRegistration.bind(this),
         delete: this.deleteDevice.bind(this),
+        finishPendingPasskeyRegistration:
+            this.finishPendingDevicePasskeyRegistration.bind(this),
         getRequest: this.getDeviceRegistrationRequest.bind(this),
         list: this.listDevices.bind(this),
         listRequests: this.listDeviceRegistrationRequests.bind(this),
@@ -2529,6 +2557,29 @@ export class Client {
         return decodeHttpResponse(PasskeyOptionsCodec, response.data);
     }
 
+    private async beginPendingDevicePasskeyRegistration(args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+    }): Promise<{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebAuthn options shape varies per simplewebauthn version
+        options: any;
+        requestID: string;
+    }> {
+        const signed = await this.signPendingRegistrationChallenge(
+            args.challenge,
+        );
+        const response = await this.http.post(
+            this.getHost() +
+                "/user/devices/requests/" +
+                args.requestID +
+                "/passkeys/register/begin",
+            msgpack.encode({ name: args.name, signed }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(PasskeyOptionsCodec, response.data);
+    }
+
     private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
         if (!preKey.index) {
             throw new Error("Key index is required.");
@@ -3114,6 +3165,31 @@ export class Client {
         const response = await this.http.post(
             this.getHost() + "/user/" + userID + "/passkeys/register/finish",
             msgpack.encode(args),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(PasskeyCodec, response.data);
+    }
+
+    private async finishPendingDevicePasskeyRegistration(args: {
+        challenge: string;
+        name: string;
+        requestID: string;
+        response: Record<string, unknown>;
+    }): Promise<Passkey> {
+        const signed = await this.signPendingRegistrationChallenge(
+            args.challenge,
+        );
+        const response = await this.http.post(
+            this.getHost() +
+                "/user/devices/requests/" +
+                args.requestID +
+                "/passkeys/register/finish",
+            msgpack.encode({
+                name: args.name,
+                requestID: args.requestID,
+                response: args.response,
+                signed,
+            }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
         return decodeHttpResponse(PasskeyCodec, response.data);

@@ -5,6 +5,10 @@
  */
 
 import type { Database } from "../Database.ts";
+import type {
+    AuthenticatorTransportFuture,
+    RegistrationResponseJSON,
+} from "@simplewebauthn/server";
 import type { Device, DevicePayload } from "@vex-chat/types";
 
 import express from "express";
@@ -13,19 +17,27 @@ import { xRandomBytes } from "@vex-chat/crypto";
 import { XUtils } from "@vex-chat/crypto";
 import { DevicePayloadSchema, TokenScopes } from "@vex-chat/types";
 
+import {
+    generateRegistrationOptions,
+    verifyRegistrationResponse,
+} from "@simplewebauthn/server";
 import { stringify } from "uuid";
 import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
+import { AppError } from "./errors.ts";
 import { passkeySecondFactorError } from "./passkeySecondFactor.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
+import { buildAndroidApkKeyHashOrigins } from "./wellKnown.ts";
 
 import { protect } from "./index.ts";
 
 const DEVICE_REQUEST_TTL_MS = 10 * 60 * 1000;
+const PASSKEY_REGISTRATION_TTL_MS = 5 * 60 * 1000;
 const RESOLVED_REQUEST_TTL_MS = 30 * 60 * 1000;
+const MAX_PASSKEYS_PER_USER = 10;
 
 interface DeviceEnrollmentRequest {
     approvedDeviceID?: string;
@@ -38,6 +50,7 @@ interface DeviceEnrollmentRequest {
      * screen — we must not call `notify` until `POST .../publish`.
      */
     ownerNotified?: boolean;
+    passkeyRegistration?: PendingDevicePasskeyRegistration;
     requestID: string;
     resolvedAt?: number;
     status: DeviceEnrollmentStatus;
@@ -45,6 +58,12 @@ interface DeviceEnrollmentRequest {
 }
 
 type DeviceEnrollmentStatus = "approved" | "expired" | "pending" | "rejected";
+
+interface PendingDevicePasskeyRegistration {
+    challenge: string;
+    createdAt: number;
+    name: string;
+}
 
 const approvePayloadSchema = z.object({
     signed: z.string().min(1),
@@ -54,7 +73,29 @@ const pollPendingApprovalSchema = z.object({
     signed: z.string().min(1),
 });
 
+const pendingPasskeyRegistrationStartSchema = z.object({
+    name: z.string().min(1).max(255),
+    signed: z.string().min(1),
+});
+
+const pendingPasskeyRegistrationFinishSchema = z.object({
+    name: z.string().min(1).max(255),
+    requestID: z.string().min(1),
+    response: z.record(z.string(), z.unknown()),
+    signed: z.string().min(1),
+});
+
 const deviceEnrollments = new Map<string, DeviceEnrollmentRequest>();
+
+const KNOWN_TRANSPORTS = [
+    "ble",
+    "cable",
+    "hybrid",
+    "internal",
+    "nfc",
+    "smart-card",
+    "usb",
+] as const satisfies readonly AuthenticatorTransportFuture[];
 
 type VerifiedPendingResult =
     | { error: string; issues?: z.core.$ZodIssue[]; ok: false; status: number }
@@ -297,6 +338,46 @@ function buildApprovalChallenge(
     return XUtils.decodeUTF8(`${requestID}:${signKey.toLowerCase()}`);
 }
 
+function getRpConfig(): {
+    expectedOrigin: string[];
+    rpID: string;
+    rpName: string;
+} {
+    const rpID = process.env["SPIRE_PASSKEY_RP_ID"]?.trim();
+    const originsRaw = process.env["SPIRE_PASSKEY_ORIGINS"]?.trim();
+    if (!rpID) {
+        throw new AppError(
+            500,
+            "Passkeys are not configured on this server (SPIRE_PASSKEY_RP_ID is unset).",
+        );
+    }
+    if (!originsRaw) {
+        throw new AppError(
+            500,
+            "Passkeys are not configured on this server (SPIRE_PASSKEY_ORIGINS is unset).",
+        );
+    }
+    const explicitOrigins = originsRaw
+        .split(",")
+        .map((o) => o.trim())
+        .filter((o) => o.length > 0);
+    if (explicitOrigins.length === 0) {
+        throw new AppError(500, "SPIRE_PASSKEY_ORIGINS is empty.");
+    }
+    const expectedOrigin = Array.from(
+        new Set([...explicitOrigins, ...buildAndroidApkKeyHashOrigins()]),
+    );
+    return {
+        expectedOrigin,
+        rpID,
+        rpName: process.env["SPIRE_PASSKEY_RP_NAME"]?.trim() || "Vex",
+    };
+}
+
+function isKnownTransport(s: string): s is AuthenticatorTransportFuture {
+    return (KNOWN_TRANSPORTS as readonly string[]).includes(s);
+}
+
 function pruneDeviceEnrollmentRequests(nowMs = Date.now()): void {
     for (const [requestID, req] of deviceEnrollments.entries()) {
         if (
@@ -348,6 +429,10 @@ function requestSummary(req: DeviceEnrollmentRequest): {
     };
 }
 
+function sanitizeTransports(input: string[]): AuthenticatorTransportFuture[] {
+    return input.filter(isKnownTransport);
+}
+
 async function tryGetVerifiedPendingEnrollment(
     req: express.Request,
 ): Promise<VerifiedPendingResult> {
@@ -360,13 +445,20 @@ async function tryGetVerifiedPendingEnrollment(
             status: 400,
         };
     }
+    return tryGetVerifiedPendingEnrollmentForSigned(req, parsed.data.signed);
+}
+
+async function tryGetVerifiedPendingEnrollmentForSigned(
+    req: express.Request,
+    signed: string,
+): Promise<VerifiedPendingResult> {
     const requestID = getParam(req, "requestID");
     const pending = deviceEnrollments.get(requestID);
     if (!pending) {
         return { error: "Not found.", ok: false, status: 404 };
     }
     const opened = await spireXSignOpenAsync(
-        XUtils.decodeHex(parsed.data.signed),
+        XUtils.decodeHex(signed),
         XUtils.decodeHex(pending.devicePayload.signKey),
     );
     if (!opened) {
@@ -423,6 +515,200 @@ export const getUserRouter = (
         }
         res.send(msgpack.encode(requestSummary(v.pending)));
     });
+
+    router.post(
+        "/devices/requests/:requestID/passkeys/register/begin",
+        async (req, res) => {
+            pruneDeviceEnrollmentRequests();
+            const parsed = pendingPasskeyRegistrationStartSchema.safeParse(
+                req.body,
+            );
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid registration payload",
+                    issues: parsed.error.issues,
+                });
+                return;
+            }
+            const v = await tryGetVerifiedPendingEnrollmentForSigned(
+                req,
+                parsed.data.signed,
+            );
+            if (!v.ok) {
+                if (v.status === 404) {
+                    res.sendStatus(404);
+                    return;
+                }
+                res.status(v.status).send({ error: v.error });
+                return;
+            }
+            const { pending } = v;
+            if (
+                pending.status !== "approved" ||
+                pending.approvedDeviceID === undefined
+            ) {
+                res.status(409).send({
+                    error: "Device approval must complete before passkey setup.",
+                });
+                return;
+            }
+            const user = await db.retrieveUser(pending.userID);
+            if (!user) {
+                res.sendStatus(404);
+                return;
+            }
+            const existing = await db.retrievePasskeysByUser(pending.userID);
+            if (existing.length >= MAX_PASSKEYS_PER_USER) {
+                res.status(409).send({
+                    error: `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
+                });
+                return;
+            }
+
+            const { rpID, rpName } = getRpConfig();
+            const options = await generateRegistrationOptions({
+                attestationType: "none",
+                authenticatorSelection: {
+                    requireResidentKey: false,
+                    residentKey: "preferred",
+                    userVerification: "preferred",
+                },
+                excludeCredentials: [],
+                rpID,
+                rpName,
+                userDisplayName: user.username,
+                userID: new TextEncoder().encode(pending.userID),
+                userName: user.username,
+            });
+
+            pending.passkeyRegistration = {
+                challenge: options.challenge,
+                createdAt: Date.now(),
+                name: parsed.data.name,
+            };
+            deviceEnrollments.set(pending.requestID, pending);
+            res.send(
+                msgpack.encode({
+                    options,
+                    requestID: pending.requestID,
+                }),
+            );
+        },
+    );
+
+    router.post(
+        "/devices/requests/:requestID/passkeys/register/finish",
+        async (req, res) => {
+            pruneDeviceEnrollmentRequests();
+            const parsed = pendingPasskeyRegistrationFinishSchema.safeParse(
+                req.body,
+            );
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid finish payload",
+                    issues: parsed.error.issues,
+                });
+                return;
+            }
+            const requestID = getParam(req, "requestID");
+            if (parsed.data.requestID !== requestID) {
+                res.status(400).send({ error: "Request ID mismatch." });
+                return;
+            }
+            const v = await tryGetVerifiedPendingEnrollmentForSigned(
+                req,
+                parsed.data.signed,
+            );
+            if (!v.ok) {
+                if (v.status === 404) {
+                    res.sendStatus(404);
+                    return;
+                }
+                res.status(v.status).send({ error: v.error });
+                return;
+            }
+            const { pending } = v;
+            if (
+                pending.status !== "approved" ||
+                pending.approvedDeviceID === undefined
+            ) {
+                res.status(409).send({
+                    error: "Device approval must complete before passkey setup.",
+                });
+                return;
+            }
+            const passkeyRegistration = pending.passkeyRegistration;
+            if (!passkeyRegistration) {
+                res.status(404).send({
+                    error: "Passkey registration request not found or expired.",
+                });
+                return;
+            }
+            if (
+                Date.now() - passkeyRegistration.createdAt >
+                PASSKEY_REGISTRATION_TTL_MS
+            ) {
+                delete pending.passkeyRegistration;
+                deviceEnrollments.set(pending.requestID, pending);
+                res.status(410).send({
+                    error: "Passkey registration request expired.",
+                });
+                return;
+            }
+            delete pending.passkeyRegistration;
+            deviceEnrollments.set(pending.requestID, pending);
+
+            const { expectedOrigin, rpID } = getRpConfig();
+            let verification;
+            try {
+                verification = await verifyRegistrationResponse({
+                    expectedChallenge: passkeyRegistration.challenge,
+                    expectedOrigin,
+                    expectedRPID: rpID,
+                    requireUserVerification: false,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- structurally validated by simplewebauthn below
+                    response: parsed.data
+                        .response as unknown as RegistrationResponseJSON,
+                });
+            } catch (err: unknown) {
+                const message =
+                    err instanceof Error ? err.message : String(err);
+                res.status(400).send({
+                    error: "Passkey attestation invalid: " + message,
+                });
+                return;
+            }
+            if (!verification.verified) {
+                res.status(400).send({ error: "Passkey attestation failed." });
+                return;
+            }
+
+            const credential = verification.registrationInfo.credential;
+            const dupe = await db.retrievePasskeyByCredentialID(credential.id);
+            if (dupe) {
+                res.status(409).send({
+                    error: "This authenticator is already registered.",
+                });
+                return;
+            }
+            const existing = await db.retrievePasskeysByUser(pending.userID);
+            if (existing.length >= MAX_PASSKEYS_PER_USER) {
+                res.status(409).send({
+                    error: `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
+                });
+                return;
+            }
+            const created = await db.createPasskey(
+                pending.userID,
+                passkeyRegistration.name,
+                credential.id,
+                XUtils.encodeHex(credential.publicKey),
+                0,
+                sanitizeTransports(credential.transports ?? []),
+            );
+            res.send(msgpack.encode(created));
+        },
+    );
 
     /**
      * After the new device confirms "this account is mine" locally, call
