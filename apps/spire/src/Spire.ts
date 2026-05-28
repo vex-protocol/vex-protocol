@@ -796,7 +796,6 @@ export class Spire extends EventEmitter {
                     user.userID,
                     req.passkey?.passkeyID,
                     "Passkey verification does not match this device.",
-                    { trustedDeviceID: device.deviceID },
                 );
                 if (passkeyError) {
                     const body: { error: string; username?: string } = {

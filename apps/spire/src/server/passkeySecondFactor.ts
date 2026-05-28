@@ -11,15 +11,7 @@ export async function passkeySecondFactorError(
     userID: string,
     passkeyID: string | undefined,
     mismatchError: string,
-    options?: { trustedDeviceID?: string },
 ): Promise<null | string> {
-    if (
-        options?.trustedDeviceID &&
-        (await db.isDevicePasskeyApproved(userID, options.trustedDeviceID))
-    ) {
-        return null;
-    }
-
     const passkeys = await db.retrievePasskeysByUser(userID);
     if (passkeys.length === 0) {
         return null;
