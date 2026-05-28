@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.3.0
+
+### Minor Changes
+
+- [#204](https://github.com/vex-protocol/vex-protocol/pull/204) [`62108c9`](https://github.com/vex-protocol/vex-protocol/commit/62108c92709cc9d519a6018365e7325d20b25e0b) Thanks [@yuki111888](https://github.com/yuki111888)! - Require newly approved devices to complete passkey setup or authentication instead of treating approval as permanent passkey verification.
+
 ## 2.2.0
 
 ### Minor Changes
