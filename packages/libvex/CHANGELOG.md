@@ -1,5 +1,65 @@
 # @vex-chat/libvex
 
+## 7.1.1
+
+### Patch Changes
+
+- [#209](https://github.com/vex-protocol/vex-protocol/pull/209) [`c6bf509`](https://github.com/vex-protocol/vex-protocol/commit/c6bf5093b205e106026521c2994e6694c5d32518) Thanks [@yuki111888](https://github.com/yuki111888)! - Make direct-message sync to the sender's other devices part of the send path instead of a background message-event side effect.
+
+## 7.1.0
+
+### Minor Changes
+
+- [#204](https://github.com/vex-protocol/vex-protocol/pull/204) [`62108c9`](https://github.com/vex-protocol/vex-protocol/commit/62108c92709cc9d519a6018365e7325d20b25e0b) Thanks [@yuki111888](https://github.com/yuki111888)! - Require newly approved devices to complete passkey setup or authentication instead of treating approval as permanent passkey verification.
+
+## 7.0.2
+
+### Patch Changes
+
+- [#201](https://github.com/vex-protocol/vex-protocol/pull/201) [`73250db`](https://github.com/vex-protocol/vex-protocol/commit/73250db0f2b8bf6fdb178d1d70d471ec756d39a6) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
+## 7.0.1
+
+### Patch Changes
+
+- [#198](https://github.com/vex-protocol/vex-protocol/pull/198) [`fd536d4`](https://github.com/vex-protocol/vex-protocol/commit/fd536d4829e69fc2147947fc4bc82b3754abae0a) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
+## 7.0.0
+
+### Major Changes
+
+- [#192](https://github.com/vex-protocol/vex-protocol/pull/192) [`a27c2f6`](https://github.com/vex-protocol/vex-protocol/commit/a27c2f6a62c2545475d6456dde8a9a81629d88f5) Thanks [@yuki111888](https://github.com/yuki111888)! - Passkey-authenticated device enrollment is now recovery-only. Use
+  `client.passkeys.recoverDeviceRequest(requestID)` and Spire's
+  `POST /user/:id/passkey/recover/devices/requests/:requestID` endpoint to
+  provision a new device from a passkey; the old passkey approval endpoint and
+  `client.passkeys.approveDeviceRequest()` API have been removed so recovery
+  always revokes previously trusted devices and their push subscriptions
+  server-side.
+
+### Minor Changes
+
+- [#185](https://github.com/vex-protocol/vex-protocol/pull/185) [`c5526a8`](https://github.com/vex-protocol/vex-protocol/commit/c5526a84404c1ed92f1283c9b56cf996c42e260d) Thanks [@yuki111888](https://github.com/yuki111888)! - Add batched message delete event extras for deleting multiple authored messages with one encrypted control message.
+
+- [#184](https://github.com/vex-protocol/vex-protocol/pull/184) [`2c049ff`](https://github.com/vex-protocol/vex-protocol/commit/2c049ff31bf36102953db26a9c7e39a6da2681e8) Thanks [@yuki111888](https://github.com/yuki111888)! - `MessageEmbed` gains an optional `iconAttachment` field (`EncryptedFileAttachmentReference`) so clients can attach an encrypted file as the embed icon instead of a plain icon URL string.
+
+- [#183](https://github.com/vex-protocol/vex-protocol/pull/183) [`69d369a`](https://github.com/vex-protocol/vex-protocol/commit/69d369aeb0f12855559d30788c77deae325dbf5c) Thanks [@yuki111888](https://github.com/yuki111888)! - Add `MessageDeleteEvent` and `MessageUpdateEvent` types, `MessageUpdatePatch` type, and `createMessageDeleteEventExtra` / `createMessageUpdateEventExtra` helpers so clients can signal message edits and deletions via the encrypted extra metadata field.
+
+### Patch Changes
+
+- [#187](https://github.com/vex-protocol/vex-protocol/pull/187) [`bdb4e87`](https://github.com/vex-protocol/vex-protocol/commit/bdb4e87e819a3c2310c056b77abfd66800ba2758) Thanks [@yuki111888](https://github.com/yuki111888)! - Add a batched mail delivery endpoint and have libvex coalesce concurrent mail sends through it, falling back to the existing WebSocket send path when batching is unavailable.
+
+- [#186](https://github.com/vex-protocol/vex-protocol/pull/186) [`270a40e`](https://github.com/vex-protocol/vex-protocol/commit/270a40ed341ddc0c55c118e8d5c99fd6dfb2ca38) Thanks [@yuki111888](https://github.com/yuki111888)! - Reduce client-side send latency for large recipient fanout by sending mail to devices with bounded concurrency while preserving per-device encryption and recovery behavior.
+
+- Updated dependencies [[`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327)]:
+    - @vex-chat/types@4.0.0
+    - @vex-chat/crypto@7.0.0
+
+## 6.8.0
+
+### Minor Changes
+
+- [#179](https://github.com/vex-protocol/vex-protocol/pull/179) [`831e46c`](https://github.com/vex-protocol/vex-protocol/commit/831e46c7150753fb509a4881a6bc8623f02f2f48) Thanks [@yuki111888](https://github.com/yuki111888)! - Add exported message extra/embed types and helpers for encrypted rich message metadata.
+
 ## 6.7.0
 
 ### Minor Changes
