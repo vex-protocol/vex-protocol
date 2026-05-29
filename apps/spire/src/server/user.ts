@@ -51,6 +51,11 @@ interface DeviceEnrollmentRequest {
      */
     ownerNotified?: boolean;
     passkeyRegistration?: PendingDevicePasskeyRegistration;
+    /**
+     * Set when the requesting device proved account ownership with a passkey
+     * before asking the existing device cluster for membership approval.
+     */
+    requesterPasskeyID?: string;
     requestID: string;
     resolvedAt?: number;
     status: DeviceEnrollmentStatus;
@@ -111,7 +116,10 @@ export function createPendingDeviceEnrollmentRequest(
         data?: unknown,
         deviceID?: string,
     ) => void,
-    options?: { deferOwnerNotification?: boolean },
+    options?: {
+        deferOwnerNotification?: boolean;
+        requesterPasskeyID?: string;
+    },
 ): {
     challenge: string;
     expiresAt: string;
@@ -128,6 +136,9 @@ export function createPendingDeviceEnrollmentRequest(
         createdAt: Date.now(),
         devicePayload,
         requestID,
+        ...(options?.requesterPasskeyID
+            ? { requesterPasskeyID: options.requesterPasskeyID }
+            : {}),
         status: "pending",
         userID,
         ...(deferOwner ? { ownerNotified: false } : { ownerNotified: true }),
@@ -901,10 +912,26 @@ export const getUserRouter = (
                 }
             }
 
+            let requesterPasskeyID: string | undefined;
+            if (req.passkey?.passkeyID) {
+                const passkeyError = await passkeySecondFactorError(
+                    db,
+                    userDetails.userID,
+                    req.passkey.passkeyID,
+                    "Passkey verification does not match this account.",
+                );
+                if (passkeyError) {
+                    res.status(403).send({ error: passkeyError });
+                    return;
+                }
+                requesterPasskeyID = req.passkey.passkeyID;
+            }
+
             const pendingResponse = createPendingDeviceEnrollmentRequest(
                 userDetails.userID,
                 deviceData,
                 notify,
+                requesterPasskeyID ? { requesterPasskeyID } : undefined,
             );
             res.status(202).send(msgpack.encode(pendingResponse));
         } else {
@@ -1001,10 +1028,14 @@ export const getUserRouter = (
                 return;
             }
 
+            // New clients put the passkey proof on the requesting device.
+            // Older clients may still satisfy this with an approval-side passkey.
+            const approvedByPasskeyID =
+                pending.requesterPasskeyID ?? req.passkey?.passkeyID;
             const passkeyError = await passkeySecondFactorError(
                 db,
                 userID,
-                req.passkey?.passkeyID,
+                approvedByPasskeyID,
                 "Passkey verification does not match this account.",
             );
             if (passkeyError) {
@@ -1034,10 +1065,10 @@ export const getUserRouter = (
                 const device = await db.createDevice(
                     userID,
                     pending.devicePayload,
-                    req.passkey
+                    approvedByPasskeyID
                         ? {
                               approvedByDeviceID: approverDevice.deviceID,
-                              approvedByPasskeyID: req.passkey.passkeyID,
+                              approvedByPasskeyID,
                           }
                         : undefined,
                 );

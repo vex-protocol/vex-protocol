@@ -68,7 +68,7 @@ export const JWT_EXPIRY = "7d";
 export const DEVICE_AUTH_JWT_EXPIRY = "7d";
 /**
  * Passkey-scoped JWTs grant destructive admin powers (delete a
- * device, approve a device enrollment) without further user
+ * device, recover a device enrollment) without further user
  * verification, so they expire fast — the user re-does the
  * WebAuthn ceremony on each session.
  */
@@ -1200,12 +1200,34 @@ export class Spire extends EventEmitter {
                                 });
                                 return;
                             }
+                            let requesterPasskeyID: string | undefined;
+                            if (req.passkey?.passkeyID) {
+                                const passkeyError =
+                                    await passkeySecondFactorError(
+                                        this.db,
+                                        existingUser.userID,
+                                        req.passkey.passkeyID,
+                                        "Passkey verification does not match this account.",
+                                    );
+                                if (passkeyError) {
+                                    res.status(403).send({
+                                        error: passkeyError,
+                                    });
+                                    return;
+                                }
+                                requesterPasskeyID = req.passkey.passkeyID;
+                            }
                             const pendingResponse =
                                 createPendingDeviceEnrollmentRequest(
                                     existingUser.userID,
                                     normalizedPayload,
                                     this.notify.bind(this),
-                                    { deferOwnerNotification: true },
+                                    {
+                                        deferOwnerNotification: true,
+                                        ...(requesterPasskeyID
+                                            ? { requesterPasskeyID }
+                                            : {}),
+                                    },
                                 );
                             res.status(202).send(
                                 msgpack.encode(pendingResponse),
