@@ -15,6 +15,7 @@ import { unpack } from "msgpackr";
 const require = createRequire(import.meta.url);
 const CLI_VERSION = require("../package.json").version;
 const DEFAULT_HOST = "api.vex.wtf";
+const DEFAULT_PASSKEY_LOGIN_PATH = "/cli/passkey";
 const LOCAL_HOST = "127.0.0.1:16777";
 const COLOR = process.env.NO_COLOR === undefined;
 const ANSI = {
@@ -201,7 +202,16 @@ function parseArgs(argv) {
             continue;
         }
         const key = arg.slice(2);
-        if (["debug", "http", "help", "local", "no-home"].includes(key)) {
+        if (
+            [
+                "debug",
+                "help",
+                "http",
+                "local",
+                "no-browser",
+                "no-home",
+            ].includes(key)
+        ) {
             flags[key] = true;
             continue;
         }
@@ -293,6 +303,14 @@ async function createContext(flags) {
                 ? String(flags.username ?? flags.user).toLowerCase()
                 : undefined,
         noHome: Boolean(flags["no-home"]),
+        openBrowser:
+            !flags["no-browser"] && process.env.VEX_CHAT_NO_BROWSER !== "1",
+        passkeyLoginUrl:
+            flags["passkey-url"] || process.env.VEX_CHAT_PASSKEY_URL
+                ? String(
+                      flags["passkey-url"] ?? process.env.VEX_CHAT_PASSKEY_URL,
+                  )
+                : undefined,
         password: flags.password ? String(flags.password) : undefined,
         debug,
         debugFile,
@@ -565,6 +583,44 @@ function isRemovedStoredDeviceError(err) {
     return err?.name === "RemovedStoredDeviceError";
 }
 
+function getClientBearerToken(client) {
+    if (typeof client.token === "string" && client.token.length > 0) {
+        return client.token;
+    }
+    const authorization =
+        client.http?.defaults?.headers?.common?.Authorization ??
+        client.http?.defaults?.headers?.common?.authorization;
+    if (typeof authorization !== "string") {
+        return null;
+    }
+    const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+    return match?.[1] ?? null;
+}
+
+function errorResponseMessage(err) {
+    const data = err?.response?.data;
+    if (data && typeof data === "object" && !ArrayBuffer.isView(data)) {
+        const message = data.error ?? data.message;
+        if (typeof message === "string") return message;
+    }
+    if (typeof data === "string") {
+        try {
+            const parsed = JSON.parse(data);
+            if (typeof parsed?.error === "string") return parsed.error;
+        } catch {
+            return data;
+        }
+    }
+    return err instanceof Error ? err.message : String(err ?? "");
+}
+
+function isInitialPasskeySetupRequired(err) {
+    if (err?.response?.status !== 403) return false;
+    return /passkey must be registered|passkey setup is required/i.test(
+        errorResponseMessage(err),
+    );
+}
+
 async function removeStoredDeviceAccount(ctx, config, accountRef) {
     delete config.accounts[accountRef.key];
     if (config.lastUsername === accountRef.key) {
@@ -602,6 +658,13 @@ async function register(ctx, args) {
         try {
             const [, registerErr] = await client.register(username, password);
             if (registerErr) throw registerErr;
+            await persistNewLocalAccount(
+                ctx,
+                config,
+                username,
+                privateKey,
+                client,
+            );
             await connectAndWait(client, ctx, `register:${username}`);
         } catch (err) {
             if (!isDeviceApprovalRequired(err)) throw err;
@@ -620,7 +683,6 @@ async function register(ctx, args) {
             );
             return;
         }
-        await persistNewLocalAccount(ctx, config, username, privateKey, client);
         console.log(
             `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), username)}`,
         );
@@ -649,6 +711,156 @@ async function persistNewLocalAccount(
     config.lastUsername = accountRef.key;
     await writeConfig(ctx.configPath, config);
     return { ...config.accounts[accountRef.key], accountKey: accountRef.key };
+}
+
+function apiBaseUrl(ctx) {
+    return `${ctx.clientOptions.unsafeHttp ? "http" : "https"}://${ctx.clientOptions.host}`;
+}
+
+function defaultPasskeyLoginUrl(ctx) {
+    const host = normalizeAccountHost(ctx.clientOptions.host);
+    if (isLocalHost(host)) {
+        return `http://localhost:5173${DEFAULT_PASSKEY_LOGIN_PATH}`;
+    }
+    return `${ctx.clientOptions.unsafeHttp ? "http" : "https"}://${host}${DEFAULT_PASSKEY_LOGIN_PATH}`;
+}
+
+function buildPasskeyLoginUrl(ctx, { code, pending, username }) {
+    const url = new URL(ctx.passkeyLoginUrl ?? defaultPasskeyLoginUrl(ctx));
+    url.hash = new URLSearchParams({
+        api: apiBaseUrl(ctx),
+        code,
+        device: ctx.clientOptions.deviceName ?? "vex-chat-cli",
+        expires: pending.expiresAt ?? "",
+        request: pending.requestID,
+        username,
+    }).toString();
+    return url.toString();
+}
+
+function buildPasskeyRegistrationUrl(ctx, { token, userID, username }) {
+    const url = new URL(ctx.passkeyLoginUrl ?? defaultPasskeyLoginUrl(ctx));
+    url.hash = new URLSearchParams({
+        api: apiBaseUrl(ctx),
+        device: ctx.clientOptions.deviceName ?? "vex-chat-cli",
+        mode: "register",
+        name: ctx.clientOptions.deviceName ?? "vex-chat-cli",
+        token,
+        user: userID,
+        username,
+    }).toString();
+    return url.toString();
+}
+
+async function openExternalUrl(url) {
+    const [command, args] =
+        process.platform === "darwin"
+            ? ["open", [url]]
+            : process.platform === "win32"
+              ? ["cmd", ["/c", "start", "", url]]
+              : ["xdg-open", [url]];
+    return new Promise((resolve) => {
+        execFile(command, args, { timeout: 2_000 }, (err) => {
+            resolve(!err);
+        });
+    });
+}
+
+async function launchPasskeyLogin(ctx, username, pending, code) {
+    let url;
+    try {
+        url = buildPasskeyLoginUrl(ctx, { code, pending, username });
+    } catch (err) {
+        console.log(
+            color(
+                "yellow",
+                `Could not build passkey login URL: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+        );
+        return;
+    }
+
+    console.log(
+        `${color(ROOT_ACCENT, "passkey login")} ${color("dim", "opens in your browser")}`,
+    );
+    console.log(
+        color(
+            "dim",
+            "Restoring with a passkey will remove other devices from this account.",
+        ),
+    );
+    console.log(`${color("dim", "url")} ${url}`);
+    if (!ctx.openBrowser) {
+        return;
+    }
+    const opened = await openExternalUrl(url);
+    if (!opened) {
+        console.log(
+            color("yellow", "Could not open a browser. Copy the URL above."),
+        );
+    }
+}
+
+async function launchInitialPasskeySetup(ctx, client, username) {
+    const token = getClientBearerToken(client);
+    if (!token) {
+        throw new Error(
+            "Passkey setup is required, but the CLI could not read the registration token.",
+        );
+    }
+    const userID = client.me.user().userID;
+    let url;
+    try {
+        url = buildPasskeyRegistrationUrl(ctx, {
+            token,
+            userID,
+            username,
+        });
+    } catch (err) {
+        throw new Error(
+            `Could not build passkey setup URL: ${err instanceof Error ? err.message : String(err)}`,
+        );
+    }
+
+    console.log(
+        `${color(ROOT_ACCENT, "passkey setup")} ${color("dim", "opens in your browser")}`,
+    );
+    console.log(
+        color(
+            "dim",
+            "New accounts must add a passkey before the CLI can connect.",
+        ),
+    );
+    console.log(`${color("dim", "url")} ${url}`);
+    if (ctx.openBrowser) {
+        const opened = await openExternalUrl(url);
+        if (!opened) {
+            console.log(
+                color(
+                    "yellow",
+                    "Could not open a browser. Copy the URL above.",
+                ),
+            );
+        }
+    }
+
+    console.log(color(ROOT_ACCENT, "waiting for passkey setup..."));
+    for (let attempt = 0; attempt < 300; attempt++) {
+        await sleep(2000);
+        const passkeys = await client.passkeys.list().catch((err) => {
+            debugLog(ctx, "passkey.register.poll.error", {
+                error: err,
+                username,
+            });
+            return [];
+        });
+        if (passkeys.length > 0) {
+            if (input.isTTY && output.isTTY) output.write("\n");
+            return;
+        }
+        if (input.isTTY && output.isTTY) output.write(color("dim", "."));
+    }
+    throw new Error("Timed out waiting for passkey setup.");
 }
 
 async function persistPendingLocalAccount(
@@ -752,17 +964,17 @@ async function loginWithDeviceApproval(ctx, username) {
     try {
         const [, registerErr] = await client.register(accountUsername);
         if (!registerErr) {
-            await connectAndWait(
-                client,
-                ctx,
-                `login-request:${accountUsername}`,
-            );
             await persistNewLocalAccount(
                 ctx,
                 config,
                 accountUsername,
                 privateKey,
                 client,
+            );
+            await connectAndWait(
+                client,
+                ctx,
+                `login-request:${accountUsername}`,
             );
             console.log(
                 `${color(ROOT_ACCENT, "registered")} ${color(userAccent(client.me.user().userID), accountUsername)}`,
@@ -833,14 +1045,14 @@ async function waitForDeviceApproval(
     console.log(
         color(
             "dim",
-            "Confirm this code on an existing signed-in device before approving.",
+            "Approve from an existing device, or restore this CLI with a passkey in the browser.",
         ),
     );
 
     if (input.isTTY && output.isTTY) {
         const rl = createInterface({ input, output });
         try {
-            const answer = (await askText(rl, "notify existing devices?", "Y"))
+            const answer = (await askText(rl, "start login request?", "Y"))
                 .trim()
                 .toLowerCase();
             if (answer === "n" || answer === "no") {
@@ -873,7 +1085,10 @@ async function waitForDeviceApproval(
             );
             if (!approvedDeviceID) throw err;
         });
-    console.log(color(ROOT_ACCENT, "waiting for approval..."));
+    await launchPasskeyLogin(ctx, username, pending, code);
+    console.log(
+        color(ROOT_ACCENT, "waiting for browser passkey login or approval..."),
+    );
 
     for (let attempt = 0; attempt < 300; attempt++) {
         await sleep(2000);
@@ -3105,6 +3320,13 @@ async function authenticateOrRegister(ctx, explicitUsername) {
         try {
             const [, registerErr] = await client.register(entered);
             if (registerErr) throw registerErr;
+            await persistNewLocalAccount(
+                ctx,
+                config,
+                entered,
+                privateKey,
+                client,
+            );
             await connectAndWait(client, ctx, `register:${entered}`);
         } catch (err) {
             if (!isDeviceApprovalRequired(err)) throw err;
@@ -3122,13 +3344,11 @@ async function authenticateOrRegister(ctx, explicitUsername) {
                 },
             );
         }
-        const account = await persistNewLocalAccount(
-            ctx,
-            config,
-            entered,
-            privateKey,
-            client,
-        );
+        const createdAccountRef = parseAccountSelector(ctx, entered);
+        const account = {
+            ...config.accounts[createdAccountRef.key],
+            accountKey: createdAccountRef.key,
+        };
         return { account, client, config };
     } finally {
         rl.close();
@@ -3151,6 +3371,24 @@ async function connectAndWait(client, ctx = null, label = "client") {
         debugLog(ctx, "client.connect.skip.connected", { label });
         return;
     }
+    try {
+        await connectOnceAndWait(client, ctx, label);
+        return;
+    } catch (err) {
+        if (!ctx || !isInitialPasskeySetupRequired(err)) {
+            throw err;
+        }
+        const username = client.me.user().username ?? "account";
+        debugLog(ctx, "client.connect.passkeySetup.required", {
+            label,
+            username,
+        });
+        await launchInitialPasskeySetup(ctx, client, username);
+        await connectOnceAndWait(client, ctx, `${label}:passkey`);
+    }
+}
+
+async function connectOnceAndWait(client, ctx = null, label = "client") {
     debugLog(ctx, "client.connect.start", { label });
     await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -4362,6 +4600,8 @@ Flags:
   --host <host:port>     API host, default api.vex.wtf
   --local                connect to local Spire at 127.0.0.1:16777 over http/ws
   --http                 use http/ws
+  --passkey-url <url>    browser passkey login page, default uses the API host
+  --no-browser           print passkey login URL without opening a browser
   --dev-key <key>        send x-dev-api-key
   --debug                write send/receive/connect diagnostics to a log file
   --debug-file <path>    debug log path, default under the CLI data dir

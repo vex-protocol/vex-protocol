@@ -11,6 +11,8 @@ After that it opens straight into a live chat session.
 
 By default the CLI connects to production at `api.vex.wtf`. For local Spire development, pass `--local` to use `127.0.0.1:16777` over http/ws. Custom targets can use `--api-url <url>` to set both the host and protocol, or `--host <host:port> --http` to set them separately.
 
+When creating a new account, the CLI opens a browser passkey page to attach the account's first passkey before connecting. When adding this machine to an account that already exists, the same page can restore the pending device with a saved passkey. Use `--passkey-url <url>` or `VEX_CHAT_PASSKEY_URL` when the WebAuthn page is hosted somewhere other than the API origin; use `--no-browser` or `VEX_CHAT_NO_BROWSER=1` to print the URL without launching a browser.
+
 Inside the app:
 
 - `/accounts` lists local users on this machine
