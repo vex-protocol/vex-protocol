@@ -1,5 +1,54 @@
 # @vex-chat/spire
 
+## 2.3.0
+
+### Minor Changes
+
+- [#204](https://github.com/vex-protocol/vex-protocol/pull/204) [`62108c9`](https://github.com/vex-protocol/vex-protocol/commit/62108c92709cc9d519a6018365e7325d20b25e0b) Thanks [@yuki111888](https://github.com/yuki111888)! - Require newly approved devices to complete passkey setup or authentication instead of treating approval as permanent passkey verification.
+
+## 2.2.0
+
+### Minor Changes
+
+- [#201](https://github.com/vex-protocol/vex-protocol/pull/201) [`73250db`](https://github.com/vex-protocol/vex-protocol/commit/73250db0f2b8bf6fdb178d1d70d471ec756d39a6) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
+## 2.1.0
+
+### Minor Changes
+
+- [#198](https://github.com/vex-protocol/vex-protocol/pull/198) [`fd536d4`](https://github.com/vex-protocol/vex-protocol/commit/fd536d4829e69fc2147947fc4bc82b3754abae0a) Thanks [@yuki111888](https://github.com/yuki111888)! - Require fresh passkey verification on the approving device for additive device enrollment, and persist passkey-approved device trust so newly approved devices can refresh device-key sessions without holding a local passkey.
+
+## 2.0.1
+
+### Patch Changes
+
+- [#195](https://github.com/vex-protocol/vex-protocol/pull/195) [`cea8fe5`](https://github.com/vex-protocol/vex-protocol/commit/cea8fe50fef156dc8ea451cc604e9bba880a00c7) Thanks [@yuki111888](https://github.com/yuki111888)! - Play the default notification sound for visible iOS Expo pushes while keeping Android push payloads on their channel-managed sound behavior.
+
+## 2.0.0
+
+### Major Changes
+
+- [#192](https://github.com/vex-protocol/vex-protocol/pull/192) [`a27c2f6`](https://github.com/vex-protocol/vex-protocol/commit/a27c2f6a62c2545475d6456dde8a9a81629d88f5) Thanks [@yuki111888](https://github.com/yuki111888)! - Passkey-authenticated device enrollment is now recovery-only. Use
+  `client.passkeys.recoverDeviceRequest(requestID)` and Spire's
+  `POST /user/:id/passkey/recover/devices/requests/:requestID` endpoint to
+  provision a new device from a passkey; the old passkey approval endpoint and
+  `client.passkeys.approveDeviceRequest()` API have been removed so recovery
+  always revokes previously trusted devices and their push subscriptions
+  server-side.
+
+- [#189](https://github.com/vex-protocol/vex-protocol/pull/189) [`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327) Thanks [@yuki111888](https://github.com/yuki111888)! - Require passkey verification as a second factor for full account sessions once an account has enrolled passkeys. Accounts with no passkeys may still obtain a short account session by password or device key so they can enroll their first passkey, but device connect remains blocked until that first passkey exists. New registrations now receive a device-aware response, and the OpenAPI spec reflects the stricter auth contract.
+
+### Patch Changes
+
+- [#187](https://github.com/vex-protocol/vex-protocol/pull/187) [`bdb4e87`](https://github.com/vex-protocol/vex-protocol/commit/bdb4e87e819a3c2310c056b77abfd66800ba2758) Thanks [@yuki111888](https://github.com/yuki111888)! - Add a batched mail delivery endpoint and have libvex coalesce concurrent mail sends through it, falling back to the existing WebSocket send path when batching is unavailable.
+
+- [#189](https://github.com/vex-protocol/vex-protocol/pull/189) [`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327) Thanks [@yuki111888](https://github.com/yuki111888)! - Make Spire's Docker Compose env handling robust for passkey deployments by
+  normalizing quoted `.env` values, validating that `SPK` matches `SPIRE_FIPS`,
+  and emitting compose-safe unquoted key lines from the key generators.
+- Updated dependencies [[`7e56876`](https://github.com/vex-protocol/vex-protocol/commit/7e568760fd56b459335f4b0df662aa2c70f22327)]:
+    - @vex-chat/types@4.0.0
+    - @vex-chat/crypto@7.0.0
+
 ## 1.11.5
 
 ### Patch Changes
