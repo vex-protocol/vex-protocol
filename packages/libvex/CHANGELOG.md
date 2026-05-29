@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 7.1.1
+
+### Patch Changes
+
+- [#209](https://github.com/vex-protocol/vex-protocol/pull/209) [`c6bf509`](https://github.com/vex-protocol/vex-protocol/commit/c6bf5093b205e106026521c2994e6694c5d32518) Thanks [@yuki111888](https://github.com/yuki111888)! - Make direct-message sync to the sender's other devices part of the send path instead of a background message-event side effect.
+
 ## 7.1.0
 
 ### Minor Changes
