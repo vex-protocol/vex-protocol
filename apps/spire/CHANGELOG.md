@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.3.1
+
+### Patch Changes
+
+- [#212](https://github.com/vex-protocol/vex-protocol/pull/212) [`71c61da`](https://github.com/vex-protocol/vex-protocol/commit/71c61daf44f2a4159e86853a798f65796404e85e) Thanks [@yuki111888](https://github.com/yuki111888)! - Allow device-cluster approval without a second passkey prompt when the requesting device already authenticated the account with a passkey.
+
 ## 2.3.0
 
 ### Minor Changes

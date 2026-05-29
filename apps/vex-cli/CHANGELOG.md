@@ -1,5 +1,15 @@
 # @vex-chat/cli
 
+## 0.3.0
+
+### Minor Changes
+
+- [#208](https://github.com/vex-protocol/vex-protocol/pull/208) [`fe49ae6`](https://github.com/vex-protocol/vex-protocol/commit/fe49ae6a993e6c8953ac9666e6a19cee8bf00676) Thanks [@yuki111888](https://github.com/yuki111888)! - Add browser-assisted passkey setup/login for CLI accounts, including first-passkey registration during signup and configurable passkey page URLs for deployments whose WebAuthn page is hosted separately from the API.
+
+### Patch Changes
+
+- [#211](https://github.com/vex-protocol/vex-protocol/pull/211) [`d674179`](https://github.com/vex-protocol/vex-protocol/commit/d674179150bb55e285e0c6d143afb69d17714c56) Thanks [@yuki111888](https://github.com/yuki111888)! - Decode msgpack error responses so passkey-required registration can launch the browser setup flow instead of surfacing a generic HTTP 403.
+
 ## 0.2.0
 
 ### Minor Changes
