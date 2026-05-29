@@ -2736,7 +2736,7 @@ export class Client {
          * errors should not reject the full read pipeline.
          */
         allowKeyBundleFailure = false,
-    ): Promise<void> {
+    ): Promise<Message | null> {
         return this.runWithThisCryptoProfile(async () => {
             let keyBundle: KeyBundle;
 
@@ -2749,7 +2749,7 @@ export class Client {
                 );
             } catch (e) {
                 if (allowKeyBundleFailure) {
-                    return;
+                    return null;
                 }
                 const wrap =
                     e instanceof Error ? e : new Error(String(e), { cause: e });
@@ -2761,7 +2761,7 @@ export class Client {
 
             if (!this.xKeyRing) {
                 if (this.manuallyClosing) {
-                    return;
+                    return null;
                 }
                 throw new Error("Key ring not initialized.");
             }
@@ -2910,6 +2910,7 @@ export class Client {
             }
 
             await this.deliverMailResource(msg, hmac, mail);
+            return shouldEmitHandshakeMessage ? emitMsg : null;
         });
     }
 
@@ -3299,6 +3300,8 @@ export class Client {
         const targetDevices = devices.filter(
             (device) => device.deviceID !== this.getDevice().deviceID,
         );
+        let failCount = 0;
+        let lastErr: unknown;
         for (
             let index = 0;
             index < targetDevices.length;
@@ -3319,12 +3322,27 @@ export class Client {
                             copy.mailID,
                             true,
                         );
-                    } catch {
-                        /* best-effort per device */
+                    } catch (err: unknown) {
+                        failCount += 1;
+                        lastErr = err;
                     }
                 }),
             );
         }
+        if (failCount === 0) {
+            return;
+        }
+        const base =
+            lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+        if (failCount === targetDevices.length) {
+            throw base;
+        }
+        const partial = new Error(
+            `Forwarded direct message failed to reach ${String(failCount)} of ` +
+                `${String(targetDevices.length)} owned device(s).`,
+        );
+        partial.cause = base;
+        throw partial;
     }
 
     private async getChannelByID(channelID: string): Promise<Channel | null> {
@@ -3902,20 +3920,13 @@ export class Client {
     }
 
     /**
-     * Pipeline for decrypted messages — registered in `init`. After `close()` sets
-     * `manuallyClosing`, this becomes a no-op so fire-and-forget `forward` does not
-     * race HTTP teardown (we avoid `off()` here — it can interact badly with emit).
+     * Pipeline for decrypted messages - registered in `init`. After `close()` sets
+     * `manuallyClosing`, this becomes a no-op (we avoid `off()` here - it can
+     * interact badly with emit).
      */
     private readonly onInternalMessage = (message: Message): void => {
         if (this.isManualCloseInFlight()) {
             return;
-        }
-        if (
-            message.direction === "outgoing" &&
-            !message.forward &&
-            message.group === null
-        ) {
-            void this.forward(message);
         }
 
         if (
@@ -5260,7 +5271,7 @@ export class Client {
         mailID: null | string,
         forward: boolean,
         retry = false,
-    ): Promise<void> {
+    ): Promise<Message | null> {
         while (this.sending.has(device.deviceID)) {
             await sleep(100);
         }
@@ -5278,7 +5289,7 @@ export class Client {
                         retry: String(retry),
                     });
                 }
-                await this.createSession(
+                const createdMessage = await this.createSession(
                     device,
                     user,
                     msg,
@@ -5292,7 +5303,7 @@ export class Client {
                         peerDevice: device.deviceID,
                     });
                 }
-                return;
+                return createdMessage;
             }
 
             if (libvexDebugDmEnabled()) {
@@ -5388,6 +5399,7 @@ export class Client {
             this.sessionRecords[XUtils.encodeHex(session.publicKey)] = session;
 
             await this.deliverMailResource(msgb, hmac, mail);
+            return outMsg;
         } finally {
             this.sending.delete(device.deviceID);
         }
@@ -5400,14 +5412,21 @@ export class Client {
         group: null | Uint8Array,
         mailID: null | string,
         forward: boolean,
-    ): Promise<void> {
+    ): Promise<Message | null> {
         try {
-            await this.sendMail(device, user, msg, group, mailID, forward);
+            return await this.sendMail(
+                device,
+                user,
+                msg,
+                group,
+                mailID,
+                forward,
+            );
         } catch (err: unknown) {
             if (!this.shouldRetryDeliveryWithFreshSession(err)) {
                 throw err;
             }
-            await this.sendMail(
+            return await this.sendMail(
                 device,
                 user,
                 msg,
@@ -5487,6 +5506,9 @@ export class Client {
             // single mailID so local/UI dedupe treats it as one message.
             const messageMailID = uuid.v4();
             const msgBytes = XUtils.decodeUTF8(payload);
+            const firstOutgoingMessage: { current: Message | null } = {
+                current: null,
+            };
             for (
                 let index = 0;
                 index < deviceList.length;
@@ -5505,7 +5527,7 @@ export class Client {
                                     recipientDevice: device.deviceID,
                                 });
                             }
-                            await this.sendMailWithRecovery(
+                            const sentMessage = await this.sendMailWithRecovery(
                                 device,
                                 userEntry,
                                 msgBytes,
@@ -5513,6 +5535,13 @@ export class Client {
                                 messageMailID,
                                 false,
                             );
+                            if (
+                                firstOutgoingMessage.current === null &&
+                                sentMessage &&
+                                !sentMessage.forward
+                            ) {
+                                firstOutgoingMessage.current = sentMessage;
+                            }
                             if (libvexDebugDmEnabled()) {
                                 debugLibvexDm("sendMessage: sendMail ok", {
                                     recipientDevice: device.deviceID,
@@ -5558,6 +5587,12 @@ export class Client {
                 );
                 partial.cause = base;
                 throw partial;
+            }
+            if (
+                userID !== this.getUser().userID &&
+                firstOutgoingMessage.current !== null
+            ) {
+                await this.forward(firstOutgoingMessage.current);
             }
         } catch (err: unknown) {
             throw err;
