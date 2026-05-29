@@ -597,16 +597,68 @@ function getClientBearerToken(client) {
     return match?.[1] ?? null;
 }
 
+function responseBodyMessage(data) {
+    if (!data || typeof data !== "object" || ArrayBuffer.isView(data)) {
+        return null;
+    }
+    if (data instanceof ArrayBuffer) {
+        return null;
+    }
+    const error = data.error;
+    if (typeof error === "string") return error;
+    if (error && typeof error === "object") {
+        const nestedMessage = error.message;
+        if (typeof nestedMessage === "string") return nestedMessage;
+    }
+    const message = data.message;
+    return typeof message === "string" ? message : null;
+}
+
+function bytesFromResponseBody(data) {
+    if (ArrayBuffer.isView(data)) {
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    if (data instanceof ArrayBuffer) {
+        return new Uint8Array(data);
+    }
+    return null;
+}
+
+function decodeBinaryResponseBody(data) {
+    const bytes = bytesFromResponseBody(data);
+    if (!bytes) return null;
+    try {
+        return unpack(bytes);
+    } catch {
+        // Express JSON error bodies also arrive as ArrayBuffer with fetch.
+    }
+    const text = new TextDecoder("utf-8", { fatal: false })
+        .decode(bytes)
+        .trim();
+    if (!text) return null;
+    if (text.startsWith("{") || text.startsWith("[")) {
+        try {
+            return JSON.parse(text);
+        } catch {
+            return text;
+        }
+    }
+    return text;
+}
+
 function errorResponseMessage(err) {
     const data = err?.response?.data;
-    if (data && typeof data === "object" && !ArrayBuffer.isView(data)) {
-        const message = data.error ?? data.message;
-        if (typeof message === "string") return message;
-    }
+    const binaryBody = decodeBinaryResponseBody(data);
+    const binaryMessage = responseBodyMessage(binaryBody);
+    if (binaryMessage) return binaryMessage;
+    if (typeof binaryBody === "string") return binaryBody;
+    const objectMessage = responseBodyMessage(data);
+    if (objectMessage) return objectMessage;
     if (typeof data === "string") {
         try {
             const parsed = JSON.parse(data);
-            if (typeof parsed?.error === "string") return parsed.error;
+            const jsonMessage = responseBodyMessage(parsed);
+            if (jsonMessage) return jsonMessage;
         } catch {
             return data;
         }
