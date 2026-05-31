@@ -66,6 +66,7 @@ import {
     xSignKeyPairAsync,
     xSignKeyPairFromSecret,
     xSignKeyPairFromSecretAsync,
+    xSignOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
 import {
@@ -2001,6 +2002,7 @@ export class Client {
             res.data,
         );
         this.http.defaults.headers.common["X-Device-Token"] = deviceToken;
+        await this.publishSignedPreKey(this.device);
 
         this.autoReconnectEnabled = true;
         this.initSocket();
@@ -2950,6 +2952,7 @@ export class Client {
     private async deleteServer(serverID: string): Promise<void> {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
+
     private deliverMailResource(
         msg: ResourceMsg,
         header: Uint8Array,
@@ -3002,7 +3005,6 @@ export class Client {
             });
         });
     }
-
     private deviceListFailureDetail(err: unknown): string {
         if (!isHttpError(err)) {
             return "";
@@ -3334,15 +3336,11 @@ export class Client {
         }
         const base =
             lastErr instanceof Error ? lastErr : new Error(String(lastErr));
-        if (failCount === targetDevices.length) {
-            throw base;
-        }
-        const partial = new Error(
-            `Forwarded direct message failed to reach ${String(failCount)} of ` +
-                `${String(targetDevices.length)} owned device(s).`,
-        );
-        partial.cause = base;
-        throw partial;
+        debugLibvexDm("forward: owned device copy failed", {
+            error: base.message,
+            failed: failCount,
+            targets: targetDevices.length,
+        });
     }
 
     private async getChannelByID(channelID: string): Promise<Channel | null> {
@@ -3847,6 +3845,20 @@ export class Client {
         return this.manuallyClosing;
     }
 
+    private async isPreKeySignedByCurrentDevice(
+        preKey: PreKeysCrypto,
+    ): Promise<boolean> {
+        const payload =
+            this.cryptoProfile === "fips"
+                ? fipsP256PreKeySignPayload(preKey.keyPair.publicKey)
+                : xEncode(xConstants.CURVE, preKey.keyPair.publicKey);
+        const opened = await xSignOpenAsync(
+            preKey.signature,
+            this.signKeys.publicKey,
+        );
+        return Boolean(opened && XUtils.bytesEqual(opened, payload));
+    }
+
     private async kickUser(userID: string, serverID: string): Promise<void> {
         const permissionList = await this.fetchPermissionList(serverID);
         for (const permission of permissionList) {
@@ -4060,21 +4072,14 @@ export class Client {
         }
         const identityKeys = this.idKeys;
 
-        const existingPreKeys = await this.database.getPreKeys();
-        const preKeys: PreKeysCrypto =
-            existingPreKeys ??
-            (await (async () => {
-                const unsaved = await this.createPreKey();
-                const [saved] = await this.database.savePreKeys(
-                    [unsaved],
-                    false,
-                );
-                if (!saved || saved.index == null)
-                    throw new Error(
-                        "Failed to save prekey — no index returned.",
-                    );
-                return { ...unsaved, index: saved.index };
-            })());
+        let preKeys = await this.database.getPreKeys();
+        if (!preKeys || !(await this.isPreKeySignedByCurrentDevice(preKeys))) {
+            const unsaved = await this.createPreKey();
+            const [saved] = await this.database.savePreKeys([unsaved], false);
+            if (!saved || saved.index == null)
+                throw new Error("Failed to save prekey — no index returned.");
+            preKeys = { ...unsaved, index: saved.index };
+        }
 
         const sessions = await this.database.getAllSessions();
         for (const session of sessions) {
@@ -4145,6 +4150,30 @@ export class Client {
             msgpack.encode({ signed }),
             { headers: { "Content-Type": "application/msgpack" } },
         );
+    }
+
+    private async publishSignedPreKey(device: Device): Promise<void> {
+        if (!this.xKeyRing) {
+            throw new Error("Keyring is not initialized.");
+        }
+        const preKey: PreKeysWS = {
+            deviceID: device.deviceID,
+            index: this.xKeyRing.preKeys.index,
+            publicKey: this.xKeyRing.preKeys.keyPair.publicKey,
+            signature: this.xKeyRing.preKeys.signature,
+        };
+        try {
+            await this.http.post(
+                this.getHost() + "/device/" + device.deviceID + "/prekey",
+                msgpack.encode(preKey),
+                { headers: { "Content-Type": "application/msgpack" } },
+            );
+        } catch (err: unknown) {
+            if (isHttpError(err) && err.response?.status === 404) {
+                return;
+            }
+            throw err;
+        }
     }
 
     private async purgeHistory(): Promise<void> {

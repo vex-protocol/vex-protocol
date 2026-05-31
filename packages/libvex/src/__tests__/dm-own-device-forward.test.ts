@@ -154,4 +154,108 @@ describe("direct message own-device forwarding", () => {
         });
         expect(forwardedPayload.mailID).toBe(calls[0]!.mailID);
     });
+
+    it("does not fail peer delivery when owned-device forwarding fails", async () => {
+        const senderUser = user("user-a", "alice");
+        const peerUser = user("user-b", "bob");
+        const senderOriginalDevice = device("a-device-1", senderUser.userID);
+        const senderCurrentDevice = device("a-device-2", senderUser.userID);
+        const peerDevice = device("b-device-1", peerUser.userID);
+        const calls: SendMailCall[] = [];
+
+        const fakeClient = {
+            fetchUser: vi.fn((userID: string) =>
+                Promise.resolve([
+                    userID === peerUser.userID ? peerUser : senderUser,
+                    null,
+                ]),
+            ),
+            fetchUserDeviceListOnce: vi.fn((userID: string) =>
+                Promise.resolve(
+                    userID === peerUser.userID
+                        ? [peerDevice]
+                        : [senderOriginalDevice, senderCurrentDevice],
+                ),
+            ),
+            fetchUserDeviceListWithBackoff: vi.fn((userID: string) =>
+                Promise.resolve(
+                    userID === peerUser.userID
+                        ? [peerDevice]
+                        : [senderOriginalDevice, senderCurrentDevice],
+                ),
+            ),
+            forward: Reflect.get(Client.prototype, "forward") as (
+                message: Message,
+            ) => Promise<void>,
+            forwarded: new Set<string>(),
+            getDevice: () => senderCurrentDevice,
+            getUser: () => senderUser,
+            isManualCloseInFlight: () => false,
+            sendMailWithRecovery: vi.fn(
+                (
+                    sentDevice: Device,
+                    sentUser: User,
+                    msg: Uint8Array,
+                    group: null | Uint8Array,
+                    mailID: null | string,
+                    forward: boolean,
+                ): Promise<Message> => {
+                    calls.push({
+                        device: sentDevice,
+                        forward,
+                        group,
+                        mailID,
+                        msg,
+                        user: sentUser,
+                    });
+                    if (forward) {
+                        return Promise.reject(
+                            new Error(
+                                "Failed to load keyBundle for owned device.",
+                            ),
+                        );
+                    }
+                    return Promise.resolve({
+                        authorID: senderUser.userID,
+                        decrypted: true,
+                        direction: "outgoing",
+                        forward,
+                        group: null,
+                        mailID: mailID ?? "generated-mail-id",
+                        message: "hello from second device",
+                        nonce: `${sentDevice.deviceID}-nonce`,
+                        readerID: sentUser.userID,
+                        recipient: sentDevice.deviceID,
+                        sender: senderCurrentDevice.deviceID,
+                        timestamp: now,
+                    });
+                },
+            ),
+        };
+
+        const sendMessage = Reflect.get(
+            Client.prototype,
+            "sendMessage",
+        ) as SendMessage;
+
+        await expect(
+            sendMessage.call(
+                fakeClient,
+                peerUser.userID,
+                "hello from second device",
+            ),
+        ).resolves.toBeUndefined();
+
+        expect(calls).toHaveLength(2);
+        expect(calls[0]).toMatchObject({
+            device: peerDevice,
+            forward: false,
+            user: peerUser,
+        });
+        expect(calls[1]).toMatchObject({
+            device: senderOriginalDevice,
+            forward: true,
+            user: senderUser,
+        });
+    });
 });

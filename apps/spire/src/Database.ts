@@ -923,6 +923,28 @@ export class Database extends EventEmitter {
         return Number(result.numDeletedRows) > 0;
     }
 
+    public async replacePreKey(
+        userID: string,
+        deviceID: string,
+        preKey: PreKeysWS,
+    ): Promise<void> {
+        const newPreKey = {
+            deviceID,
+            index: preKey.index ?? 0,
+            keyID: crypto.randomUUID(),
+            publicKey: XUtils.encodeHex(preKey.publicKey),
+            signature: XUtils.encodeHex(preKey.signature),
+            userID,
+        };
+        await this.db.transaction().execute(async (trx) => {
+            await trx
+                .deleteFrom("preKeys")
+                .where("deviceID", "=", deviceID)
+                .execute();
+            await trx.insertInto("preKeys").values(newPreKey).execute();
+        });
+    }
+
     /**
      * Retrives a list of users that should be notified when a specific resourceID
      * experiences changes.
