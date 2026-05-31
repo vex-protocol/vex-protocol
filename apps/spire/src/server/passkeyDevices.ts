@@ -8,13 +8,12 @@ import type { Database } from "../Database.ts";
 
 import express from "express";
 
-import { msgpack } from "../utils/msgpack.ts";
-
 import {
     recoverDeviceEnrollmentRequest,
     resolveDeviceEnrollmentRequest,
 } from "./user.ts";
 import { getParam, getUser } from "./utils.ts";
+import { sendWireResponse } from "./wireResponse.ts";
 
 import { protectPasskey } from "./index.ts";
 
@@ -60,7 +59,7 @@ export const getPasskeyDeviceRouter = (
                 return;
             }
             const list = await db.retrieveUserDeviceList([userID]);
-            res.send(msgpack.encode(list));
+            sendWireResponse(req, res, list);
         },
     );
 
@@ -126,7 +125,7 @@ export const getPasskeyDeviceRouter = (
             if (result.kind === "ok") {
                 notify(userID, "deviceListChanged", crypto.randomUUID());
                 disconnectDevices?.(result.revokedDeviceIDs);
-                res.send(msgpack.encode(result.device));
+                sendWireResponse(req, res, result.device);
                 return;
             }
             res.status(result.status).send({ error: result.error });
