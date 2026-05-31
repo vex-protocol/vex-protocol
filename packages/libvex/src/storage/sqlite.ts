@@ -609,6 +609,10 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const table = oneTime ? ("oneTimeKeys" as const) : ("preKeys" as const);
         const saved: PreKeysSQL[] = [];
 
+        if (!oneTime) {
+            await this.db.deleteFrom("preKeys").execute();
+        }
+
         for (const preKey of preKeys) {
             const row = await this.db
                 .insertInto(table)

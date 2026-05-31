@@ -28,6 +28,7 @@ import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
 import { getJwtSecret } from "../utils/jwtSecret.ts";
 import { msgpack } from "../utils/msgpack.ts";
+import { verifyPreKeyWsSignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { getAvatarRouter } from "./avatar.ts";
@@ -716,6 +717,49 @@ export const initApp = (
         res.send(msgpack.encode({ count }));
     });
 
+    api.post("/device/:id/prekey", protect, async (req, res) => {
+        const parsedPreKey = PreKeysWSSchema.safeParse(req.body);
+        if (!parsedPreKey.success) {
+            res.status(400).json({
+                error: "Invalid prekey payload",
+                issues: parsedPreKey.error.issues,
+            });
+            return;
+        }
+
+        const deviceID = getParam(req, "id");
+        const device = await db.retrieveDevice(deviceID);
+        const deviceDetails = req.device;
+        if (!device) {
+            res.sendStatus(404);
+            return;
+        }
+        if (!deviceDetails) {
+            res.sendStatus(401);
+            return;
+        }
+        if (
+            deviceDetails.deviceID !== deviceID ||
+            req.user?.userID !== device.owner
+        ) {
+            res.sendStatus(401);
+            return;
+        }
+
+        const preKey = parsedPreKey.data;
+        if (preKey.deviceID !== deviceID) {
+            res.status(400).send({ error: "Prekey deviceID mismatch." });
+            return;
+        }
+        if (!(await verifyPreKeyWsSignature(preKey, device.signKey))) {
+            res.status(401).send({ error: "Prekey signature invalid." });
+            return;
+        }
+
+        await db.replacePreKey(device.owner, deviceID, preKey);
+        res.sendStatus(200);
+    });
+
     api.post("/device/:id/otk", protect, async (req, res) => {
         const parsedOTKs = z.array(PreKeysWSSchema).safeParse(req.body);
         if (!parsedOTKs.success) {
@@ -732,6 +776,7 @@ export const initApp = (
         }
 
         const userDetails = getUser(req);
+        const deviceDetails = req.device;
 
         const deviceID = getParam(req, "id");
         const otk = submittedOTKs[0];
@@ -741,15 +786,25 @@ export const initApp = (
             res.sendStatus(404);
             return;
         }
-
-        const message = await spireXSignOpenAsync(
-            otk.signature,
-            XUtils.decodeHex(device.signKey),
-        );
-
-        if (!message) {
+        if (
+            !deviceDetails ||
+            deviceDetails.deviceID !== deviceID ||
+            userDetails.userID !== device.owner
+        ) {
             res.sendStatus(401);
             return;
+        }
+        for (const submittedOTK of submittedOTKs) {
+            if (submittedOTK.deviceID !== deviceID) {
+                res.status(400).send({ error: "OTK deviceID mismatch." });
+                return;
+            }
+            if (
+                !(await verifyPreKeyWsSignature(submittedOTK, device.signKey))
+            ) {
+                res.status(401).send({ error: "OTK signature invalid." });
+                return;
+            }
         }
 
         await db.saveOTK(userDetails.userID, deviceID, submittedOTKs);

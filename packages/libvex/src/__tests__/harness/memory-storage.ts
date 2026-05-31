@@ -243,6 +243,9 @@ export class MemoryStorage extends EventEmitter implements Storage {
         preKeys: UnsavedPreKey[],
         oneTime: boolean,
     ): Promise<PreKeysSQL[]> {
+        if (!oneTime) {
+            this.preKeys = [];
+        }
         const added: PreKeysSQL[] = [];
         for (const pk of preKeys) {
             const idx = oneTime ? this.nextOtkIndex++ : this.nextPreKeyIndex++;
