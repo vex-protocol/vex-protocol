@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 7.1.5
+
+### Patch Changes
+
+- [#223](https://github.com/vex-protocol/vex-protocol/pull/223) [`b20de1c`](https://github.com/vex-protocol/vex-protocol/commit/b20de1ca450dd774efd9c33b923ea7f2691b5ce3) Thanks [@yuki111888](https://github.com/yuki111888)! - Reduce the Double Ratchet skipped message key retention cap to align with the existing 1,024-message skip window.
+
 ## 7.1.4
 
 ### Patch Changes
