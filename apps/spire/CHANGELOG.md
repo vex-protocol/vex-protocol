@@ -1,5 +1,17 @@
 # @vex-chat/spire
 
+## 2.3.2
+
+### Patch Changes
+
+- [#217](https://github.com/vex-protocol/vex-protocol/pull/217) [`b644df7`](https://github.com/vex-protocol/vex-protocol/commit/b644df7842ef394cd1537ada0fc46d6bde462274) Thanks [@yuki111888](https://github.com/yuki111888)! - Keep direct-message delivery successful when best-effort forwarding to the sender's other devices hits a bad self-device key bundle, and prevent stale signed prekeys from being reused during device registration.
+
+## 2.3.1
+
+### Patch Changes
+
+- [#212](https://github.com/vex-protocol/vex-protocol/pull/212) [`71c61da`](https://github.com/vex-protocol/vex-protocol/commit/71c61daf44f2a4159e86853a798f65796404e85e) Thanks [@yuki111888](https://github.com/yuki111888)! - Allow device-cluster approval without a second passkey prompt when the requesting device already authenticated the account with a passkey.
+
 ## 2.3.0
 
 ### Minor Changes
