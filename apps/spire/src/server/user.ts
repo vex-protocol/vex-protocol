@@ -25,7 +25,6 @@ import { stringify } from "uuid";
 import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
-import { verifyDevicePayloadPreKeySignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { AppError } from "./errors.ts";
@@ -895,10 +894,6 @@ export const getUserRouter = (
         }
 
         if (tokenValidator(stringify(token), TokenScopes.Device)) {
-            if (!(await verifyDevicePayloadPreKeySignature(deviceData))) {
-                res.status(400).send({ error: "Prekey signature invalid." });
-                return;
-            }
             const userDevices = await db.retrieveUserDeviceList([
                 userDetails.userID,
             ]);
