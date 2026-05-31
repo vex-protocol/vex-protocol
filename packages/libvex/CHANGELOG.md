@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 7.1.3
+
+### Patch Changes
+
+- [#217](https://github.com/vex-protocol/vex-protocol/pull/217) [`b644df7`](https://github.com/vex-protocol/vex-protocol/commit/b644df7842ef394cd1537ada0fc46d6bde462274) Thanks [@yuki111888](https://github.com/yuki111888)! - Keep direct-message delivery successful when best-effort forwarding to the sender's other devices hits a bad self-device key bundle, and prevent stale signed prekeys from being reused during device registration.
+
 ## 7.1.2
 
 ### Patch Changes
