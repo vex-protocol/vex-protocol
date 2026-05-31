@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 7.1.4
+
+### Patch Changes
+
+- Let connected clients repair stale signed prekeys without blocking registration and force self-device direct-message forwards through a fresh session.
+
 ## 7.1.3
 
 ### Patch Changes

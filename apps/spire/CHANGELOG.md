@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.3.3
+
+### Patch Changes
+
+- Let connected clients repair stale signed prekeys without blocking registration and force self-device direct-message forwards through a fresh session.
+
 ## 2.3.2
 
 ### Patch Changes
