@@ -13,6 +13,7 @@ import { Client, type Message } from "../index.js";
 
 interface SendMailCall {
     device: Device;
+    forceFreshSession?: boolean;
     forward: boolean;
     group: null | Uint8Array;
     mailID: null | string;
@@ -92,9 +93,11 @@ describe("direct message own-device forwarding", () => {
                     group: null | Uint8Array,
                     mailID: null | string,
                     forward: boolean,
+                    forceFreshSession?: boolean,
                 ): Promise<Message> => {
                     calls.push({
                         device: sentDevice,
+                        forceFreshSession,
                         forward,
                         group,
                         mailID,
@@ -135,11 +138,13 @@ describe("direct message own-device forwarding", () => {
         expect(calls).toHaveLength(2);
         expect(calls[0]).toMatchObject({
             device: peerDevice,
+            forceFreshSession: undefined,
             forward: false,
             user: peerUser,
         });
         expect(calls[1]).toMatchObject({
             device: senderOriginalDevice,
+            forceFreshSession: true,
             forward: true,
             user: senderUser,
         });
@@ -199,9 +204,11 @@ describe("direct message own-device forwarding", () => {
                     group: null | Uint8Array,
                     mailID: null | string,
                     forward: boolean,
+                    forceFreshSession?: boolean,
                 ): Promise<Message> => {
                     calls.push({
                         device: sentDevice,
+                        forceFreshSession,
                         forward,
                         group,
                         mailID,
@@ -249,11 +256,13 @@ describe("direct message own-device forwarding", () => {
         expect(calls).toHaveLength(2);
         expect(calls[0]).toMatchObject({
             device: peerDevice,
+            forceFreshSession: undefined,
             forward: false,
             user: peerUser,
         });
         expect(calls[1]).toMatchObject({
             device: senderOriginalDevice,
+            forceFreshSession: true,
             forward: true,
             user: senderUser,
         });
