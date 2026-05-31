@@ -32,6 +32,7 @@ import { verifyPreKeyWsSignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { getAvatarRouter } from "./avatar.ts";
+import { getCliPasskeyPageRouter } from "./cliPasskeyPage.ts";
 import { errorHandler } from "./errors.ts";
 import { getFileRouter } from "./file.ts";
 import { getInviteRouter } from "./invite.ts";
@@ -314,6 +315,12 @@ export const initApp = (
     );
 
     api.use(helmet());
+
+    // Browser bridge used by the CLI to run WebAuthn ceremonies at the same
+    // origin/RP ID as the API host. The token is carried in the URL fragment,
+    // so Spire never receives it when serving the page.
+    api.use(getCliPasskeyPageRouter());
+
     api.use(msgpackParser);
     api.use(checkAuth);
     api.use(createCheckDevice(db));

@@ -32,12 +32,12 @@ import jwt from "jsonwebtoken";
 
 import { JWT_EXPIRY_PASSKEY } from "../Spire.ts";
 import { getJwtSecret } from "../utils/jwtSecret.ts";
-import { msgpack } from "../utils/msgpack.ts";
 
 import { AppError } from "./errors.ts";
 import { authLimiter } from "./rateLimit.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { buildAndroidApkKeyHashOrigins } from "./wellKnown.ts";
+import { sendWireResponse } from "./wireResponse.ts";
 
 import { protect } from "./index.ts";
 
@@ -257,12 +257,10 @@ export const getPasskeyRouter = (db: Database) => {
             // shared types package doesn't take a runtime dep on
             // SimpleWebAuthn). The wire shape is identical — both
             // sides hand the JSON straight to navigator.credentials.
-            res.send(
-                msgpack.encode({
-                    options,
-                    requestID,
-                }),
-            );
+            sendWireResponse(req, res, {
+                options,
+                requestID,
+            });
         },
     );
 
@@ -379,7 +377,7 @@ export const getPasskeyRouter = (db: Database) => {
                 transports,
             );
 
-            res.send(msgpack.encode(created));
+            sendWireResponse(req, res, created);
         },
     );
 
@@ -391,7 +389,7 @@ export const getPasskeyRouter = (db: Database) => {
             return;
         }
         const list: Passkey[] = await db.retrievePasskeysByUser(userID);
-        res.send(msgpack.encode(list));
+        sendWireResponse(req, res, list);
     });
 
     router.delete(
@@ -477,12 +475,10 @@ export const getPasskeyRouter = (db: Database) => {
             userID: user.userID,
         });
 
-        res.send(
-            msgpack.encode({
-                options,
-                requestID,
-            }),
-        );
+        sendWireResponse(req, res, {
+            options,
+            requestID,
+        });
     });
 
     router.post("/auth/passkey/finish", authLimiter, async (req, res) => {
@@ -596,13 +592,11 @@ export const getPasskeyRouter = (db: Database) => {
             passkeyID: passkeyRow.passkeyID,
             user: censored,
         });
-        res.send(
-            msgpack.encode({
-                passkeyID: passkeyRow.passkeyID,
-                token,
-                user: censored,
-            }),
-        );
+        sendWireResponse(req, res, {
+            passkeyID: passkeyRow.passkeyID,
+            token,
+            user: censored,
+        });
     });
 
     return router;
