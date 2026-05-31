@@ -2706,15 +2706,17 @@ export class Client {
     }
 
     private async createPreKey(): Promise<UnsavedPreKey> {
-        const preKeyPair = await xBoxKeyPairAsync();
-        const toSign =
-            this.cryptoProfile === "fips"
-                ? fipsP256PreKeySignPayload(preKeyPair.publicKey)
-                : xEncode(xConstants.CURVE, preKeyPair.publicKey);
-        return {
-            keyPair: preKeyPair,
-            signature: await xSignAsync(toSign, this.signKeys.secretKey),
-        };
+        return this.runWithThisCryptoProfile(async () => {
+            const preKeyPair = await xBoxKeyPairAsync();
+            const toSign =
+                this.cryptoProfile === "fips"
+                    ? fipsP256PreKeySignPayload(preKeyPair.publicKey)
+                    : xEncode(xConstants.CURVE, preKeyPair.publicKey);
+            return {
+                keyPair: preKeyPair,
+                signature: await xSignAsync(toSign, this.signKeys.secretKey),
+            };
+        });
     }
 
     private async createServer(name: string): Promise<Server> {
@@ -3323,6 +3325,7 @@ export class Client {
                             null,
                             copy.mailID,
                             true,
+                            true,
                         );
                     } catch (err: unknown) {
                         failCount += 1;
@@ -3848,15 +3851,17 @@ export class Client {
     private async isPreKeySignedByCurrentDevice(
         preKey: PreKeysCrypto,
     ): Promise<boolean> {
-        const payload =
-            this.cryptoProfile === "fips"
-                ? fipsP256PreKeySignPayload(preKey.keyPair.publicKey)
-                : xEncode(xConstants.CURVE, preKey.keyPair.publicKey);
-        const opened = await xSignOpenAsync(
-            preKey.signature,
-            this.signKeys.publicKey,
-        );
-        return Boolean(opened && XUtils.bytesEqual(opened, payload));
+        return this.runWithThisCryptoProfile(async () => {
+            const payload =
+                this.cryptoProfile === "fips"
+                    ? fipsP256PreKeySignPayload(preKey.keyPair.publicKey)
+                    : xEncode(xConstants.CURVE, preKey.keyPair.publicKey);
+            const opened = await xSignOpenAsync(
+                preKey.signature,
+                this.signKeys.publicKey,
+            );
+            return Boolean(opened && XUtils.bytesEqual(opened, payload));
+        });
     }
 
     private async kickUser(userID: string, serverID: string): Promise<void> {
@@ -4066,34 +4071,44 @@ export class Client {
     }
 
     private async populateKeyRing() {
-        // we've checked in the constructor that these exist
-        if (!this.idKeys) {
-            throw new Error("Identity keys are missing.");
-        }
-        const identityKeys = this.idKeys;
+        await this.runWithThisCryptoProfile(async () => {
+            // we've checked in the constructor that these exist
+            if (!this.idKeys) {
+                throw new Error("Identity keys are missing.");
+            }
+            const identityKeys = this.idKeys;
 
-        let preKeys = await this.database.getPreKeys();
-        if (!preKeys || !(await this.isPreKeySignedByCurrentDevice(preKeys))) {
-            const unsaved = await this.createPreKey();
-            const [saved] = await this.database.savePreKeys([unsaved], false);
-            if (!saved || saved.index == null)
-                throw new Error("Failed to save prekey — no index returned.");
-            preKeys = { ...unsaved, index: saved.index };
-        }
+            let preKeys = await this.database.getPreKeys();
+            if (
+                !preKeys ||
+                !(await this.isPreKeySignedByCurrentDevice(preKeys))
+            ) {
+                const unsaved = await this.createPreKey();
+                const [saved] = await this.database.savePreKeys(
+                    [unsaved],
+                    false,
+                );
+                if (!saved || saved.index == null)
+                    throw new Error(
+                        "Failed to save prekey — no index returned.",
+                    );
+                preKeys = { ...unsaved, index: saved.index };
+            }
 
-        const sessions = await this.database.getAllSessions();
-        for (const session of sessions) {
-            this.sessionRecords[session.publicKey] =
-                sqlSessionToCrypto(session);
-        }
+            const sessions = await this.database.getAllSessions();
+            for (const session of sessions) {
+                this.sessionRecords[session.publicKey] =
+                    sqlSessionToCrypto(session);
+            }
 
-        const ephemeralKeys = await xBoxKeyPairAsync();
+            const ephemeralKeys = await xBoxKeyPairAsync();
 
-        this.xKeyRing = {
-            ephemeralKeys,
-            identityKeys,
-            preKeys,
-        };
+            this.xKeyRing = {
+                ephemeralKeys,
+                identityKeys,
+                preKeys,
+            };
+        });
     }
 
     private async postAuth() {
@@ -5441,6 +5456,7 @@ export class Client {
         group: null | Uint8Array,
         mailID: null | string,
         forward: boolean,
+        forceFreshSession = false,
     ): Promise<Message | null> {
         try {
             return await this.sendMail(
@@ -5450,6 +5466,7 @@ export class Client {
                 group,
                 mailID,
                 forward,
+                forceFreshSession,
             );
         } catch (err: unknown) {
             if (!this.shouldRetryDeliveryWithFreshSession(err)) {

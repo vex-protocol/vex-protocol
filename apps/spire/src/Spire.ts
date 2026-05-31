@@ -58,7 +58,6 @@ import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { resolveSpireListenPort } from "./spireListenPort.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
-import { verifyDevicePayloadPreKeySignature } from "./utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
 
 export { passkeySecondFactorError } from "./server/passkeySecondFactor.ts";
@@ -1161,16 +1160,6 @@ export class Spire extends EventEmitter {
                         TokenScopes.Register,
                     )
                 ) {
-                    if (
-                        !(await verifyDevicePayloadPreKeySignature(
-                            normalizedPayload,
-                        ))
-                    ) {
-                        res.status(400).send({
-                            error: "Prekey signature invalid.",
-                        });
-                        return;
-                    }
                     const [user, err] = await this.db.createUser(
                         regKey,
                         normalizedPayload,
