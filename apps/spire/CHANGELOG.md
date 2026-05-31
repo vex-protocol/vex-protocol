@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 2.3.4
+
+### Patch Changes
+
+- [#224](https://github.com/vex-protocol/vex-protocol/pull/224) [`deb5467`](https://github.com/vex-protocol/vex-protocol/commit/deb5467832ae0fc016a90d3fe6508a92bd02069e) Thanks [@yuki111888](https://github.com/yuki111888)! - Serve the CLI browser passkey bridge from Spire at `/cli/passkey` so CLI signup and passkey recovery links can complete WebAuthn ceremonies on the API origin.
+
 ## 2.3.3
 
 ### Patch Changes
