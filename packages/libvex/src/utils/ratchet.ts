@@ -16,8 +16,15 @@ import {
 } from "@vex-chat/crypto";
 
 const VERSION = 1;
+
+// Per-message derivation guard: do not derive more than this many skipped
+// message keys from a single ratchet header jump.
 export const MAX_SKIP_MESSAGE_GAP = 1024;
-export const MAX_SKIPPED_KEYS = 4096;
+
+// Per-session retention guard: keep this close to Signal's recommended
+// skipped-message-key cache bound so delayed messages work without retaining
+// excessive decryptable past message keys.
+export const MAX_SKIPPED_KEYS = 1024;
 
 const encoder = new TextEncoder();
 
