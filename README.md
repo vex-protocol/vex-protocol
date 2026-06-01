@@ -5,7 +5,6 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/build.yml?branch=master&event=push&style=flat-square&logo=github&label=CI)](https://github.com/vex-protocol/vex-protocol/actions/workflows/build.yml)
 [![npm audit](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/npm-audit.yml?branch=master&style=flat-square&logo=npm&label=npm%20audit)](https://github.com/vex-protocol/vex-protocol/actions/workflows/npm-audit.yml)
 [![Socket](https://img.shields.io/github/actions/workflow/status/vex-protocol/vex-protocol/socket.yml?branch=master&style=flat-square&label=Socket)](https://github.com/vex-protocol/vex-protocol/actions/workflows/socket.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/vex-protocol/vex-protocol/badge)](https://scorecard.dev/viewer/?uri=github.com/vex-protocol/vex-protocol)
 
 Monorepo for the **Vex** end-to-end encrypted messaging protocol: shared types and crypto, the [`@vex-chat/libvex`](packages/libvex/README.md) TypeScript client, and the [`@vex-chat/spire`](apps/spire/README.md) reference server.
 
