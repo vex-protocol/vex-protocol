@@ -538,13 +538,15 @@ export class SqliteStorage extends EventEmitter implements Storage {
             return;
         }
 
-        // Encrypt plaintext with at-rest key before saving to disk. Messages
-        // that never decrypted have no plaintext to protect; keep their empty
-        // placeholder readable so history reloads as a failure row.
         const storedPlaintext = encodeStoredMessagePlaintext(message);
+        const isPlaintextFailurePlaceholder =
+            !message.decrypted &&
+            message.message === "" &&
+            message.extra === undefined;
         const fips = getCryptoProfile() === "fips";
-        const encryptedMessage = message.decrypted
-            ? XUtils.encodeHex(
+        const encryptedMessage = isPlaintextFailurePlaceholder
+            ? storedPlaintext
+            : XUtils.encodeHex(
                   fips
                       ? await xSecretboxAsync(
                             XUtils.decodeUTF8(storedPlaintext),
@@ -556,8 +558,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                             XUtils.decodeHex(message.nonce),
                             this.atRestAesKey,
                         ),
-              )
-            : storedPlaintext;
+              );
         if (this.isClosingNow()) {
             return;
         }
@@ -792,7 +793,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
         for (const msg of messages) {
             const decryptedFlag = msg.decrypted !== 0;
             let plaintext = msg.message;
-            if (decryptedFlag) {
+            const isPlaintextFailurePlaceholder =
+                !decryptedFlag && msg.message === "" && msg.extra === null;
+            if (!isPlaintextFailurePlaceholder) {
                 const cipher = XUtils.decodeHex(msg.message);
                 const nonce = XUtils.decodeHex(msg.nonce);
                 const decrypted = fips
