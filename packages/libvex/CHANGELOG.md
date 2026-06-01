@@ -1,5 +1,13 @@
 # @vex-chat/libvex
 
+## 7.1.6
+
+### Patch Changes
+
+- [#227](https://github.com/vex-protocol/vex-protocol/pull/227) [`6a6c145`](https://github.com/vex-protocol/vex-protocol/commit/6a6c145ed153d52baef2e122bb45f7b6d1c87610) Thanks [@yuki111888](https://github.com/yuki111888)! - Emit undecrypted message placeholders after repeated decrypt failures so clients can surface a visible failure row instead of silently dropping notified mail.
+
+- [#231](https://github.com/vex-protocol/vex-protocol/pull/231) [`88f1239`](https://github.com/vex-protocol/vex-protocol/commit/88f1239b8dedd1d39f6c960206ac20b245a2c1b5) Thanks [@yuki111888](https://github.com/yuki111888)! - Fix at-rest encryption of undecrypted messages in SQLite storage. Previously, messages that arrived but failed decryption (non-empty, non-placeholder entries) were written to disk unencrypted; they are now encrypted with the at-rest key like all other messages.
+
 ## 7.1.5
 
 ### Patch Changes
