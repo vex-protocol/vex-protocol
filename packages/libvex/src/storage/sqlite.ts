@@ -538,24 +538,29 @@ export class SqliteStorage extends EventEmitter implements Storage {
             return;
         }
 
-        // Encrypt plaintext with at-rest key before saving to disk.
+        // Encrypt plaintext with at-rest key before saving to disk. Messages
+        // that never decrypted have no plaintext to protect; keep their empty
+        // placeholder readable so history reloads as a failure row.
         const storedPlaintext = encodeStoredMessagePlaintext(message);
         const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
+        const encryptedMessage = message.decrypted
+            ? XUtils.encodeHex(
+                  fips
+                      ? await xSecretboxAsync(
+                            XUtils.decodeUTF8(storedPlaintext),
+                            XUtils.decodeHex(message.nonce),
+                            this.atRestAesKey,
+                        )
+                      : xSecretbox(
+                            XUtils.decodeUTF8(storedPlaintext),
+                            XUtils.decodeHex(message.nonce),
+                            this.atRestAesKey,
+                        ),
               )
-            : xSecretbox(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
-              );
+            : storedPlaintext;
         if (this.isClosingNow()) {
             return;
         }
-        const encryptedMessage = XUtils.encodeHex(ct);
 
         try {
             await this.db
