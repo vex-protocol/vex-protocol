@@ -20,6 +20,7 @@ export default defineConfig({
                         "src/__tests__/http.test.ts",
                         "src/__tests__/ratchet.test.ts",
                         "src/__tests__/retention.test.ts",
+                        "src/__tests__/storage-sqlite.test.ts",
                         "src/__tests__/verifyKeyBundle.test.ts",
                     ],
                     name: "unit",
