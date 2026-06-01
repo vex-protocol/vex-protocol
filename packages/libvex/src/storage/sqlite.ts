@@ -538,24 +538,30 @@ export class SqliteStorage extends EventEmitter implements Storage {
             return;
         }
 
-        // Encrypt plaintext with at-rest key before saving to disk.
         const storedPlaintext = encodeStoredMessagePlaintext(message);
+        const isPlaintextFailurePlaceholder =
+            !message.decrypted &&
+            message.message === "" &&
+            message.extra === undefined;
         const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
-              )
-            : xSecretbox(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
+        const encryptedMessage = isPlaintextFailurePlaceholder
+            ? storedPlaintext
+            : XUtils.encodeHex(
+                  fips
+                      ? await xSecretboxAsync(
+                            XUtils.decodeUTF8(storedPlaintext),
+                            XUtils.decodeHex(message.nonce),
+                            this.atRestAesKey,
+                        )
+                      : xSecretbox(
+                            XUtils.decodeUTF8(storedPlaintext),
+                            XUtils.decodeHex(message.nonce),
+                            this.atRestAesKey,
+                        ),
               );
         if (this.isClosingNow()) {
             return;
         }
-        const encryptedMessage = XUtils.encodeHex(ct);
 
         try {
             await this.db
@@ -787,7 +793,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
         for (const msg of messages) {
             const decryptedFlag = msg.decrypted !== 0;
             let plaintext = msg.message;
-            if (decryptedFlag) {
+            const isPlaintextFailurePlaceholder =
+                !decryptedFlag && msg.message === "" && msg.extra === null;
+            if (!isPlaintextFailurePlaceholder) {
                 const cipher = XUtils.decodeHex(msg.message);
                 const nonce = XUtils.decodeHex(msg.nonce);
                 const decrypted = fips

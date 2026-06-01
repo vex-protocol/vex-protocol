@@ -2488,6 +2488,7 @@ export class Client {
     private acknowledgeRepeatedDecryptFailure(
         mail: MailWS,
         count: number,
+        timestamp: string,
     ): void {
         if (count < 2) return;
         if (libvexDebugDmEnabled()) {
@@ -2498,6 +2499,7 @@ export class Client {
                 thisDevice: this.getDevice().deviceID,
             });
         }
+        this.emitUndecryptedMessage(mail, timestamp);
         this.acknowledgeInboundMail(mail);
     }
 
@@ -3019,6 +3021,23 @@ export class Client {
             return ` (${err.code})`;
         }
         return "";
+    }
+
+    private emitUndecryptedMessage(mail: MailWS, timestamp: string): void {
+        this.emitter.emit("message", {
+            authorID: mail.authorID,
+            decrypted: false,
+            direction: "incoming",
+            forward: mail.forward,
+            group: mail.group ? uuid.stringify(mail.group) : null,
+            mailID: mail.mailID,
+            message: "",
+            nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
+            readerID: mail.readerID,
+            recipient: mail.recipient,
+            sender: mail.sender,
+            timestamp,
+        });
     }
 
     /**
@@ -4322,11 +4341,14 @@ export class Client {
                                   );
 
                         if (otk?.index !== preKeyIndex && preKeyIndex !== 0) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             if (libvexDebugDmEnabled()) {
                                 try {
                                     debugLibvexDm(
                                         "readMail initial: abort (otk index mismatch)",
                                         {
+                                            attempts: failureCount,
                                             mailID: mail.mailID,
                                             otkIndex: String(
                                                 otk?.index ?? "null",
@@ -4345,6 +4367,17 @@ export class Client {
                                     );
                                 }
                             }
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                                timestamp,
+                            );
                             return;
                         }
 
@@ -4363,11 +4396,14 @@ export class Client {
                                   return c;
                               })();
                         if (!IK_A) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             if (libvexDebugDmEnabled()) {
                                 try {
                                     debugLibvexDm(
                                         "readMail initial: abort (IK_A null, Ed→X25519?)",
                                         {
+                                            attempts: failureCount,
                                             fips: String(fipsRead),
                                             mailID: mail.mailID,
                                             thisDevice:
@@ -4383,6 +4419,17 @@ export class Client {
                                     );
                                 }
                             }
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                                timestamp,
+                            );
                             return;
                         }
                         const EK_A = ephKey;
@@ -4431,11 +4478,14 @@ export class Client {
                               );
 
                         if (!XUtils.bytesEqual(hmac, header)) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             if (libvexDebugDmEnabled()) {
                                 try {
                                     debugLibvexDm(
                                         "readMail initial: abort (HMAC mismatch)",
                                         {
+                                            attempts: failureCount,
                                             mailID: mail.mailID,
                                             preKeyIndex: String(preKeyIndex),
                                             thisDevice:
@@ -4451,6 +4501,17 @@ export class Client {
                                     );
                                 }
                             }
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                                timestamp,
+                            );
                             return;
                         }
                         const unsealed = await xSecretboxOpenAsync(
@@ -4582,15 +4643,29 @@ export class Client {
                             }
                             this.acknowledgeInboundMail(mail);
                         } else {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             if (libvexDebugDmEnabled()) {
                                 debugLibvexDm(
                                     "readMail initial: abort (xSecretboxOpen null)",
                                     {
+                                        attempts: failureCount,
                                         mailID: mail.mailID,
                                         preKeyIndex: String(preKeyIndex),
                                     },
                                 );
                             }
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                                timestamp,
+                            );
                         }
                         break;
                     case MailType.subsequent: {
@@ -4613,7 +4688,20 @@ export class Client {
                         }
 
                         if (!session) {
+                            const failureCount =
+                                this.registerDecryptFailure(mail);
                             healSession();
+                            if (failureCount === 1) {
+                                this.emitter.emit("retryRequest", {
+                                    mailID: mail.mailID,
+                                    source: "decrypt_failure",
+                                });
+                            }
+                            this.acknowledgeRepeatedDecryptFailure(
+                                mail,
+                                failureCount,
+                                timestamp,
+                            );
                             return;
                         }
 
@@ -4717,6 +4805,7 @@ export class Client {
                             this.acknowledgeRepeatedDecryptFailure(
                                 mail,
                                 failureCount,
+                                timestamp,
                             );
                             return;
                         }
@@ -4808,6 +4897,7 @@ export class Client {
                             this.acknowledgeRepeatedDecryptFailure(
                                 mail,
                                 failureCount,
+                                timestamp,
                             );
                         }
                         break;
