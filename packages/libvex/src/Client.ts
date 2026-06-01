@@ -1012,6 +1012,7 @@ const mailInboxEntry = z.tuple([
     MailWSSchema,
     z.string(),
 ]);
+type MailInboxEntry = z.infer<typeof mailInboxEntry>;
 const deviceRequestNotifyData = z.object({
     requestID: z.string(),
     status: z.union([
@@ -1602,6 +1603,8 @@ export class Client {
     private device?: Device;
 
     private deviceRecords: Record<string, Device> = {};
+    private directMailDraining = false;
+    private readonly directMailQueue: MailInboxEntry[] = [];
     // ── Event subscription (composition over inheritance) ───────────────
     private readonly emitter = new EventEmitter<ClientEvents>();
 
@@ -1622,6 +1625,7 @@ export class Client {
     private mailBatchFlushTimer: null | ReturnType<typeof setTimeout> = null;
     private readonly mailBatchQueue: PendingMailBatchDelivery[] = [];
     private mailBatchUnsupported = false;
+    private mailFetchQueued = false;
     private readonly mailInterval?: NodeJS.Timeout;
 
     private manuallyClosing: boolean = false;
@@ -3023,6 +3027,40 @@ export class Client {
         return "";
     }
 
+    private async drainDirectMailQueue(): Promise<void> {
+        if (this.directMailDraining) {
+            return;
+        }
+        this.directMailDraining = true;
+        try {
+            while (!this.isManualCloseInFlight()) {
+                const entry = this.directMailQueue.shift();
+                if (!entry) {
+                    break;
+                }
+                const [mailHeader, mailBody, timestamp] = entry;
+                try {
+                    await this.readMail(mailHeader, mailBody, timestamp);
+                } catch (readMailErr) {
+                    if (libvexDebugDmEnabled()) {
+                        // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
+                        console.error(
+                            "[libvex:debug-dm] notify readMail threw",
+                            readMailErr,
+                        );
+                    }
+                }
+            }
+        } finally {
+            this.directMailDraining = false;
+            if (this.isManualCloseInFlight()) {
+                this.directMailQueue.length = 0;
+            } else if (this.directMailQueue.length > 0) {
+                void this.drainDirectMailQueue();
+            }
+        }
+    }
+
     private emitUndecryptedMessage(mail: MailWS, timestamp: string): void {
         this.emitter.emit("message", {
             authorID: mail.authorID,
@@ -3038,6 +3076,13 @@ export class Client {
             sender: mail.sender,
             timestamp,
         });
+    }
+
+    private enqueueDirectMail(entry: MailInboxEntry): void {
+        this.directMailQueue.push(entry);
+        if (!this.directMailDraining) {
+            void this.drainDirectMailQueue();
+        }
     }
 
     /**
@@ -3460,78 +3505,92 @@ export class Client {
         if (this.manuallyClosing) {
             return;
         }
-        while (this.fetchingMail) {
-            await sleep(500);
+        if (this.fetchingMail) {
+            this.mailFetchQueued = true;
+            return;
         }
         this.fetchingMail = true;
-        let firstFetch = false;
-        if (this.firstMailFetch) {
-            firstFetch = true;
-            this.firstMailFetch = false;
-        }
-
-        if (firstFetch) {
-            this.emitter.emit("decryptingMail");
-        }
 
         try {
-            const res = await this.http.post(
-                this.getHost() +
-                    "/device/" +
-                    this.getDevice().deviceID +
-                    "/mail",
-            );
-            const mailBuffer = new Uint8Array(res.data);
-            const rawInbox = z
-                .array(mailInboxEntry)
-                .parse(msgpack.decode(mailBuffer));
-            const inbox = rawInbox.sort(compareInboxEntries);
+            do {
+                this.mailFetchQueued = false;
+                let firstFetch = false;
+                if (this.firstMailFetch) {
+                    firstFetch = true;
+                    this.firstMailFetch = false;
+                }
 
-            if (libvexDebugDmEnabled()) {
-                const did = (() => {
-                    try {
-                        return this.getDevice().deviceID;
-                    } catch {
-                        return "(no device)";
-                    }
-                })();
-                debugLibvexDm("getMail: inbox", {
-                    count: String(inbox.length),
-                    deviceID: did,
-                });
-            }
+                if (firstFetch) {
+                    this.emitter.emit("decryptingMail");
+                }
 
-            for (const mailDetails of inbox) {
-                const [mailHeader, mailBody, timestamp] = mailDetails;
                 try {
+                    const res = await this.http.post(
+                        this.getHost() +
+                            "/device/" +
+                            this.getDevice().deviceID +
+                            "/mail",
+                    );
+                    const mailBuffer = new Uint8Array(res.data);
+                    const rawInbox = z
+                        .array(mailInboxEntry)
+                        .parse(msgpack.decode(mailBuffer));
+                    const inbox = rawInbox.sort(compareInboxEntries);
+
                     if (libvexDebugDmEnabled()) {
-                        debugLibvexDm("getMail: readMail one", {
-                            mailID: mailBody.mailID,
-                            recipient: mailBody.recipient,
-                            type: String(mailBody.mailType),
+                        const did = (() => {
+                            try {
+                                return this.getDevice().deviceID;
+                            } catch {
+                                return "(no device)";
+                            }
+                        })();
+                        debugLibvexDm("getMail: inbox", {
+                            count: String(inbox.length),
+                            deviceID: did,
                         });
                     }
-                    await this.readMail(mailHeader, mailBody, timestamp);
-                } catch (readMailErr) {
+
+                    for (const mailDetails of inbox) {
+                        const [mailHeader, mailBody, timestamp] = mailDetails;
+                        try {
+                            if (libvexDebugDmEnabled()) {
+                                debugLibvexDm("getMail: readMail one", {
+                                    mailID: mailBody.mailID,
+                                    recipient: mailBody.recipient,
+                                    type: String(mailBody.mailType),
+                                });
+                            }
+                            await this.readMail(
+                                mailHeader,
+                                mailBody,
+                                timestamp,
+                            );
+                        } catch (readMailErr) {
+                            if (libvexDebugDmEnabled()) {
+                                // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
+                                console.error(
+                                    "[libvex:debug-dm] readMail threw",
+                                    readMailErr,
+                                );
+                            }
+                        }
+                    }
+                } catch (fetchErr) {
                     if (libvexDebugDmEnabled()) {
                         // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
                         console.error(
-                            "[libvex:debug-dm] readMail threw",
-                            readMailErr,
+                            "[libvex:debug-dm] getMail fetch failed",
+                            fetchErr,
                         );
                     }
                 }
-            }
-        } catch (fetchErr) {
-            if (libvexDebugDmEnabled()) {
-                // eslint-disable-next-line no-console -- LIBVEX_DEBUG_DM only
-                console.error(
-                    "[libvex:debug-dm] getMail fetch failed",
-                    fetchErr,
-                );
-            }
+            } while (this.isMailFetchQueued() && !this.isManualCloseInFlight());
         } finally {
             this.fetchingMail = false;
+            if (this.isManualCloseInFlight()) {
+                this.mailFetchQueued = false;
+            }
         }
     }
 
@@ -3688,7 +3747,14 @@ export class Client {
                 break;
             }
             case "mail":
-                await this.getMail();
+                {
+                    const parsed = mailInboxEntry.safeParse(msg.data);
+                    if (parsed.success) {
+                        this.enqueueDirectMail(parsed.data);
+                    } else {
+                        await this.getMail();
+                    }
+                }
                 break;
             case "permission":
                 this.emitter.emit(
@@ -3863,6 +3929,10 @@ export class Client {
      * after `await` are flagged as always-false by control-flow analysis even though
      * `close()` can run concurrently.
      */
+    private isMailFetchQueued(): boolean {
+        return this.mailFetchQueued;
+    }
+
     private isManualCloseInFlight(): boolean {
         return this.manuallyClosing;
     }
@@ -3971,7 +4041,10 @@ export class Client {
         ) {
             return;
         }
-        void this.database.saveMessage(message);
+        void this.database.saveMessage(message).catch(() => {
+            // Best-effort local history write. Close can race with a final
+            // server notification; message events have already been emitted.
+        });
         this.scheduleRetentionPurge();
     };
 
@@ -4235,7 +4308,14 @@ export class Client {
             return;
         }
 
-        if (await this.database.hasMessage(mail.mailID)) {
+        const isSelfDeliveredMail =
+            mail.sender === mail.recipient &&
+            mail.recipient === this.getDevice().deviceID;
+
+        if (
+            !isSelfDeliveredMail &&
+            (await this.database.hasMessage(mail.mailID))
+        ) {
             if (libvexDebugDmEnabled()) {
                 try {
                     debugLibvexDm("readMail: skip (stored mailID)", {
@@ -4595,6 +4675,11 @@ export class Client {
                                 await this.database.deleteOneTimeKey(
                                     preKeyIndex,
                                 );
+                            }
+
+                            if (isSelfDeliveredMail) {
+                                this.acknowledgeInboundMail(mail);
+                                break;
                             }
 
                             const deviceEntry = await this.getDeviceByID(
@@ -5415,7 +5500,8 @@ export class Client {
                 device.deviceID,
             );
 
-            if (!session || retry) {
+            const isSelfTarget = device.deviceID === this.getDevice().deviceID;
+            if (!session || retry || isSelfTarget) {
                 if (libvexDebugDmEnabled()) {
                     debugLibvexDm("sendMail: createSession path", {
                         hasSession: String(!!session),

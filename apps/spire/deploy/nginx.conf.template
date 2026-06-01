@@ -20,8 +20,11 @@ http {
         =/healthz /healthz;
         =/status /status;
         =/deviceList /deviceList;
+        =/.well-known/apple-app-site-association /.well-known/apple-app-site-association;
+        =/.well-known/assetlinks.json /.well-known/assetlinks.json;
         ~^/auth/device/verify(?:/|$) /auth/device/verify;
         ~^/auth/device(?:/|$) /auth/device;
+        ~^/auth/passkey(?:/|$) /auth/passkey;
         ~^/device/[^/]+/keyBundle(?:/|$) /device/:id/keyBundle;
         ~^/device/[^/]+/mail(?:/|$) /device/:id/mail;
         ~^/device/[^/]+/connect(?:/|$) /device/:id/connect;
@@ -54,6 +57,20 @@ http {
     server {
         listen 16777;
         client_max_body_size 50m;
+
+        location = /.well-known/apple-app-site-association {
+            root /tmp;
+            try_files /spire-passkey-well-known/apple-app-site-association =404;
+            default_type application/json;
+            add_header Cache-Control "public, max-age=300" always;
+        }
+
+        location = /.well-known/assetlinks.json {
+            root /tmp;
+            try_files /spire-passkey-well-known/assetlinks.json =404;
+            default_type application/json;
+            add_header Cache-Control "public, max-age=300" always;
+        }
 
         location / {
             proxy_pass http://spire_backend;

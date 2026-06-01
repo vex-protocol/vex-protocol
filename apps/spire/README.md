@@ -14,7 +14,7 @@ Reference server implementation for the [Vex](https://vex.wtf) protocol.
 
 ## What's in the box
 
-- **REST API** (Express 5) for full e2e messaging including auth, registration, users, servers, channels, invites, and file upload.
+- **REST API** (Rust/Axum) for e2e messaging including auth, registration, users, servers, channels, invites, passkeys, notifications, files, avatars, and emoji upload.
 
 ## Install
 
@@ -30,7 +30,7 @@ Spire's source lives at `apps/spire/`. Most commands below run from the monorepo
 
 ## Running the server (Docker)
 
-The Dockerfile uses the monorepo as build context so the build can resolve `workspace:^` deps for `@vex-chat/{types,crypto,libvex}`. From `apps/spire/`, with Docker and Docker Compose installed:
+The Dockerfile uses the monorepo as build context and builds the Rust runtime from `apps/spire/rust`. From `apps/spire/`, with Docker and Docker Compose installed:
 
 ```sh
 cp .env.example .env
@@ -38,56 +38,56 @@ cp .env.example .env
 docker compose up --build
 ```
 
-**Crypto mode (tweetnacl vs FIPS):** `SPIRE_FIPS` in `.env` selects the server profile. It must match how you generated `SPK` — **`pnpm --filter @vex-chat/spire gen-spk`** (Ed25519) for tweetnacl, or **`pnpm --filter @vex-chat/spire gen-spk-fips`** (P-256) with **`SPIRE_FIPS=true`**. The generators print compose-safe, unquoted `SPK=...` and `JWT_SECRET=...` lines; paste those directly. You can override for one run without editing `.env`: `SPIRE_FIPS=true docker compose up` (or `=false`).
+**Crypto mode:** the Rust runtime supports the default tweetnacl/Ed25519 profile and the FIPS/P-256 profile used by legacy Node Spire. Generate tweetnacl keys with **`pnpm --filter @vex-chat/spire gen-spk`** or FIPS keys with **`pnpm --filter @vex-chat/spire gen-spk-fips`**, then paste the compose-safe `SPK=...` and `JWT_SECRET=...` lines directly.
 
-Compose builds the image (context: monorepo root, dockerfile: `apps/spire/Dockerfile`), starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777** (see `ports` in `docker-compose.yml`). Spire itself listens on **16777** inside the `internal` network (same for tweetnacl and FIPS — `GET /status` reports the crypto profile). Nginx and the health check use `deploy/resolve-spire-listen-port.sh` to match. Use **http://127.0.0.1:16777** for HTTP and WebSocket. Runtime keys and passkey settings come from `apps/spire/.env` via Compose `env_file`; they are intentionally not copied into the Docker image.
+Compose builds the image (context: monorepo root, dockerfile: `apps/spire/Dockerfile`), starts Spire with a persistent **`spire-data`** volume mounted at `/data` (`files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777** (see `ports` in `docker-compose.yml`). Spire itself listens on **16777** inside the `internal` network. Nginx and the health check use `deploy/resolve-spire-listen-port.sh` to match. Use **http://127.0.0.1:16777** for HTTP and WebSocket. Spire runtime keys come from `apps/spire/.env` via Compose `env_file`; they are intentionally not copied into the Docker image. In Docker, nginx receives only public passkey association metadata and serves it at `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`.
 
 ## Running without Docker
 
-For local development or if you installed from npm, Spire runs with `node --experimental-strip-types` (no separate compile step):
+For local development or if you installed from npm, Spire's default runtime is Rust and requires a Rust toolchain:
 
 ```sh
 pnpm --filter @vex-chat/spire start
 # or, from apps/spire/: pnpm start
-# or: node --experimental-strip-types src/run.ts
+# or: cargo run --manifest-path apps/spire/rust/Cargo.toml --
 ```
 
-From an npm install, sources live under `node_modules/@vex-chat/spire/src/`:
+The legacy Node implementation is still present for transition work:
 
 ```sh
-node --experimental-strip-types node_modules/@vex-chat/spire/src/run.ts
+pnpm --filter @vex-chat/spire start:node
 ```
 
 ## Configuration
 
-Spire reads configuration from environment variables. **Docker Compose:** put them in a `.env` file next to `docker-compose.yml` (the `env_file` entry injects them into the container). **Bare Node:** `dotenv` loads `.env` from the process working directory when you run `src/run.ts`.
+Spire reads configuration from environment variables. **Docker Compose:** put them in a `.env` file next to `docker-compose.yml` (the `env_file` entry injects them into the container). **Bare Rust:** `dotenv` loads `.env` from the process working directory when you run `pnpm start` or `cargo run`.
 
 ### Required
 
 | Variable     | Description                                                                                                                                                                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SPK`        | Server private key, hex-encoded. **tweetnacl:** `pnpm --filter @vex-chat/spire gen-spk` (Ed25519). **FIPS:** `pnpm --filter @vex-chat/spire gen-spk-fips` and set `SPIRE_FIPS=true` (P-256 PKCS#8). Each command prints compose-safe `SPK` and `JWT_SECRET` lines. |
+| `SPK`        | Server private key, hex-encoded. Use `pnpm --filter @vex-chat/spire gen-spk` (Ed25519). The command prints compose-safe `SPK` and `JWT_SECRET` lines.                                                                                                          |
 | `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                                   |
-| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                                                                                    |
 
 ### Optional
 
 | Variable       | Default    | Description                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SPIRE_FIPS`   | _falsy_    | If `true` or `1`, run the **FIPS** profile (P-256, Web Crypto). `SPK` must come from `pnpm --filter @vex-chat/spire gen-spk-fips`, not `gen-spk`. Any other value uses **tweetnacl** (Ed25519) and `gen-spk`. In Docker Compose, the service passes `SPIRE_FIPS=${SPIRE_FIPS:-false}` so the shell or `.env` can set the mode.                                                                         |
+| `SPIRE_FIPS`   | _falsy_    | Set to `true`/`1` to use the P-256/FIPS profile with keys generated by `pnpm --filter @vex-chat/spire gen-spk-fips`. Leave unset for the default tweetnacl/Ed25519 profile.                                                                                                                                                            |
 | `API_PORT`     | (see text) | If unset, Spire listens on **16777** (all crypto profiles; use `GET /status` to see which). In Docker, nginx and the image healthcheck use `deploy/resolve-spire-listen-port.sh` to follow the same rule. Set explicitly to override.                                                                                                                                                                  |
 | `NODE_ENV`     | _(unset)_  | Set to `production` to disable interactive `/docs` / `/async-docs`. If unset or any other value, doc viewers are mounted. `helmet()` runs in all modes.                                                                                                                                                                                                                                                |
 | `CORS_ORIGINS` | _(empty)_  | Comma-separated allowed `Origin` values. If set, only those origins may use credentialed browser requests. If unset, Spire **reflects the request `Origin`** so self-hosted Spire and arbitrary app origins (Tauri, localhost, etc.) work without configuration — appropriate for bearer-token APIs; set an allowlist if you need to restrict which sites may call your instance from users' browsers. |
-| `DEV_API_KEY`  | _(empty)_  | When set, requests that send header `x-dev-api-key` with the same value (constant-time compare) **skip in-process rate limiters**. The same gate enables **`GET /status/process`** (404 without a valid key): a small JSON snapshot of the Spire Node process (PID, uptime, `memoryUsage`, cumulative `resourceUsage`, WebSocket client count). Dev / load-testing only — never set in production.     |
+| `DEV_API_KEY`  | _(empty)_  | When set, requests that send header `x-dev-api-key` with the same value **skip in-process rate limiters**. The same gate enables **`GET /status/process`** (404 without a valid key): a small JSON snapshot of the Spire process. Dev / load-testing only — never set in production.                                                  |
 | `CANARY`       | _(unset)_  |                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### Passkeys / WebAuthn
 
-The `/auth/passkey/*`, `/user/:id/passkeys/*`, and `/passkey/*` routes are gated on `SPIRE_PASSKEY_RP_ID` and `SPIRE_PASSKEY_ORIGINS`; without them those endpoints return `500 Passkeys are not configured`. Spire also serves the CLI WebAuthn bridge at `/cli/passkey`, which should be loaded from an origin listed in `SPIRE_PASSKEY_ORIGINS` so browser passkey ceremonies verify against the same RP config as native clients. See [`.env.example`](./.env.example) for the full set, including the optional `SPIRE_PASSKEY_IOS_APP_IDS`, `SPIRE_PASSKEY_ANDROID_PACKAGE`, and `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` triple that makes spire serve the WebAuthn well-known association files (`/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json`) directly. Those endpoints 404 when their env vars aren't set, so a non-passkey deployment is indistinguishable from one that hasn't enrolled an app.
+Docker Compose nginx handles the passkey platform association routes:
 
-The same `SPIRE_PASSKEY_ANDROID_FINGERPRINTS` value is reused by `getRpConfig()` to derive `android:apk-key-hash:<base64url>` entries, which it merges into the WebAuthn `expectedOrigin` allowlist. Native Android Credential Manager sets `clientDataJSON.origin` to that string instead of the RP host, so without those entries simplewebauthn rejects every native-Android assertion at the origin check (the mobile UI surfaces this as a generic "RP failed" error). Operators only have to publish the cert fingerprints; the base64url math is handled server-side.
+- `/.well-known/apple-app-site-association` from `SPIRE_PASSKEY_IOS_APP_IDS`
+- `/.well-known/assetlinks.json` from `SPIRE_PASSKEY_ANDROID_PACKAGE` and `SPIRE_PASSKEY_ANDROID_FINGERPRINTS`
 
-For Docker Compose, place the passkey variables in `apps/spire/.env` beside `SPK` and `JWT_SECRET`; the compose file passes that env file into the `spire` container. Production should use the production RP host, Android package, and EAS signing-certificate fingerprint. Development should use its own host/package/fingerprint so the dev APK is not authorized by the production association file.
+The Rust runtime implements the WebAuthn ceremony API routes (`/auth/passkey/...`, `/user/:id/passkeys/...`, and passkey device recovery routes) when `SPIRE_PASSKEY_RP_ID` and `SPIRE_PASSKEY_ORIGINS` are set. Bare Rust also serves the association files for local development, but the Docker deployment intentionally serves those paths from nginx so nginx only receives public passkey metadata, not Spire secrets.
 
 ### Sample `.env`
 
@@ -95,7 +95,7 @@ For Docker Compose, place the passkey variables in `apps/spire/.env` beside `SPK
 # Run `pnpm --filter @vex-chat/spire gen-spk` and paste the two lines it prints (SPK + JWT_SECRET).
 SPK=a1b2c3...
 JWT_SECRET=d4e5f6...
-DB_TYPE=sqlite
+# DB_TYPE is accepted by legacy Node Spire; the Rust runtime stores state in-process today.
 # CANARY=true
 # API_PORT=        # unset = 16777 unless you override
 NODE_ENV=production
@@ -107,7 +107,7 @@ From the monorepo root (or use `pnpm <script>` from `apps/spire/`):
 
 ```sh
 pnpm install                                  # install workspace deps
-pnpm --filter @vex-chat/spire build           # tsc (sanity check — runtime uses --experimental-strip-types)
+pnpm --filter @vex-chat/spire build           # tsc sanity check for legacy Node sources
 pnpm --filter @vex-chat/spire lint            # eslint strictTypeChecked
 pnpm --filter @vex-chat/spire lint:fix        # eslint --fix
 pnpm --filter @vex-chat/spire test            # vitest run

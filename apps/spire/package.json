@@ -1,11 +1,12 @@
 {
     "name": "@vex-chat/spire",
     "version": "2.3.3",
-    "description": "Vex server implementation in NodeJS.",
+    "description": "Vex server implementation.",
     "type": "module",
     "files": [
         "dist",
         "src",
+        "rust",
         "LICENSE",
         "LICENSE-COMMERCIAL",
         "LICENSING.md",
@@ -31,7 +32,9 @@
     },
     "scripts": {
         "rebuild:sqlite": "pnpm rebuild better-sqlite3",
-        "start": "node --experimental-strip-types src/run.ts",
+        "start": "cargo run --manifest-path rust/Cargo.toml --",
+        "start:node": "node --experimental-strip-types src/run.ts",
+        "start:rust": "cargo run --manifest-path rust/Cargo.toml --",
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc && node scripts/clean-dist-tests.mjs",
         "format": "prettier --write .",
