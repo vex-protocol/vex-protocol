@@ -17,6 +17,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
         echo "SPIRE_PASSKEY_RP_NAME=${SPIRE_PASSKEY_RP_NAME:-Vex Local}"
         echo "SPIRE_PASSKEY_ORIGINS=${SPIRE_PASSKEY_ORIGINS:-http://localhost:5180,http://127.0.0.1:5180}"
         echo "SPIRE_STUN_URLS=${SPIRE_STUN_URLS:-stun:stun.l.google.com:19302}"
+        echo "# Optional Cloudflare TURN credentials. Keep these server-side."
+        echo "# SPIRE_CLOUDFLARE_TURN_KEY_ID="
+        echo "# SPIRE_CLOUDFLARE_TURN_API_TOKEN="
+        echo "# SPIRE_CLOUDFLARE_TURN_TTL_SECONDS=86400"
     } > "$ENV_FILE"
     echo "Created $ENV_FILE"
 fi
@@ -33,8 +37,14 @@ export SPIRE_PASSKEY_RP_ID="${SPIRE_PASSKEY_RP_ID:-localhost}"
 export SPIRE_PASSKEY_RP_NAME="${SPIRE_PASSKEY_RP_NAME:-Vex Local}"
 export SPIRE_PASSKEY_ORIGINS="${SPIRE_PASSKEY_ORIGINS:-http://localhost:5180,http://127.0.0.1:5180}"
 export SPIRE_STUN_URLS="${SPIRE_STUN_URLS:-stun:stun.l.google.com:19302}"
+export SPIRE_CLOUDFLARE_TURN_TTL_SECONDS="${SPIRE_CLOUDFLARE_TURN_TTL_SECONDS:-86400}"
 
 echo "Starting local Spire on http://localhost:${API_PORT}"
+if [[ -n "${SPIRE_CLOUDFLARE_TURN_KEY_ID:-}" && -n "${SPIRE_CLOUDFLARE_TURN_API_TOKEN:-}" ]]; then
+    echo "Cloudflare TURN: enabled"
+else
+    echo "Cloudflare TURN: disabled"
+fi
 echo "Desktop local dev: VITE_SERVER_URL=localhost:5180 VITE_PROXY_TARGET=http://localhost:${API_PORT}"
 echo "Mobile local dev: EXPO_PUBLIC_ENABLE_DEV_SERVER=1 EXPO_PUBLIC_SERVER_URL=localhost:${API_PORT}"
 

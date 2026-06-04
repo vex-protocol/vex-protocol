@@ -8,7 +8,6 @@ import type {
     ActionToken,
     BaseMsg,
     Device,
-    IceServerConfig,
     MailWS,
     User,
 } from "@vex-chat/types";
@@ -32,7 +31,6 @@ import {
     xSignKeyPairFromSecretAsync,
 } from "@vex-chat/crypto";
 import {
-    IceServerConfigSchema,
     MailWSSchema,
     RegistrationPayloadSchema,
     TokenScopes,
@@ -48,6 +46,7 @@ import { z } from "zod/v4";
 import { CallManager } from "./CallManager.ts";
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
+import { resolveIceServersFromEnv } from "./IceServers.ts";
 import { NotificationService } from "./NotificationService.ts";
 import { initApp, protect } from "./server/index.ts";
 import {
@@ -1013,8 +1012,8 @@ export class Spire extends EventEmitter {
             res.json({ calls: this.calls.activeCallsForUser(user.userID) });
         });
 
-        this.api.get("/calls/ice-servers", protect, (_req, res) => {
-            res.json({ iceServers: readIceServersFromEnv() });
+        this.api.get("/calls/ice-servers", protect, async (_req, res) => {
+            res.json({ iceServers: await resolveIceServersFromEnv() });
         });
 
         this.api.post(
@@ -1389,50 +1388,4 @@ function normalizeRegistrationUsername(
         .replace(/[^a-f0-9]/g, "")
         .slice(0, 12);
     return `key_${seed}`;
-}
-
-function readIceServersFromEnv(): IceServerConfig[] {
-    const json = process.env["SPIRE_ICE_SERVERS"]?.trim();
-    if (json && json.length > 0) {
-        try {
-            const parsed = JSON.parse(json) as unknown;
-            return z.array(IceServerConfigSchema).parse(parsed);
-        } catch (err: unknown) {
-            console.warn(
-                "[spire-calls] ignoring invalid SPIRE_ICE_SERVERS",
-                err instanceof Error ? err.message : String(err),
-            );
-        }
-    }
-
-    const servers: IceServerConfig[] = [];
-    for (const url of splitCsvEnv("SPIRE_STUN_URLS")) {
-        servers.push({ urls: url });
-    }
-
-    const turnUrls = splitCsvEnv("SPIRE_TURN_URLS");
-    if (turnUrls.length > 0) {
-        const username = process.env["SPIRE_TURN_USERNAME"]?.trim();
-        const credential = process.env["SPIRE_TURN_CREDENTIAL"]?.trim();
-        const [firstTurnUrl] = turnUrls;
-        if (!firstTurnUrl) {
-            return servers;
-        }
-        const urls: string | string[] =
-            turnUrls.length === 1 ? firstTurnUrl : turnUrls;
-        servers.push({
-            ...(credential ? { credential } : {}),
-            urls,
-            ...(username ? { username } : {}),
-        });
-    }
-
-    return servers;
-}
-
-function splitCsvEnv(name: string): string[] {
-    return (process.env[name] ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0);
 }
