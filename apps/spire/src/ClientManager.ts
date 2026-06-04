@@ -4,6 +4,7 @@
  * Commercial licenses available at vex.wtf
  */
 
+import type { CallManager } from "./CallManager.ts";
 import type { Database } from "./Database.ts";
 import type {
     BaseMsg,
@@ -44,7 +45,9 @@ function emptyHeader() {
     return new Uint8Array(32);
 }
 
-const MAX_MSG_SIZE = 2048;
+// WebRTC SDP offers/answers are commonly several KB before encryption/packing.
+// Keep this well below HTTP body limits while allowing first-party call signals.
+const MAX_MSG_SIZE = 64 * 1024;
 
 // How many ping cycles in a row are allowed to go without a pong
 // before we declare the connection dead. With a 5s ping interval
@@ -68,6 +71,7 @@ const PING_INTERVAL_MS = 5000;
 export class ClientManager extends EventEmitter {
     private alive: boolean = true;
     private authed: boolean = false;
+    private callManager: CallManager;
     private challengeID: Uint8Array = createUint8UUID();
     private conn: WebSocket;
     private db: Database;
@@ -89,6 +93,7 @@ export class ClientManager extends EventEmitter {
     constructor(
         ws: WebSocket,
         db: Database,
+        callManager: CallManager,
         notify: (
             userID: string,
             event: string,
@@ -103,6 +108,7 @@ export class ClientManager extends EventEmitter {
         super();
         this.conn = ws;
         this.db = db;
+        this.callManager = callManager;
         this.user = null;
         this.userDetails = userDetails;
         this.device = null;
@@ -280,6 +286,25 @@ export class ClientManager extends EventEmitter {
 
     private async parseResourceMsg(msg: ResourceMsg, header: Uint8Array) {
         switch (msg.resourceType) {
+            case "call":
+                try {
+                    const event = await this.callManager.handleResource({
+                        action: msg.action,
+                        actor: {
+                            device: this.getDevice(),
+                            user: this.getUser(),
+                        },
+                        data: msg.data,
+                        transmissionID: msg.transmissionID,
+                    });
+                    this.sendSuccess(msg.transmissionID, event);
+                } catch (err: unknown) {
+                    this.sendErr(
+                        msg.transmissionID,
+                        err instanceof Error ? err.message : String(err),
+                    );
+                }
+                break;
             case "mail":
                 if (msg.action === "CREATE") {
                     const mailResult = MailWSSchema.safeParse(msg.data);

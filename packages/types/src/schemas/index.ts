@@ -5,6 +5,25 @@
  */
 
 export {
+    type CallAction,
+    CallActionSchema,
+    type CallConversationType,
+    type CallEvent,
+    CallEventSchema,
+    type CallParticipant,
+    CallParticipantSchema,
+    type CallResourceData,
+    CallResourceDataSchema,
+    type CallSession,
+    CallSessionSchema,
+    type CallSignalKind,
+    type CallSignalPayload,
+    CallSignalPayloadSchema,
+    type IceServerConfig,
+    IceServerConfigSchema,
+} from "./calls.js";
+
+export {
     type ActionToken,
     ActionTokenSchema,
     datetime,
