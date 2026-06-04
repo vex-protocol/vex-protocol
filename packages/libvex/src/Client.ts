@@ -15,6 +15,10 @@ import type {
 import type { KeyPair } from "@vex-chat/crypto";
 import type {
     ActionToken,
+    CallEvent,
+    CallResourceData,
+    CallSession,
+    CallSignalPayload,
     ChallMsg,
     Channel,
     Device,
@@ -22,6 +26,7 @@ import type {
     Emoji,
     FileResponse,
     FileSQL,
+    IceServerConfig,
     Invite,
     KeyBundle,
     MailWS,
@@ -70,6 +75,9 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import {
+    CallEventSchema,
+    CallSessionSchema,
+    IceServerConfigSchema,
     MailType,
     MailWSSchema,
     PermissionSchema,
@@ -188,6 +196,16 @@ function debugLibvexDm(
     const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
     // eslint-disable-next-line no-console -- gated by LIBVEX_DEBUG_DM; remove when debugging is done
     console.error(`[libvex:debug-dm] ${payload}`);
+}
+
+function errorFromUnknown(err: unknown): Error {
+    if (err instanceof Error) {
+        return err;
+    }
+    if (typeof err === "string") {
+        return new Error(err);
+    }
+    return new Error(JSON.stringify(err));
 }
 
 function ignoreSocketTeardown(err: unknown): void {
@@ -355,6 +373,28 @@ import { sqlSessionToCrypto } from "./utils/sqlSessionToCrypto.js";
 import { uuidToUint8 } from "./utils/uint8uuid.js";
 
 const _protocolMsgRegex = /��\w+:\w+��/g;
+
+/**
+ * Voice-call signaling operations.
+ *
+ * `libvex` moves authenticated call control over Spire. Platform apps own
+ * WebRTC/media capture and pass offers, answers, and ICE candidates through
+ * these methods.
+ */
+export interface Calls {
+    accept: (callID: string, signal?: CallSignalPayload) => Promise<CallEvent>;
+    active: () => Promise<CallSession[]>;
+    cancel: (callID: string) => Promise<CallEvent>;
+    hangup: (callID: string) => Promise<CallEvent>;
+    ice: (callID: string, signal: CallSignalPayload) => Promise<CallEvent>;
+    iceServers: () => Promise<IceServerConfig[]>;
+    reject: (callID: string) => Promise<CallEvent>;
+    signal: (callID: string, signal: CallSignalPayload) => Promise<CallEvent>;
+    startDM: (
+        recipientUserID: string,
+        signal?: CallSignalPayload,
+    ) => Promise<CallEvent>;
+}
 
 /**
  * @ignore
@@ -1034,6 +1074,8 @@ const retryRequestNotifyData = z.union([
  * and {@link Client.once}.
  */
 export interface ClientEvents {
+    /** Voice-call signaling changed or an incoming call was received. */
+    call: (event: CallEvent) => void;
     /** The client has been shut down (via {@link Client.close}). */
     closed: () => void;
     /** WebSocket authorized by the server; pre-auth setup begins. */
@@ -1279,6 +1321,35 @@ export class Client {
     public static encryptKeyDataAsync = XUtils.encryptKeyDataAsync;
 
     private static readonly NOT_FOUND_TTL = 30 * 60 * 1000;
+
+    /**
+     * Voice-call signaling operations.
+     *
+     * Platform apps own native media capture/WebRTC. These methods only move
+     * authenticated signaling and call state over Spire.
+     */
+    public calls: Calls = {
+        accept: (callID: string, signal?: CallSignalPayload) =>
+            this.sendCallResource("ACCEPT", {
+                callID,
+                ...(signal ? { signal } : {}),
+            }),
+        active: this.fetchActiveCalls.bind(this),
+        cancel: (callID: string) => this.sendCallResource("CANCEL", { callID }),
+        hangup: (callID: string) => this.sendCallResource("HANGUP", { callID }),
+        ice: (callID: string, signal: CallSignalPayload) =>
+            this.sendCallResource("ICE", { callID, signal }),
+        iceServers: this.fetchIceServers.bind(this),
+        reject: (callID: string) => this.sendCallResource("REJECT", { callID }),
+        signal: (callID: string, signal: CallSignalPayload) =>
+            this.sendCallResource("SIGNAL", { callID, signal }),
+        startDM: (recipientUserID: string, signal?: CallSignalPayload) =>
+            this.sendCallResource("INVITE", {
+                conversationType: "dm",
+                recipientUserID,
+                ...(signal ? { signal } : {}),
+            }),
+    };
 
     /**
      * Browser-safe NODE_ENV accessor.
@@ -2980,6 +3051,7 @@ export class Client {
             }
         });
     }
+
     private async deliverMailResourceOverSocket(
         msg: ResourceMsg,
         header: Uint8Array,
@@ -3009,6 +3081,7 @@ export class Client {
             });
         });
     }
+
     private deviceListFailureDetail(err: unknown): string {
         if (!isHttpError(err)) {
             return "";
@@ -3038,6 +3111,22 @@ export class Client {
             sender: mail.sender,
             timestamp,
         });
+    }
+
+    private async fetchActiveCalls(): Promise<CallSession[]> {
+        const res = await this.http.get(this.getHost() + "/calls/active", {
+            responseType: "json",
+        });
+        return z.object({ calls: z.array(CallSessionSchema) }).parse(res.data)
+            .calls;
+    }
+    private async fetchIceServers(): Promise<IceServerConfig[]> {
+        const res = await this.http.get(this.getHost() + "/calls/ice-servers", {
+            responseType: "json",
+        });
+        return z
+            .object({ iceServers: z.array(IceServerConfigSchema) })
+            .parse(res.data).iceServers;
     }
 
     /**
@@ -3680,6 +3769,14 @@ export class Client {
 
     private async handleNotify(msg: NotifyMsg) {
         switch (msg.event) {
+            case "call":
+            case "callInvite": {
+                const parsed = CallEventSchema.safeParse(msg.data);
+                if (parsed.success) {
+                    this.emitter.emit("call", parsed.data);
+                }
+                break;
+            }
             case "deviceRequest": {
                 const parsed = deviceRequestNotifyData.safeParse(msg.data);
                 if (parsed.success) {
@@ -5267,6 +5364,89 @@ export class Client {
             }
             throw err;
         }
+    }
+
+    private async sendCallResource(
+        action: string,
+        data: CallResourceData,
+    ): Promise<CallEvent> {
+        const msg: ResourceMsg = {
+            action,
+            data,
+            resourceType: "call",
+            transmissionID: uuid.v4(),
+            type: "resource",
+        };
+
+        return await new Promise<CallEvent>((resolve, reject) => {
+            const settle = (err: null | unknown, event?: CallEvent) => {
+                this.socket.off("message", callback);
+                if (err !== null) {
+                    reject(errorFromUnknown(err));
+                    return;
+                }
+                if (!event) {
+                    reject(new Error("Call signaling response was empty."));
+                    return;
+                }
+                resolve(event);
+            };
+
+            const callback = (packedMsg: Uint8Array) => {
+                const [_header, receivedMsg] = XUtils.unpackMessage(packedMsg);
+                if (receivedMsg.transmissionID !== msg.transmissionID) {
+                    return;
+                }
+
+                const parsed = WSMessageSchema.safeParse(receivedMsg);
+                if (!parsed.success) {
+                    settle(
+                        "Call signaling failed: " + JSON.stringify(receivedMsg),
+                    );
+                    return;
+                }
+
+                if (parsed.data.type === "success") {
+                    const event = CallEventSchema.safeParse(parsed.data.data);
+                    if (!event.success) {
+                        settle(
+                            "Invalid call signaling response: " +
+                                JSON.stringify(event.error.issues),
+                        );
+                        return;
+                    }
+                    settle(null, event.data);
+                    return;
+                }
+
+                if (parsed.data.type === "error") {
+                    settle(new Error(parsed.data.error));
+                    return;
+                }
+
+                if (
+                    parsed.data.type === "notify" &&
+                    (parsed.data.event === "call" ||
+                        parsed.data.event === "callInvite")
+                ) {
+                    const event = CallEventSchema.safeParse(parsed.data.data);
+                    if (event.success) {
+                        settle(null, event.data);
+                    }
+                    return;
+                }
+
+                settle(
+                    "Unexpected call signaling response: " +
+                        JSON.stringify(parsed.data),
+                );
+            };
+
+            this.socket.on("message", callback);
+            this.send(msg).catch((err: unknown) => {
+                settle(err);
+            });
+        });
     }
 
     private async sendGroupMessage(

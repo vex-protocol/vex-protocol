@@ -32,6 +32,7 @@
     "scripts": {
         "rebuild:sqlite": "pnpm rebuild better-sqlite3",
         "start": "node --experimental-strip-types src/run.ts",
+        "start:local": "bash scripts/start-local.sh",
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc && node scripts/clean-dist-tests.mjs",
         "format": "prettier --write .",

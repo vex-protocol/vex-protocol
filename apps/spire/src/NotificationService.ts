@@ -433,6 +433,7 @@ export class NotificationService {
 }
 
 function bodyForEvent(event: string): string | undefined {
+    if (event === "callInvite") return "Incoming voice call.";
     if (event === "mail") return undefined;
     if (event === "deviceRequest") return "Review the device request.";
     if (event === "deviceListChanged") return "Your device list changed.";
@@ -600,6 +601,7 @@ function shouldSendHeadlessPush(dispatch: NotificationDispatch): boolean {
 }
 
 function titleForEvent(event: string): string {
+    if (event === "callInvite") return "Incoming Vex call";
     if (event === "mail") return "New Message";
     if (event === "deviceRequest") return "Device approval request";
     if (event === "deviceListChanged") return "Vex device update";

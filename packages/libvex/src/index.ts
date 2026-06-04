@@ -6,6 +6,7 @@
 
 export { Client, DeviceApprovalRequiredError } from "./Client.js";
 export type {
+    Calls,
     Channel,
     Channels,
     ClientEvents,
@@ -96,4 +97,13 @@ export type {
     UnsavedPreKey,
 } from "./types/index.js";
 // Re-export app-facing types
-export type { Invite, Passkey } from "@vex-chat/types";
+export type {
+    CallAction,
+    CallEvent,
+    CallParticipant,
+    CallSession,
+    CallSignalPayload,
+    IceServerConfig,
+    Invite,
+    Passkey,
+} from "@vex-chat/types";

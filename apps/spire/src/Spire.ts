@@ -43,8 +43,10 @@ import { stringify as uuidStringify } from "uuid";
 import { WebSocketServer } from "ws";
 import { z } from "zod/v4";
 
+import { CallManager } from "./CallManager.ts";
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
+import { resolveIceServersFromEnv } from "./IceServers.ts";
 import { NotificationService } from "./NotificationService.ts";
 import { initApp, protect } from "./server/index.ts";
 import {
@@ -216,6 +218,7 @@ let pendingFipsKeyPair: KeyPair | null = null;
 export class Spire extends EventEmitter {
     private actionTokens: ActionToken[] = [];
     private api = express();
+    private calls: CallManager;
     private clients: ClientManager[] = [];
     private readonly commitSha = getCommitSha();
     private readonly cryptoProfile: "fips" | "tweetnacl";
@@ -264,8 +267,10 @@ export class Spire extends EventEmitter {
         // that lets attackers spoof the header and bypass rate limiting.
         // If spire is deployed without a proxy, set this to 0 instead.
         this.api.set("trust proxy", 1);
+        this.api.disable("etag");
 
         this.db = new Database(options);
+        this.calls = new CallManager(this.db, this.notify.bind(this));
         this.notifications = new NotificationService(
             this.db,
             this.clients,
@@ -468,6 +473,7 @@ export class Spire extends EventEmitter {
                     const client = new ClientManager(
                         ws,
                         this.db,
+                        this.calls,
                         this.notify.bind(this),
                         userDetails,
                     );
@@ -993,6 +999,21 @@ export class Spire extends EventEmitter {
                     entry.mail.nonce,
                 );
             }
+        });
+
+        this.api.get("/calls/active", protect, (req, res) => {
+            const user = getUser(req);
+            res.setHeader(
+                "Cache-Control",
+                "no-store, no-cache, must-revalidate, proxy-revalidate",
+            );
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+            res.json({ calls: this.calls.activeCallsForUser(user.userID) });
+        });
+
+        this.api.get("/calls/ice-servers", protect, async (_req, res) => {
+            res.json({ iceServers: await resolveIceServersFromEnv() });
         });
 
         this.api.post(
