@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/crypto",
-    "version": "7.0.0",
+    "version": "8.0.0",
     "description": "Crypto primitives for the Vex encrypted chat platform",
     "type": "module",
     "sideEffects": false,
