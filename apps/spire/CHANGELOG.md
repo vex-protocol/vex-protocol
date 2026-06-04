@@ -1,5 +1,17 @@
 # @vex-chat/spire
 
+## 2.4.0
+
+### Minor Changes
+
+- [#234](https://github.com/vex-protocol/vex-protocol/pull/234) [`9c59293`](https://github.com/vex-protocol/vex-protocol/commit/9c5929339252320adb41ee97f1b5ea6b8605fe8d) Thanks [@dream9x](https://github.com/dream9x)! - Adds one-to-one voice call signaling across the stack. `@vex-chat/types` exports new call schemas (`CallSession`, `CallEvent`, `IceServerConfig`, and related types/validators); `@vex-chat/libvex` exposes a `Calls` API on the `Client` for initiating and managing calls; `@vex-chat/spire` gains a `CallManager` and TURN credential support to broker WebRTC signaling between peers.
+
+### Patch Changes
+
+- Updated dependencies [[`9c59293`](https://github.com/vex-protocol/vex-protocol/commit/9c5929339252320adb41ee97f1b5ea6b8605fe8d)]:
+    - @vex-chat/types@4.1.0
+    - @vex-chat/crypto@8.0.0
+
 ## 2.3.4
 
 ### Patch Changes
