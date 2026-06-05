@@ -27,6 +27,12 @@ export interface KeyBundleEntry {
     signature: Uint8Array;
 }
 
+export interface MailNotificationHint {
+    callID: string;
+    event: "callWake";
+    expiresAt?: string | undefined;
+}
+
 /** Mail message (SQL/database format). */
 export interface MailSQL {
     authorID: string;
@@ -54,6 +60,7 @@ export interface MailWS {
     mailID: string;
     mailType: MailType;
     nonce: Uint8Array;
+    notify?: MailNotificationHint | undefined;
     readerID: string;
     recipient: string;
     sender: string;
@@ -124,6 +131,13 @@ export const PreKeysSQLSchema: z.ZodType<PreKeysSQL> = z
     })
     .describe("Pre-key database record");
 
+export const MailNotificationHintSchema: z.ZodType<MailNotificationHint> =
+    z.object({
+        callID: z.string().describe("Opaque call identifier"),
+        event: z.literal("callWake").describe("Notification wake event"),
+        expiresAt: z.string().optional().describe("Wake expiry timestamp"),
+    });
+
 /** Encrypted mail message (WebSocket format). */
 export const MailWSSchema: z.ZodType<MailWS> = z
     .object({
@@ -139,6 +153,9 @@ export const MailWSSchema: z.ZodType<MailWS> = z
             .union([z.literal(0), z.literal(1)])
             .describe("Mail type (0=initial, 1=subsequent)"),
         nonce: uint8.describe("Encryption nonce"),
+        notify: MailNotificationHintSchema.optional().describe(
+            "Optional delivery hint; not persisted with encrypted mail",
+        ),
         readerID: z.string().describe("Intended reader user ID"),
         recipient: z.string().describe("Recipient device ID"),
         sender: z.string().describe("Sender device ID"),

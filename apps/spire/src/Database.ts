@@ -130,8 +130,10 @@ export interface InternalUserRecord extends UserRecord {
     hashAlgo: string;
 }
 
+export type NotificationChannel = "apnsVoip" | "expo" | "fcmCall";
+
 export interface NotificationSubscription {
-    channel: "expo";
+    channel: NotificationChannel;
     createdAt: string;
     deviceID: string;
     enabled: boolean;
@@ -144,7 +146,7 @@ export interface NotificationSubscription {
 }
 
 export interface SaveNotificationSubscriptionInput {
-    channel: "expo";
+    channel: NotificationChannel;
     deviceID: string;
     events: string[];
     platform?: null | string;
@@ -1627,6 +1629,13 @@ function normalizeRegistrationUsername(
     return `key_${seed}`;
 }
 
+function parseNotificationChannel(channel: string): NotificationChannel {
+    if (channel === "apnsVoip" || channel === "expo" || channel === "fcmCall") {
+        return channel;
+    }
+    return "expo";
+}
+
 function toDevice(row: {
     deleted: number;
     deviceID: string;
@@ -1676,7 +1685,7 @@ function toNotificationSubscription(row: {
 }): NotificationSubscription {
     return {
         ...row,
-        channel: "expo",
+        channel: parseNotificationChannel(row.channel),
         enabled: Boolean(row.enabled),
         events: decodeNotificationEvents(row.events),
     };

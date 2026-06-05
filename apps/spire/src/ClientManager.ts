@@ -28,6 +28,7 @@ import { MailWSSchema, SocketAuthErrors } from "@vex-chat/types";
 
 import { parse as uuidParse, validate as uuidValidate } from "uuid";
 
+import { callWakeDispatchData } from "./server/callWake.ts";
 import { validateMailIngress } from "./server/mailIngress.ts";
 import { TOKEN_EXPIRY } from "./Spire.ts";
 import { createUint8UUID } from "./utils/createUint8UUID.ts";
@@ -333,15 +334,28 @@ export class ClientManager extends EventEmitter {
                         );
 
                         this.sendSuccess(msg.transmissionID, null);
-                        this.notify(
-                            recipientDevice.owner,
-                            "mail",
-                            msg.transmissionID,
-                            null,
-                            mail.recipient,
-                            mail.authorID,
-                            mail.nonce,
-                        );
+                        const callWake = callWakeDispatchData(mail);
+                        if (callWake) {
+                            this.notify(
+                                recipientDevice.owner,
+                                "callWake",
+                                msg.transmissionID,
+                                callWake,
+                                mail.recipient,
+                                undefined,
+                                mail.nonce,
+                            );
+                        } else {
+                            this.notify(
+                                recipientDevice.owner,
+                                "mail",
+                                msg.transmissionID,
+                                null,
+                                mail.recipient,
+                                mail.authorID,
+                                mail.nonce,
+                            );
+                        }
                     } catch (err: unknown) {
                         this.sendErr(msg.transmissionID, String(err));
                     }

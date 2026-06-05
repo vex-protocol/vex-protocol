@@ -8,6 +8,8 @@ export {
     type CallAction,
     CallActionSchema,
     type CallConversationType,
+    type CallEnvelopeBody,
+    CallEnvelopeBodySchema,
     type CallEvent,
     CallEventSchema,
     type CallParticipant,
@@ -21,6 +23,8 @@ export {
     CallSignalPayloadSchema,
     type IceServerConfig,
     IceServerConfigSchema,
+    type SignedCallEnvelope,
+    SignedCallEnvelopeSchema,
 } from "./calls.js";
 
 export {
@@ -53,6 +57,8 @@ export {
     type KeyBundle,
     type KeyBundleEntry,
     KeyBundleSchema,
+    type MailNotificationHint,
+    MailNotificationHintSchema,
     type MailSQL,
     MailSQLSchema,
     type MailWS,
