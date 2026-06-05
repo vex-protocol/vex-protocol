@@ -27,7 +27,7 @@
  * - `LIBVEX_DEBUG_DM=1` — logs DM/X3dh paths in `Client` to stderr (remove / gate off when done).
  */
 
-import type { ClientOptions, Message } from "../../index.js";
+import type { CallEvent, ClientOptions, Message } from "../../index.js";
 import type { Storage } from "../../Storage.js";
 
 import { getCryptoProfile, setCryptoProfile } from "@vex-chat/crypto";
@@ -115,6 +115,64 @@ export function platformSuite(
 
             expect(msg.message).toBe("");
             expect(msg.extra).toBe(extra);
+        });
+
+        test("encrypted call invite arrives as call event", async () => {
+            class NativeIceCandidate {
+                toJSON() {
+                    return {
+                        candidate: "candidate-test",
+                        sdpMid: "0",
+                        sdpMLineIndex: 0,
+                    };
+                }
+            }
+            class NativeSessionDescription {
+                toJSON() {
+                    return { sdp: "test-offer", type: "offer" };
+                }
+            }
+
+            const me = client.me.user();
+            let unexpectedMessages = 0;
+            const onMessage = (_msg: Message) => {
+                unexpectedMessages += 1;
+            };
+            client.on("message", onMessage);
+            try {
+                const callPromise = waitForCall(
+                    client,
+                    (event) =>
+                        event.action === "invite" &&
+                        event.fromDeviceID === client.me.device().deviceID,
+                    `[${platformName}] encrypted self-call invite`,
+                );
+                const returned = await client.calls.startDM(me.userID, {
+                    candidate: new NativeIceCandidate(),
+                    description: new NativeSessionDescription(),
+                    kind: "offer",
+                });
+                const incoming = await callPromise;
+                expect(returned.call.callID).toBe(incoming.call.callID);
+                expect(incoming.signal?.kind).toBe("offer");
+                expect(incoming.signal?.candidate).toEqual({
+                    candidate: "candidate-test",
+                    sdpMid: "0",
+                    sdpMLineIndex: 0,
+                });
+                expect(incoming.signal?.description).toEqual({
+                    sdp: "test-offer",
+                    type: "offer",
+                });
+                expect(unexpectedMessages).toBe(0);
+
+                const active = await client.calls.active();
+                expect(
+                    active.some((call) => call.callID === incoming.call.callID),
+                ).toBe(true);
+            } finally {
+                client.off("message", onMessage);
+            }
         });
 
         test("message history retrieve + delete", async () => {
@@ -720,6 +778,27 @@ async function e2eWaitForPeerDeviceCount(
     }
 }
 */
+
+async function waitForCall(
+    c: Client,
+    predicate: (event: CallEvent) => boolean,
+    label: string,
+    timeout = 10_000,
+): Promise<CallEvent> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} call timed out`));
+        }, timeout);
+        const onCall = (event: CallEvent) => {
+            if (predicate(event)) {
+                clearTimeout(timer);
+                c.off("call", onCall);
+                resolve(event);
+            }
+        };
+        c.on("call", onCall);
+    });
+}
 
 async function waitForMessage(
     c: Client,

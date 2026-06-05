@@ -15,8 +15,9 @@ import type {
 import type { KeyPair } from "@vex-chat/crypto";
 import type {
     ActionToken,
+    CallAction,
+    CallEnvelopeBody,
     CallEvent,
-    CallResourceData,
     CallSession,
     CallSignalPayload,
     ChallMsg,
@@ -29,6 +30,7 @@ import type {
     IceServerConfig,
     Invite,
     KeyBundle,
+    MailNotificationHint,
     MailWS,
     NotifyMsg,
     Passkey,
@@ -42,6 +44,7 @@ import type {
     Server,
     ServerChannelBootstrap,
     SessionSQL,
+    SignedCallEnvelope,
 } from "@vex-chat/types";
 import type { ClientMessage } from "@vex-chat/types";
 
@@ -75,12 +78,13 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import {
+    CallEnvelopeBodySchema,
     CallEventSchema,
-    CallSessionSchema,
     IceServerConfigSchema,
     MailType,
     MailWSSchema,
     PermissionSchema,
+    SignedCallEnvelopeSchema,
     WSMessageSchema,
 } from "@vex-chat/types";
 
@@ -196,16 +200,6 @@ function debugLibvexDm(
     const payload = data ? `${msg} ${JSON.stringify(data)}` : msg;
     // eslint-disable-next-line no-console -- gated by LIBVEX_DEBUG_DM; remove when debugging is done
     console.error(`[libvex:debug-dm] ${payload}`);
-}
-
-function errorFromUnknown(err: unknown): Error {
-    if (err instanceof Error) {
-        return err;
-    }
-    if (typeof err === "string") {
-        return new Error(err);
-    }
-    return new Error(JSON.stringify(err));
 }
 
 function ignoreSocketTeardown(err: unknown): void {
@@ -730,7 +724,7 @@ export type { Server } from "@vex-chat/types";
 export type { ServerChannelBootstrap } from "@vex-chat/types";
 
 export interface NotificationSubscription {
-    channel: "expo";
+    channel: NotificationSubscriptionChannel;
     createdAt: string;
     deviceID: string;
     enabled: boolean;
@@ -742,9 +736,17 @@ export interface NotificationSubscription {
     userID: string;
 }
 
+export type NotificationSubscriptionChannel = "apnsVoip" | "expo" | "fcmCall";
+
+const NotificationSubscriptionChannelSchema = z.enum([
+    "apnsVoip",
+    "expo",
+    "fcmCall",
+]);
+
 const NotificationSubscriptionSchema: z.ZodType<NotificationSubscription> =
     z.object({
-        channel: z.literal("expo"),
+        channel: NotificationSubscriptionChannelSchema,
         createdAt: z.string(),
         deviceID: z.string(),
         enabled: z.boolean(),
@@ -757,7 +759,7 @@ const NotificationSubscriptionSchema: z.ZodType<NotificationSubscription> =
     });
 
 export interface NotificationSubscriptionInput {
-    channel: "expo";
+    channel: NotificationSubscriptionChannel;
     events?: string[];
     platform?: "android" | "ios" | "web";
     token: string;
@@ -939,15 +941,33 @@ const messageSchema: z.ZodType<Message> = z.object({
     timestamp: z.string(),
 });
 
+const CALL_ENVELOPE_PREFIX = "vex-call:1\n";
+const CALL_INVITE_TTL_MS = 60_000;
+const CALL_MAX_TTL_MS = 2 * 60 * 60 * 1000;
 const MESSAGE_BLOB_PREFIX = "vex-message:1\n";
 const MAIL_FANOUT_CONCURRENCY = 8;
 const MAIL_BATCH_MAX_SIZE = 32;
 const MAIL_BATCH_FLUSH_DELAY_MS = 8;
 
+interface CallWakeNotifyData {
+    callID: string;
+    expiresAt?: string | undefined;
+    mailID?: string | undefined;
+    mailNonce?: string | undefined;
+}
+
 interface DecodedMessagePlaintext {
     extra?: null | string | undefined;
     message: string;
     retentionHintDays?: number | undefined;
+}
+
+interface EncryptedCallState {
+    peerDeviceID?: string | undefined;
+    peerUserID: string;
+    pendingPeerDevices: Device[];
+    sequence: number;
+    session: CallSession;
 }
 
 interface PendingMailBatchDelivery {
@@ -970,6 +990,62 @@ const mailBatchResponseSchema = z.object({
         }),
     ),
 });
+
+const callWakeNotifyData = z.object({
+    callID: z.string(),
+    expiresAt: z.string().optional(),
+    mailID: z.string().optional(),
+    mailNonce: z.string().optional(),
+});
+
+function canonicalizeJson(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((item) => canonicalizeJson(item));
+    }
+    if (!isRecord(value)) {
+        return value;
+    }
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+        const item = value[key];
+        if (item !== undefined) {
+            out[key] = canonicalizeJson(item);
+        }
+    }
+    return out;
+}
+
+function canonicalJsonBytes(value: unknown): Uint8Array {
+    return XUtils.decodeUTF8(
+        JSON.stringify(canonicalizeJson(jsonWireValue(value))),
+    );
+}
+
+function cloneCallSession(session: CallSession): CallSession {
+    return {
+        ...session,
+        participants: session.participants.map((participant) => ({
+            ...participant,
+        })),
+    };
+}
+
+function decodeCallEnvelopePlaintext(
+    plaintext: string,
+): null | SignedCallEnvelope {
+    if (!plaintext.startsWith(CALL_ENVELOPE_PREFIX)) {
+        return null;
+    }
+    try {
+        const raw = JSON.parse(
+            plaintext.slice(CALL_ENVELOPE_PREFIX.length),
+        ) as unknown;
+        const parsed = SignedCallEnvelopeSchema.safeParse(raw);
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
+}
 
 function decodeMessageBlob(body: string): DecodedMessagePlaintext {
     if (!body.startsWith(MESSAGE_BLOB_PREFIX)) {
@@ -1008,6 +1084,10 @@ function decodeMessagePlaintext(plaintext: string): DecodedMessagePlaintext {
         : blob;
 }
 
+function encodeCallEnvelopePlaintext(envelope: SignedCallEnvelope): Uint8Array {
+    return XUtils.decodeUTF8(CALL_ENVELOPE_PREFIX + JSON.stringify(envelope));
+}
+
 function encodeMessagePlaintext(
     message: string,
     opts?: MessageSendOptions,
@@ -1023,6 +1103,12 @@ function encodeMessagePlaintext(
     return formatVexRetentionEnvelope(body, opts?.retentionHintDays);
 }
 
+function jsonWireValue(value: unknown): unknown {
+    const encoded = JSON.stringify(value);
+    const parsed: unknown = JSON.parse(encoded);
+    return parsed;
+}
+
 function messageFromDecodedPlaintext(
     decoded: DecodedMessagePlaintext,
 ): Pick<Message, "extra" | "message" | "retentionHintDays"> {
@@ -1033,6 +1119,12 @@ function messageFromDecodedPlaintext(
             ? { retentionHintDays: decoded.retentionHintDays }
             : {}),
     };
+}
+
+function normalizeCallEnvelopeBodyForWire(
+    body: CallEnvelopeBody,
+): CallEnvelopeBody {
+    return CallEnvelopeBodySchema.parse(jsonWireValue(body));
 }
 
 function normalizeForwardedMessage(message: Message): Message {
@@ -1076,6 +1168,8 @@ const retryRequestNotifyData = z.union([
 export interface ClientEvents {
     /** Voice-call signaling changed or an incoming call was received. */
     call: (event: CallEvent) => void;
+    /** Native/mobile call wake hint arrived; clients should sync call mail. */
+    callWake: (wake: CallWakeNotifyData) => void;
     /** The client has been shut down (via {@link Client.close}). */
     closed: () => void;
     /** WebSocket authorized by the server; pre-auth setup begins. */
@@ -1330,25 +1424,21 @@ export class Client {
      */
     public calls: Calls = {
         accept: (callID: string, signal?: CallSignalPayload) =>
-            this.sendCallResource("ACCEPT", {
-                callID,
-                ...(signal ? { signal } : {}),
-            }),
+            this.sendEncryptedCallAction("accept", callID, signal),
         active: this.fetchActiveCalls.bind(this),
-        cancel: (callID: string) => this.sendCallResource("CANCEL", { callID }),
-        hangup: (callID: string) => this.sendCallResource("HANGUP", { callID }),
+        cancel: (callID: string) =>
+            this.sendEncryptedCallAction("cancel", callID),
+        hangup: (callID: string) =>
+            this.sendEncryptedCallAction("hangup", callID),
         ice: (callID: string, signal: CallSignalPayload) =>
-            this.sendCallResource("ICE", { callID, signal }),
+            this.sendEncryptedCallAction("ice", callID, signal),
         iceServers: this.fetchIceServers.bind(this),
-        reject: (callID: string) => this.sendCallResource("REJECT", { callID }),
+        reject: (callID: string) =>
+            this.sendEncryptedCallAction("reject", callID),
         signal: (callID: string, signal: CallSignalPayload) =>
-            this.sendCallResource("SIGNAL", { callID, signal }),
+            this.sendEncryptedCallAction("signal", callID, signal),
         startDM: (recipientUserID: string, signal?: CallSignalPayload) =>
-            this.sendCallResource("INVITE", {
-                conversationType: "dm",
-                recipientUserID,
-                ...(signal ? { signal } : {}),
-            }),
+            this.startEncryptedDmCall(recipientUserID, signal),
     };
 
     /**
@@ -1662,6 +1752,8 @@ export class Client {
 
     private autoReconnectEnabled = false;
 
+    private readonly callStates = new Map<string, EncryptedCallState>();
+
     private readonly cryptoProfile: CryptoProfile;
 
     private readonly database: Storage;
@@ -1671,13 +1763,12 @@ export class Client {
     private readonly decryptFailureCounts = new Map<string, number>();
 
     private device?: Device;
-
     private deviceRecords: Record<string, Device> = {};
+
     // ── Event subscription (composition over inheritance) ───────────────
     private readonly emitter = new EventEmitter<ClientEvents>();
 
     private fetchingMail: boolean = false;
-
     private firstMailFetch = true;
     private readonly forwarded = new Set<string>();
     private readonly host: string;
@@ -1685,8 +1776,8 @@ export class Client {
     /** Cancels in-flight HTTP work on `close()` so `postAuth`/`getMail` cannot hang forever. */
     private readonly httpAbortController = new AbortController();
     private readonly idKeys: KeyPair | null;
-    private isAlive: boolean = true;
 
+    private isAlive: boolean = true;
     private localMessageRetentionDays: number;
     private localRetentionPurgeTimer: null | ReturnType<typeof setInterval> =
         null;
@@ -2574,6 +2665,92 @@ export class Client {
         this.acknowledgeInboundMail(mail);
     }
 
+    private applyCallEnvelopeBody(body: CallEnvelopeBody): CallEvent {
+        const localUserID = this.getUser().userID;
+        const peerUserID =
+            body.fromUserID === localUserID ? body.toUserID : body.fromUserID;
+        const peerDeviceID =
+            body.fromUserID === localUserID
+                ? body.toDeviceID
+                : body.fromDeviceID;
+        let state = this.callStates.get(body.callID);
+        if (!state) {
+            state = {
+                peerDeviceID,
+                peerUserID,
+                pendingPeerDevices: [],
+                sequence: 0,
+                session: this.sessionFromCallEnvelope(body),
+            };
+        }
+
+        state.peerUserID = peerUserID;
+        if (body.fromUserID !== localUserID || body.action === "accept") {
+            state.peerDeviceID = peerDeviceID;
+        }
+        state.sequence = Math.max(state.sequence, body.sequence);
+        state.session.expiresAt = body.expiresAt;
+
+        const now = new Date().toISOString();
+        switch (body.action) {
+            case "accept":
+                state.session.status = "active";
+                this.upsertCallParticipant(state.session, {
+                    acceptedAt: now,
+                    deviceID: body.fromDeviceID,
+                    joinedAt: now,
+                    state: "accepted",
+                    userID: body.fromUserID,
+                });
+                break;
+            case "cancel":
+            case "end":
+            case "hangup":
+            case "reject":
+            case "timeout":
+                state.session.status = "ended";
+                state.session.endedAt = now;
+                this.upsertCallParticipant(state.session, {
+                    leftAt: now,
+                    state: body.action === "reject" ? "rejected" : "left",
+                    userID: body.fromUserID,
+                });
+                break;
+            case "ice":
+            case "signal":
+                break;
+            case "invite":
+                state.session.status = "ringing";
+                this.upsertCallParticipant(state.session, {
+                    acceptedAt: body.createdAt,
+                    deviceID: body.createdByDeviceID,
+                    joinedAt: body.createdAt,
+                    state: "accepted",
+                    userID: body.createdBy,
+                });
+                this.upsertCallParticipant(state.session, {
+                    state: "ringing",
+                    userID: body.toUserID,
+                });
+                break;
+        }
+
+        const event: CallEvent = {
+            action: body.action,
+            call: cloneCallSession(state.session),
+            fromDeviceID: body.fromDeviceID,
+            fromUserID: body.fromUserID,
+            ...(body.signal ? { signal: body.signal } : {}),
+        };
+
+        if (state.session.status === "ended") {
+            this.callStates.delete(body.callID);
+        } else {
+            this.callStates.set(body.callID, state);
+        }
+        return event;
+    }
+
     private async approveDeviceRequest(requestID: string): Promise<Device> {
         const req = await this.getDeviceRegistrationRequest(requestID);
         if (!req) {
@@ -2653,6 +2830,50 @@ export class Client {
             { headers: { "Content-Type": "application/msgpack" } },
         );
         return decodeHttpResponse(PasskeyOptionsCodec, response.data);
+    }
+
+    private async callEnvelopeForBody(
+        body: CallEnvelopeBody,
+    ): Promise<SignedCallEnvelope> {
+        const wireBody = normalizeCallEnvelopeBodyForWire(body);
+        const signed = await xSignAsync(
+            canonicalJsonBytes(wireBody),
+            this.signKeys.secretKey,
+        );
+        return {
+            body: wireBody,
+            signed: XUtils.encodeHex(signed),
+        };
+    }
+
+    private async callTargetsForState(
+        state: EncryptedCallState,
+    ): Promise<Device[]> {
+        if (state.peerDeviceID) {
+            const cached = this.deviceRecords[state.peerDeviceID];
+            const device =
+                cached ?? (await this.getDeviceByID(state.peerDeviceID));
+            if (!device) {
+                throw new Error(
+                    `Call peer device not found: ${state.peerDeviceID}`,
+                );
+            }
+            return [device];
+        }
+        return state.pendingPeerDevices;
+    }
+
+    private callWakeForEnvelope(
+        body: CallEnvelopeBody,
+    ): MailNotificationHint | undefined {
+        if (body.action !== "invite") {
+            return undefined;
+        }
+        return {
+            callID: body.callID,
+            event: "callWake",
+            expiresAt: body.expiresAt,
+        };
     }
 
     private censorPreKey(preKey: PreKeysSQL): PreKeysWS {
@@ -2813,6 +3034,7 @@ export class Client {
          * errors should not reject the full read pipeline.
          */
         allowKeyBundleFailure = false,
+        notify?: MailNotificationHint,
     ): Promise<Message | null> {
         return this.runWithThisCryptoProfile(async () => {
             let keyBundle: KeyBundle;
@@ -2930,12 +3152,13 @@ export class Client {
                 recipient: device.deviceID,
                 sender: this.getDevice().deviceID,
             };
+            const wireMail: MailWS = notify ? { ...mail, notify } : mail;
 
             const hmac = xHMAC(mail, SK);
 
             const msg: ResourceMsg = {
                 action: "CREATE",
-                data: mail,
+                data: wireMail,
                 resourceType: "mail",
                 transmissionID: uuid.v4(),
                 type: "resource",
@@ -2959,35 +3182,41 @@ export class Client {
 
             this.emitter.emit("session", sessionEntry, user);
 
-            // emit the message
+            const rawPlaintext = forward ? "" : XUtils.encodeUTF8(message);
+            const callEnvelope = forward
+                ? null
+                : decodeCallEnvelopePlaintext(rawPlaintext);
             const forwardedMsg = forward
                 ? messageSchema.parse(msgpack.decode(message))
                 : null;
-            const shouldEmitHandshakeMessage = forward || message.length > 0;
-            const emitMsg: Message = forwardedMsg
+            const emitMsg: Message | null = forwardedMsg
                 ? { ...normalizeForwardedMessage(forwardedMsg), forward: true }
-                : {
-                      authorID: mail.authorID,
-                      decrypted: true,
-                      direction: "outgoing",
-                      forward: mail.forward,
-                      group: mail.group ? uuid.stringify(mail.group) : null,
-                      mailID: mail.mailID,
-                      ...messageFromDecodedPlaintext(
-                          decodeMessagePlaintext(XUtils.encodeUTF8(message)),
-                      ),
-                      nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
-                      readerID: mail.readerID,
-                      recipient: mail.recipient,
-                      sender: mail.sender,
-                      timestamp: new Date().toISOString(),
-                  };
-            if (shouldEmitHandshakeMessage) {
+                : callEnvelope
+                  ? null
+                  : message.length > 0
+                    ? {
+                          authorID: mail.authorID,
+                          decrypted: true,
+                          direction: "outgoing",
+                          forward: mail.forward,
+                          group: mail.group ? uuid.stringify(mail.group) : null,
+                          mailID: mail.mailID,
+                          ...messageFromDecodedPlaintext(
+                              decodeMessagePlaintext(rawPlaintext),
+                          ),
+                          nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
+                          readerID: mail.readerID,
+                          recipient: mail.recipient,
+                          sender: mail.sender,
+                          timestamp: new Date().toISOString(),
+                      }
+                    : null;
+            if (emitMsg) {
                 this.emitter.emit("message", emitMsg);
             }
 
-            await this.deliverMailResource(msg, hmac, mail);
-            return shouldEmitHandshakeMessage ? emitMsg : null;
+            await this.deliverMailResource(msg, hmac, wireMail);
+            return emitMsg;
         });
     }
 
@@ -3028,6 +3257,68 @@ export class Client {
         await this.http.delete(this.getHost() + "/server/" + serverID);
     }
 
+    private async deliverCallEnvelopeBatch(args: {
+        bodies: CallEnvelopeBody[];
+        mailID: string;
+        targetUser: User;
+    }): Promise<void> {
+        let failCount = 0;
+        let lastErr: unknown;
+        for (
+            let index = 0;
+            index < args.bodies.length;
+            index += MAIL_FANOUT_CONCURRENCY
+        ) {
+            const batch = args.bodies.slice(
+                index,
+                index + MAIL_FANOUT_CONCURRENCY,
+            );
+            const results = await Promise.all(
+                batch.map(async (body): Promise<undefined | unknown> => {
+                    try {
+                        const targetDevice =
+                            this.deviceRecords[body.toDeviceID] ??
+                            (await this.getDeviceByID(body.toDeviceID));
+                        if (!targetDevice) {
+                            throw new Error(
+                                `Call target device not found: ${body.toDeviceID}`,
+                            );
+                        }
+                        await this.sendCallEnvelopeMail({
+                            body,
+                            mailID: args.mailID,
+                            notify: this.callWakeForEnvelope(body),
+                            targetDevice,
+                            targetUser: args.targetUser,
+                        });
+                        return undefined;
+                    } catch (err: unknown) {
+                        return err;
+                    }
+                }),
+            );
+            for (const result of results) {
+                if (result !== undefined) {
+                    lastErr = result;
+                    failCount += 1;
+                }
+            }
+        }
+
+        if (failCount > 0) {
+            const base =
+                lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+            if (failCount === args.bodies.length) {
+                throw base;
+            }
+            const partial = new Error(
+                `Call signaling failed to reach ${String(failCount)} of ` +
+                    `${String(args.bodies.length)} peer device(s).`,
+            );
+            partial.cause = base;
+            throw partial;
+        }
+    }
     private deliverMailResource(
         msg: ResourceMsg,
         header: Uint8Array,
@@ -3113,13 +3404,61 @@ export class Client {
         });
     }
 
-    private async fetchActiveCalls(): Promise<CallSession[]> {
-        const res = await this.http.get(this.getHost() + "/calls/active", {
-            responseType: "json",
-        });
-        return z.object({ calls: z.array(CallSessionSchema) }).parse(res.data)
-            .calls;
+    private fetchActiveCalls(): Promise<CallSession[]> {
+        const now = Date.now();
+        const active: CallSession[] = [];
+        for (const [callID, state] of this.callStates.entries()) {
+            if (
+                state.session.status === "ended" ||
+                Date.parse(state.session.expiresAt) <= now
+            ) {
+                this.callStates.delete(callID);
+                continue;
+            }
+            active.push(cloneCallSession(state.session));
+        }
+        return Promise.resolve(active);
     }
+
+    private async fetchCallPeer(args: {
+        userID: string;
+    }): Promise<{ devices: Device[]; user: User }> {
+        const [user, err] = await this.fetchUser(args.userID);
+        if (err) {
+            throw err;
+        }
+        if (!user) {
+            throw new Error("Call peer not found.");
+        }
+
+        const afterBackoff = await this.fetchUserDeviceListWithBackoff(
+            args.userID,
+            "peer",
+        );
+        let deviceListRaw: Device[] = afterBackoff;
+        try {
+            const again = await this.fetchUserDeviceListOnce(args.userID);
+            const byID = new Map<string, Device>();
+            for (const device of afterBackoff) {
+                byID.set(device.deviceID, device);
+            }
+            for (const device of again) {
+                byID.set(device.deviceID, device);
+            }
+            deviceListRaw = [...byID.values()];
+        } catch {
+            deviceListRaw = afterBackoff;
+        }
+
+        const devices = deviceListRaw
+            .filter((device) => !device.deleted)
+            .sort((a, b) => a.deviceID.localeCompare(b.deviceID, "en"));
+        if (devices.length === 0) {
+            throw new Error("Call peer has no active devices.");
+        }
+        return { devices, user };
+    }
+
     private async fetchIceServers(): Promise<IceServerConfig[]> {
         const res = await this.http.get(this.getHost() + "/calls/ice-servers", {
             responseType: "json",
@@ -3238,6 +3577,24 @@ export class Client {
             }
         }
         throw new Error(`${base}${this.deviceListFailureDetail(lastErr)}`);
+    }
+
+    private async fetchUserOrThrow(userID: string): Promise<User> {
+        if (userID === this.getUser().userID) {
+            return this.getUser();
+        }
+        const cached = this.userRecords[userID];
+        if (cached) {
+            return cached;
+        }
+        const [user, err] = await this.fetchUser(userID);
+        if (err) {
+            throw err;
+        }
+        if (!user) {
+            throw new Error(`User not found: ${userID}`);
+        }
+        return user;
     }
 
     /**
@@ -3777,6 +4134,14 @@ export class Client {
                 }
                 break;
             }
+            case "callWake": {
+                const parsed = callWakeNotifyData.safeParse(msg.data);
+                await this.getMail();
+                if (parsed.success) {
+                    this.emitter.emit("callWake", parsed.data);
+                }
+                break;
+            }
             case "deviceRequest": {
                 const parsed = deviceRequestNotifyData.safeParse(msg.data);
                 if (parsed.success) {
@@ -4038,6 +4403,84 @@ export class Client {
         return decodeHttpResponse(PasskeyArrayCodec, response.data);
     }
 
+    private makeCallEnvelopeBody(args: {
+        action: CallAction;
+        expiresAt: string;
+        sequence: number;
+        signal?: CallSignalPayload | undefined;
+        state: EncryptedCallState;
+        toDeviceID: string;
+        toUserID: string;
+    }): CallEnvelopeBody {
+        return {
+            action: args.action,
+            callID: args.state.session.callID,
+            conversationID: args.state.session.conversationID,
+            conversationType: args.state.session.conversationType,
+            createdAt: args.state.session.createdAt,
+            createdBy: args.state.session.createdBy,
+            createdByDeviceID: args.state.session.createdByDeviceID,
+            expiresAt: args.expiresAt,
+            fromDeviceID: this.getDevice().deviceID,
+            fromUserID: this.getUser().userID,
+            media: "audio",
+            sequence: args.sequence,
+            ...(args.signal ? { signal: args.signal } : {}),
+            toDeviceID: args.toDeviceID,
+            toUserID: args.toUserID,
+            version: 1,
+        };
+    }
+
+    private markLocalCallAction(
+        state: EncryptedCallState,
+        action: CallAction,
+        signal?: CallSignalPayload,
+    ): CallEvent {
+        const now = new Date().toISOString();
+        if (action === "accept") {
+            state.session.status = "active";
+            state.session.expiresAt = new Date(
+                Date.now() + CALL_MAX_TTL_MS,
+            ).toISOString();
+            this.upsertCallParticipant(state.session, {
+                acceptedAt: now,
+                deviceID: this.getDevice().deviceID,
+                joinedAt: now,
+                state: "accepted",
+                userID: this.getUser().userID,
+            });
+        } else if (
+            action === "cancel" ||
+            action === "end" ||
+            action === "hangup" ||
+            action === "reject" ||
+            action === "timeout"
+        ) {
+            state.session.status = "ended";
+            state.session.endedAt = now;
+            this.upsertCallParticipant(state.session, {
+                leftAt: now,
+                state: action === "reject" ? "rejected" : "left",
+                userID: this.getUser().userID,
+            });
+        }
+
+        const event: CallEvent = {
+            action,
+            call: cloneCallSession(state.session),
+            fromDeviceID: this.getDevice().deviceID,
+            fromUserID: this.getUser().userID,
+            ...(signal ? { signal } : {}),
+        };
+        if (state.session.status === "ended") {
+            this.callStates.delete(state.session.callID);
+        } else {
+            this.callStates.set(state.session.callID, state);
+        }
+        return event;
+    }
+
     private async markSessionVerified(sessionID: string) {
         return this.database.markSessionVerified(sessionID);
     }
@@ -4264,6 +4707,41 @@ export class Client {
                 await sleep(1000);
             }
         }
+    }
+
+    private async processDecryptedCallEnvelope(args: {
+        envelope: SignedCallEnvelope;
+        mail: MailWS;
+    }): Promise<CallEvent | null> {
+        const body = args.envelope.body;
+        if (
+            body.fromDeviceID !== args.mail.sender ||
+            body.fromUserID !== args.mail.authorID ||
+            body.toDeviceID !== args.mail.recipient ||
+            body.toUserID !== args.mail.readerID ||
+            body.toDeviceID !== this.getDevice().deviceID ||
+            body.toUserID !== this.getUser().userID
+        ) {
+            return null;
+        }
+
+        const senderDevice = await this.getDeviceByID(body.fromDeviceID);
+        if (!senderDevice || senderDevice.owner !== body.fromUserID) {
+            return null;
+        }
+
+        const opened = await xSignOpenAsync(
+            XUtils.decodeHex(args.envelope.signed),
+            XUtils.decodeHex(senderDevice.signKey),
+        );
+        if (!opened) {
+            return null;
+        }
+        if (!XUtils.bytesEqual(opened, canonicalJsonBytes(body))) {
+            return null;
+        }
+
+        return this.applyCallEnvelopeBody(body);
     }
 
     private async publishPendingDeviceRegistration(args: {
@@ -4621,46 +5099,61 @@ export class Client {
                             if (!mail.forward) {
                                 plaintext = XUtils.encodeUTF8(unsealed);
                             }
-                            const decodedPlaintext = mail.forward
+                            const callEnvelope = mail.forward
                                 ? null
-                                : decodeMessagePlaintext(plaintext);
+                                : decodeCallEnvelopePlaintext(plaintext);
+                            if (callEnvelope) {
+                                const event =
+                                    await this.processDecryptedCallEnvelope({
+                                        envelope: callEnvelope,
+                                        mail,
+                                    });
+                                if (event) {
+                                    this.emitter.emit("call", event);
+                                }
+                            } else {
+                                const decodedPlaintext = mail.forward
+                                    ? null
+                                    : decodeMessagePlaintext(plaintext);
 
-                            // emit the message
-                            const fwdMsg1 = mail.forward
-                                ? messageSchema.parse(msgpack.decode(unsealed))
-                                : null;
-                            const message: Message = fwdMsg1
-                                ? {
-                                      ...normalizeForwardedMessage(fwdMsg1),
-                                      forward: true,
-                                  }
-                                : {
-                                      authorID: mail.authorID,
-                                      decrypted: true,
-                                      direction: "incoming",
-                                      forward: mail.forward,
-                                      group: mail.group
-                                          ? uuid.stringify(mail.group)
-                                          : null,
-                                      mailID: mail.mailID,
-                                      ...messageFromDecodedPlaintext(
-                                          decodedPlaintext ?? {
-                                              message: plaintext,
-                                          },
-                                      ),
-                                      nonce: XUtils.encodeHex(
-                                          new Uint8Array(mail.nonce),
-                                      ),
-                                      readerID: mail.readerID,
-                                      recipient: mail.recipient,
-                                      sender: mail.sender,
-                                      timestamp: timestamp,
-                                  };
+                                const fwdMsg1 = mail.forward
+                                    ? messageSchema.parse(
+                                          msgpack.decode(unsealed),
+                                      )
+                                    : null;
+                                const message: Message = fwdMsg1
+                                    ? {
+                                          ...normalizeForwardedMessage(fwdMsg1),
+                                          forward: true,
+                                      }
+                                    : {
+                                          authorID: mail.authorID,
+                                          decrypted: true,
+                                          direction: "incoming",
+                                          forward: mail.forward,
+                                          group: mail.group
+                                              ? uuid.stringify(mail.group)
+                                              : null,
+                                          mailID: mail.mailID,
+                                          ...messageFromDecodedPlaintext(
+                                              decodedPlaintext ?? {
+                                                  message: plaintext,
+                                              },
+                                          ),
+                                          nonce: XUtils.encodeHex(
+                                              new Uint8Array(mail.nonce),
+                                          ),
+                                          readerID: mail.readerID,
+                                          recipient: mail.recipient,
+                                          sender: mail.sender,
+                                          timestamp: timestamp,
+                                      };
 
-                            const shouldEmitIncomingInitial =
-                                mail.forward || plaintext.length > 0;
-                            if (shouldEmitIncomingInitial) {
-                                this.emitter.emit("message", message);
+                                const shouldEmitIncomingInitial =
+                                    mail.forward || plaintext.length > 0;
+                                if (shouldEmitIncomingInitial) {
+                                    this.emitter.emit("message", message);
+                                }
                             }
                             if (libvexDebugDmEnabled()) {
                                 try {
@@ -4920,37 +5413,51 @@ export class Client {
                                 ? messageSchema.parse(msgpack.decode(decrypted))
                                 : null;
                             const rawIncoming = XUtils.encodeUTF8(decrypted);
-                            const decodedPlaintext = mail.forward
+                            const callEnvelope = mail.forward
                                 ? null
-                                : decodeMessagePlaintext(rawIncoming);
-                            const message: Message = fwdMsg2
-                                ? {
-                                      ...normalizeForwardedMessage(fwdMsg2),
-                                      forward: true,
-                                  }
-                                : {
-                                      authorID: mail.authorID,
-                                      decrypted: true,
-                                      direction: "incoming",
-                                      forward: mail.forward,
-                                      group: mail.group
-                                          ? uuid.stringify(mail.group)
-                                          : null,
-                                      mailID: mail.mailID,
-                                      ...messageFromDecodedPlaintext(
-                                          decodedPlaintext ?? {
-                                              message: rawIncoming,
-                                          },
-                                      ),
-                                      nonce: XUtils.encodeHex(
-                                          new Uint8Array(mail.nonce),
-                                      ),
-                                      readerID: mail.readerID,
-                                      recipient: mail.recipient,
-                                      sender: mail.sender,
-                                      timestamp: timestamp,
-                                  };
-                            this.emitter.emit("message", message);
+                                : decodeCallEnvelopePlaintext(rawIncoming);
+                            if (callEnvelope) {
+                                const event =
+                                    await this.processDecryptedCallEnvelope({
+                                        envelope: callEnvelope,
+                                        mail,
+                                    });
+                                if (event) {
+                                    this.emitter.emit("call", event);
+                                }
+                            } else {
+                                const decodedPlaintext = mail.forward
+                                    ? null
+                                    : decodeMessagePlaintext(rawIncoming);
+                                const message: Message = fwdMsg2
+                                    ? {
+                                          ...normalizeForwardedMessage(fwdMsg2),
+                                          forward: true,
+                                      }
+                                    : {
+                                          authorID: mail.authorID,
+                                          decrypted: true,
+                                          direction: "incoming",
+                                          forward: mail.forward,
+                                          group: mail.group
+                                              ? uuid.stringify(mail.group)
+                                              : null,
+                                          mailID: mail.mailID,
+                                          ...messageFromDecodedPlaintext(
+                                              decodedPlaintext ?? {
+                                                  message: rawIncoming,
+                                              },
+                                          ),
+                                          nonce: XUtils.encodeHex(
+                                              new Uint8Array(mail.nonce),
+                                          ),
+                                          readerID: mail.readerID,
+                                          recipient: mail.recipient,
+                                          sender: mail.sender,
+                                          timestamp: timestamp,
+                                      };
+                                this.emitter.emit("message", message);
+                            }
 
                             const sqlPatch = sessionToSqlPatch(session);
                             const persisted: SessionSQL = {
@@ -5366,87 +5873,71 @@ export class Client {
         }
     }
 
-    private async sendCallResource(
-        action: string,
-        data: CallResourceData,
+    private async sendCallEnvelopeMail(args: {
+        body: CallEnvelopeBody;
+        mailID: string;
+        notify?: MailNotificationHint | undefined;
+        targetDevice: Device;
+        targetUser: User;
+    }): Promise<void> {
+        const envelope = await this.callEnvelopeForBody(args.body);
+        await this.sendMailWithRecovery(
+            args.targetDevice,
+            args.targetUser,
+            encodeCallEnvelopePlaintext(envelope),
+            null,
+            args.mailID,
+            false,
+            false,
+            args.notify,
+        );
+    }
+
+    private async sendEncryptedCallAction(
+        action: Exclude<CallAction, "end" | "invite" | "timeout">,
+        callID: string,
+        signal?: CallSignalPayload,
     ): Promise<CallEvent> {
-        const msg: ResourceMsg = {
-            action,
-            data,
-            resourceType: "call",
-            transmissionID: uuid.v4(),
-            type: "resource",
-        };
+        const state = this.callStates.get(callID);
+        if (!state) {
+            throw new Error("Unknown encrypted call: " + callID);
+        }
 
-        return await new Promise<CallEvent>((resolve, reject) => {
-            const settle = (err: null | unknown, event?: CallEvent) => {
-                this.socket.off("message", callback);
-                if (err !== null) {
-                    reject(errorFromUnknown(err));
-                    return;
-                }
-                if (!event) {
-                    reject(new Error("Call signaling response was empty."));
-                    return;
-                }
-                resolve(event);
-            };
+        const targets = await this.callTargetsForState(state);
+        if (targets.length === 0) {
+            throw new Error("Call has no reachable peer devices.");
+        }
 
-            const callback = (packedMsg: Uint8Array) => {
-                const [_header, receivedMsg] = XUtils.unpackMessage(packedMsg);
-                if (receivedMsg.transmissionID !== msg.transmissionID) {
-                    return;
-                }
+        const targetUser = await this.fetchUserOrThrow(state.peerUserID);
+        const sequence = state.sequence + 1;
+        state.sequence = sequence;
+        const expiresAt =
+            action === "accept"
+                ? new Date(Date.now() + CALL_MAX_TTL_MS).toISOString()
+                : state.session.expiresAt;
+        const bodies = targets.map((target) =>
+            this.makeCallEnvelopeBody({
+                action,
+                expiresAt,
+                sequence,
+                signal,
+                state,
+                toDeviceID: target.deviceID,
+                toUserID: target.owner,
+            }),
+        );
 
-                const parsed = WSMessageSchema.safeParse(receivedMsg);
-                if (!parsed.success) {
-                    settle(
-                        "Call signaling failed: " + JSON.stringify(receivedMsg),
-                    );
-                    return;
-                }
-
-                if (parsed.data.type === "success") {
-                    const event = CallEventSchema.safeParse(parsed.data.data);
-                    if (!event.success) {
-                        settle(
-                            "Invalid call signaling response: " +
-                                JSON.stringify(event.error.issues),
-                        );
-                        return;
-                    }
-                    settle(null, event.data);
-                    return;
-                }
-
-                if (parsed.data.type === "error") {
-                    settle(new Error(parsed.data.error));
-                    return;
-                }
-
-                if (
-                    parsed.data.type === "notify" &&
-                    (parsed.data.event === "call" ||
-                        parsed.data.event === "callInvite")
-                ) {
-                    const event = CallEventSchema.safeParse(parsed.data.data);
-                    if (event.success) {
-                        settle(null, event.data);
-                    }
-                    return;
-                }
-
-                settle(
-                    "Unexpected call signaling response: " +
-                        JSON.stringify(parsed.data),
-                );
-            };
-
-            this.socket.on("message", callback);
-            this.send(msg).catch((err: unknown) => {
-                settle(err);
-            });
+        await this.deliverCallEnvelopeBatch({
+            bodies,
+            mailID: uuid.v4(),
+            targetUser,
         });
+
+        if (targets.length === 1) {
+            state.peerDeviceID = targets[0]?.deviceID;
+        }
+        state.session.expiresAt = expiresAt;
+        return this.markLocalCallAction(state, action, signal);
     }
 
     private async sendGroupMessage(
@@ -5585,6 +6076,7 @@ export class Client {
         mailID: null | string,
         forward: boolean,
         retry = false,
+        notify?: MailNotificationHint,
     ): Promise<Message | null> {
         while (this.sending.has(device.deviceID)) {
             await sleep(100);
@@ -5611,6 +6103,7 @@ export class Client {
                     mailID,
                     forward,
                     false,
+                    notify,
                 );
                 if (libvexDebugDmEnabled()) {
                     debugLibvexDm("sendMail: createSession returned", {
@@ -5653,10 +6146,11 @@ export class Client {
                 recipient: device.deviceID,
                 sender: this.getDevice().deviceID,
             };
+            const wireMail: MailWS = notify ? { ...mail, notify } : mail;
 
             const msgb: ResourceMsg = {
                 action: "CREATE",
-                data: mail,
+                data: wireMail,
                 resourceType: "mail",
                 transmissionID: uuid.v4(),
                 type: "resource",
@@ -5664,28 +6158,36 @@ export class Client {
 
             const hmac = xHMAC(mail, messageKey);
 
+            const rawPlaintext = forward ? "" : XUtils.encodeUTF8(msg);
+            const callEnvelope = forward
+                ? null
+                : decodeCallEnvelopePlaintext(rawPlaintext);
             const fwdOut = forward
                 ? messageSchema.parse(msgpack.decode(msg))
                 : null;
-            const outMsg: Message = fwdOut
+            const outMsg: Message | null = fwdOut
                 ? { ...normalizeForwardedMessage(fwdOut), forward: true }
-                : {
-                      authorID: mail.authorID,
-                      decrypted: true,
-                      direction: "outgoing",
-                      forward: mail.forward,
-                      group: mail.group ? uuid.stringify(mail.group) : null,
-                      mailID: mail.mailID,
-                      ...messageFromDecodedPlaintext(
-                          decodeMessagePlaintext(XUtils.encodeUTF8(msg)),
-                      ),
-                      nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
-                      readerID: mail.readerID,
-                      recipient: mail.recipient,
-                      sender: mail.sender,
-                      timestamp: new Date().toISOString(),
-                  };
-            this.emitter.emit("message", outMsg);
+                : callEnvelope
+                  ? null
+                  : {
+                        authorID: mail.authorID,
+                        decrypted: true,
+                        direction: "outgoing",
+                        forward: mail.forward,
+                        group: mail.group ? uuid.stringify(mail.group) : null,
+                        mailID: mail.mailID,
+                        ...messageFromDecodedPlaintext(
+                            decodeMessagePlaintext(rawPlaintext),
+                        ),
+                        nonce: XUtils.encodeHex(new Uint8Array(mail.nonce)),
+                        readerID: mail.readerID,
+                        recipient: mail.recipient,
+                        sender: mail.sender,
+                        timestamp: new Date().toISOString(),
+                    };
+            if (outMsg) {
+                this.emitter.emit("message", outMsg);
+            }
 
             const sqlPatch = sessionToSqlPatch(session);
             const persisted: SessionSQL = {
@@ -5712,7 +6214,7 @@ export class Client {
             await this.database.saveSession(persisted);
             this.sessionRecords[XUtils.encodeHex(session.publicKey)] = session;
 
-            await this.deliverMailResource(msgb, hmac, mail);
+            await this.deliverMailResource(msgb, hmac, wireMail);
             return outMsg;
         } finally {
             this.sending.delete(device.deviceID);
@@ -5727,6 +6229,7 @@ export class Client {
         mailID: null | string,
         forward: boolean,
         forceFreshSession = false,
+        notify?: MailNotificationHint,
     ): Promise<Message | null> {
         try {
             return await this.sendMail(
@@ -5737,6 +6240,7 @@ export class Client {
                 mailID,
                 forward,
                 forceFreshSession,
+                notify,
             );
         } catch (err: unknown) {
             if (!this.shouldRetryDeliveryWithFreshSession(err)) {
@@ -5750,6 +6254,7 @@ export class Client {
                 mailID,
                 forward,
                 true,
+                notify,
             );
         }
     }
@@ -5927,6 +6432,33 @@ export class Client {
         this.send(receipt).catch(ignoreSocketTeardown);
     }
 
+    private sessionFromCallEnvelope(body: CallEnvelopeBody): CallSession {
+        const session: CallSession = {
+            callID: body.callID,
+            conversationID: body.conversationID,
+            conversationType: body.conversationType,
+            createdAt: body.createdAt,
+            createdBy: body.createdBy,
+            createdByDeviceID: body.createdByDeviceID,
+            expiresAt: body.expiresAt,
+            media: "audio",
+            participants: [],
+            status: body.action === "invite" ? "ringing" : "active",
+        };
+        this.upsertCallParticipant(session, {
+            acceptedAt: body.createdAt,
+            deviceID: body.createdByDeviceID,
+            joinedAt: body.createdAt,
+            state: "accepted",
+            userID: body.createdBy,
+        });
+        this.upsertCallParticipant(session, {
+            state: "ringing",
+            userID: body.conversationID,
+        });
+        return session;
+    }
+
     private setAlive(status: boolean) {
         this.isAlive = status;
     }
@@ -5971,6 +6503,76 @@ export class Client {
                 this.signKeys.secretKey,
             ),
         );
+    }
+
+    private async startEncryptedDmCall(
+        recipientUserID: string,
+        signal?: CallSignalPayload,
+    ): Promise<CallEvent> {
+        const { devices, user } = await this.fetchCallPeer({
+            userID: recipientUserID,
+        });
+        const now = new Date();
+        const createdAt = now.toISOString();
+        const expiresAt = new Date(
+            now.getTime() + CALL_INVITE_TTL_MS,
+        ).toISOString();
+        const session: CallSession = {
+            callID: uuid.v4(),
+            conversationID: recipientUserID,
+            conversationType: "dm",
+            createdAt,
+            createdBy: this.getUser().userID,
+            createdByDeviceID: this.getDevice().deviceID,
+            expiresAt,
+            media: "audio",
+            participants: [
+                {
+                    acceptedAt: createdAt,
+                    deviceID: this.getDevice().deviceID,
+                    joinedAt: createdAt,
+                    state: "accepted",
+                    userID: this.getUser().userID,
+                },
+                {
+                    state: "ringing",
+                    userID: recipientUserID,
+                },
+            ],
+            status: "ringing",
+        };
+        const state: EncryptedCallState = {
+            peerUserID: recipientUserID,
+            pendingPeerDevices: devices,
+            sequence: 1,
+            session,
+        };
+        this.callStates.set(session.callID, state);
+
+        const bodies = devices.map((device) =>
+            this.makeCallEnvelopeBody({
+                action: "invite",
+                expiresAt,
+                sequence: state.sequence,
+                signal,
+                state,
+                toDeviceID: device.deviceID,
+                toUserID: recipientUserID,
+            }),
+        );
+        await this.deliverCallEnvelopeBatch({
+            bodies,
+            mailID: uuid.v4(),
+            targetUser: user,
+        });
+
+        return {
+            action: "invite",
+            call: cloneCallSession(session),
+            fromDeviceID: this.getDevice().deviceID,
+            fromUserID: this.getUser().userID,
+            ...(signal ? { signal } : {}),
+        };
     }
 
     private async submitOTK(amount: number) {
@@ -6105,5 +6707,19 @@ export class Client {
         } catch (_err: unknown) {
             return null;
         }
+    }
+
+    private upsertCallParticipant(
+        session: CallSession,
+        patch: CallSession["participants"][number],
+    ): void {
+        const existing = session.participants.find(
+            (participant) => participant.userID === patch.userID,
+        );
+        if (!existing) {
+            session.participants.push({ ...patch });
+            return;
+        }
+        Object.assign(existing, patch);
     }
 }
