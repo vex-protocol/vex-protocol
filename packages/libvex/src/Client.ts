@@ -78,6 +78,7 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import {
+    CallEnvelopeBodySchema,
     CallEventSchema,
     IceServerConfigSchema,
     MailType,
@@ -1015,7 +1016,9 @@ function canonicalizeJson(value: unknown): unknown {
 }
 
 function canonicalJsonBytes(value: unknown): Uint8Array {
-    return XUtils.decodeUTF8(JSON.stringify(canonicalizeJson(value)));
+    return XUtils.decodeUTF8(
+        JSON.stringify(canonicalizeJson(jsonWireValue(value))),
+    );
 }
 
 function cloneCallSession(session: CallSession): CallSession {
@@ -1100,6 +1103,13 @@ function encodeMessagePlaintext(
     return formatVexRetentionEnvelope(body, opts?.retentionHintDays);
 }
 
+function jsonWireValue(value: unknown): unknown {
+    // Match the payload JSON.stringify will send, including RTC toJSON() output.
+    const encoded = JSON.stringify(value);
+    const parsed: unknown = JSON.parse(encoded);
+    return parsed;
+}
+
 function messageFromDecodedPlaintext(
     decoded: DecodedMessagePlaintext,
 ): Pick<Message, "extra" | "message" | "retentionHintDays"> {
@@ -1110,6 +1120,12 @@ function messageFromDecodedPlaintext(
             ? { retentionHintDays: decoded.retentionHintDays }
             : {}),
     };
+}
+
+function normalizeCallEnvelopeBodyForWire(
+    body: CallEnvelopeBody,
+): CallEnvelopeBody {
+    return CallEnvelopeBodySchema.parse(jsonWireValue(body));
 }
 
 function normalizeForwardedMessage(message: Message): Message {
@@ -2820,12 +2836,13 @@ export class Client {
     private async callEnvelopeForBody(
         body: CallEnvelopeBody,
     ): Promise<SignedCallEnvelope> {
+        const wireBody = normalizeCallEnvelopeBodyForWire(body);
         const signed = await xSignAsync(
-            canonicalJsonBytes(body),
+            canonicalJsonBytes(wireBody),
             this.signKeys.secretKey,
         );
         return {
-            body,
+            body: wireBody,
             signed: XUtils.encodeHex(signed),
         };
     }
