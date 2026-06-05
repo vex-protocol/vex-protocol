@@ -19,6 +19,25 @@ export type CallAction =
 
 export type CallConversationType = "channel" | "dm";
 
+export interface CallEnvelopeBody {
+    action: CallAction;
+    callID: string;
+    conversationID: string;
+    conversationType: CallConversationType;
+    createdAt: string;
+    createdBy: string;
+    createdByDeviceID: string;
+    expiresAt: string;
+    fromDeviceID: string;
+    fromUserID: string;
+    media: "audio";
+    sequence: number;
+    signal?: CallSignalPayload | undefined;
+    toDeviceID: string;
+    toUserID: string;
+    version: 1;
+}
+
 export interface CallEvent {
     action: CallAction;
     call: CallSession;
@@ -73,6 +92,11 @@ export interface IceServerConfig {
     credential?: string | undefined;
     urls: string | string[];
     username?: string | undefined;
+}
+
+export interface SignedCallEnvelope {
+    body: CallEnvelopeBody;
+    signed: string;
 }
 
 export const CallActionSchema: z.ZodType<CallAction> = z.union([
@@ -150,6 +174,32 @@ export const CallEventSchema: z.ZodType<CallEvent> = z.object({
     fromUserID: z.string(),
     signal: CallSignalPayloadSchema.optional(),
 });
+
+export const CallEnvelopeBodySchema: z.ZodType<CallEnvelopeBody> = z.object({
+    action: CallActionSchema,
+    callID: z.string(),
+    conversationID: z.string(),
+    conversationType: z.union([z.literal("channel"), z.literal("dm")]),
+    createdAt: z.string(),
+    createdBy: z.string(),
+    createdByDeviceID: z.string(),
+    expiresAt: z.string(),
+    fromDeviceID: z.string(),
+    fromUserID: z.string(),
+    media: z.literal("audio"),
+    sequence: z.number().int().nonnegative(),
+    signal: CallSignalPayloadSchema.optional(),
+    toDeviceID: z.string(),
+    toUserID: z.string(),
+    version: z.literal(1),
+});
+
+export const SignedCallEnvelopeSchema: z.ZodType<SignedCallEnvelope> = z.object(
+    {
+        body: CallEnvelopeBodySchema,
+        signed: z.string(),
+    },
+);
 
 export const IceServerConfigSchema: z.ZodType<IceServerConfig> = z.object({
     credential: z.string().optional(),
