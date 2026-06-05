@@ -3419,7 +3419,7 @@ export class Client {
             args.userID,
             "peer",
         );
-        let deviceListRaw: Device[] = afterBackoff;
+        let deviceListRaw: Device[];
         try {
             const again = await this.fetchUserDeviceListOnce(args.userID);
             const byID = new Map<string, Device>();
