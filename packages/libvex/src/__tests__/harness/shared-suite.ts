@@ -118,6 +118,21 @@ export function platformSuite(
         });
 
         test("encrypted call invite arrives as call event", async () => {
+            class NativeIceCandidate {
+                toJSON() {
+                    return {
+                        candidate: "candidate-test",
+                        sdpMid: "0",
+                        sdpMLineIndex: 0,
+                    };
+                }
+            }
+            class NativeSessionDescription {
+                toJSON() {
+                    return { sdp: "test-offer", type: "offer" };
+                }
+            }
+
             const me = client.me.user();
             let unexpectedMessages = 0;
             const onMessage = (_msg: Message) => {
@@ -133,12 +148,22 @@ export function platformSuite(
                     `[${platformName}] encrypted self-call invite`,
                 );
                 const returned = await client.calls.startDM(me.userID, {
-                    description: { sdp: "test-offer", type: "offer" },
+                    candidate: new NativeIceCandidate(),
+                    description: new NativeSessionDescription(),
                     kind: "offer",
                 });
                 const incoming = await callPromise;
                 expect(returned.call.callID).toBe(incoming.call.callID);
                 expect(incoming.signal?.kind).toBe("offer");
+                expect(incoming.signal?.candidate).toEqual({
+                    candidate: "candidate-test",
+                    sdpMid: "0",
+                    sdpMLineIndex: 0,
+                });
+                expect(incoming.signal?.description).toEqual({
+                    sdp: "test-offer",
+                    type: "offer",
+                });
                 expect(unexpectedMessages).toBe(0);
 
                 const active = await client.calls.active();
