@@ -1104,6 +1104,7 @@ function encodeMessagePlaintext(
 }
 
 function jsonWireValue(value: unknown): unknown {
+    // Match the payload JSON.stringify will send, including RTC toJSON() output.
     const encoded = JSON.stringify(value);
     const parsed: unknown = JSON.parse(encoded);
     return parsed;
