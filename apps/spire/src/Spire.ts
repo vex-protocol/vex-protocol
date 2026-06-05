@@ -48,6 +48,7 @@ import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
 import { resolveIceServersFromEnv } from "./IceServers.ts";
 import { NotificationService } from "./NotificationService.ts";
+import { callWakeDispatchData } from "./server/callWake.ts";
 import { initApp, protect } from "./server/index.ts";
 import {
     MailIngressValidationError,
@@ -133,8 +134,8 @@ interface ValidatedMailBatchEntry {
 }
 
 const notificationSubscribePayload = z.object({
-    channel: z.literal("expo"),
-    events: z.array(z.string().min(1)).default(["mail"]),
+    channel: z.enum(["apnsVoip", "expo", "fcmCall"]),
+    events: z.array(z.string().min(1)).optional(),
     platform: z.enum(["android", "ios", "web"]).optional(),
     token: z.string().min(1),
 });
@@ -871,15 +872,28 @@ export class Spire extends EventEmitter {
             );
 
             res.sendStatus(200);
-            this.notify(
-                recipientDeviceDetails.owner,
-                "mail",
-                crypto.randomUUID(),
-                null,
-                mail.recipient,
-                mail.authorID,
-                mail.nonce,
-            );
+            const callWake = callWakeDispatchData(mail);
+            if (callWake) {
+                this.notify(
+                    recipientDeviceDetails.owner,
+                    "callWake",
+                    crypto.randomUUID(),
+                    callWake,
+                    mail.recipient,
+                    undefined,
+                    mail.nonce,
+                );
+            } else {
+                this.notify(
+                    recipientDeviceDetails.owner,
+                    "mail",
+                    crypto.randomUUID(),
+                    null,
+                    mail.recipient,
+                    mail.authorID,
+                    mail.nonce,
+                );
+            }
         });
 
         this.api.post("/mail/batch", protect, async (req, res) => {
@@ -989,15 +1003,28 @@ export class Spire extends EventEmitter {
 
             res.send(msgpack.encode({ results }));
             for (const entry of deliveredEntries) {
-                this.notify(
-                    entry.recipientDevice.owner,
-                    "mail",
-                    crypto.randomUUID(),
-                    null,
-                    entry.mail.recipient,
-                    entry.mail.authorID,
-                    entry.mail.nonce,
-                );
+                const callWake = callWakeDispatchData(entry.mail);
+                if (callWake) {
+                    this.notify(
+                        entry.recipientDevice.owner,
+                        "callWake",
+                        crypto.randomUUID(),
+                        callWake,
+                        entry.mail.recipient,
+                        undefined,
+                        entry.mail.nonce,
+                    );
+                } else {
+                    this.notify(
+                        entry.recipientDevice.owner,
+                        "mail",
+                        crypto.randomUUID(),
+                        null,
+                        entry.mail.recipient,
+                        entry.mail.authorID,
+                        entry.mail.nonce,
+                    );
+                }
             }
         });
 
@@ -1043,7 +1070,11 @@ export class Spire extends EventEmitter {
                     {
                         channel: parsed.data.channel,
                         deviceID: device.deviceID,
-                        events: parsed.data.events,
+                        events:
+                            parsed.data.events ??
+                            (parsed.data.channel === "expo"
+                                ? ["mail"]
+                                : ["callWake"]),
                         platform: parsed.data.platform ?? null,
                         token: parsed.data.token,
                         userID: getUser(req).userID,

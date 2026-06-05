@@ -8,8 +8,14 @@ import type { ClientManager } from "./ClientManager.ts";
 import type { Database, NotificationSubscription } from "./Database.ts";
 import type { NotifyMsg } from "@vex-chat/types";
 
+import { readFileSync } from "node:fs";
+import * as http2 from "node:http2";
+
+import jwt from "jsonwebtoken";
+
 const EXPO_PUSH_ENDPOINT = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPT_ENDPOINT = "https://exp.host/--/api/v2/push/getReceipts";
+const FCM_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const EXPO_BATCH_SIZE = 100;
 const EXPO_RECEIPT_DELAY_MS = 15 * 60 * 1000;
 const EXPO_REQUEST_TIMEOUT_MS = 10_000;
@@ -25,6 +31,19 @@ export interface NotificationDispatch {
     mailNonce?: Uint8Array;
     transmissionID: string;
     userID: string;
+}
+
+interface ApnsConfig {
+    environment: "production" | "sandbox";
+    keyID: string;
+    privateKey: string;
+    teamID: string;
+    topic: string;
+}
+
+interface ApnsResponse {
+    body: string;
+    status: number;
 }
 
 type ExpoErrorDetails = {
@@ -52,6 +71,12 @@ type ExpoPushTicket =
           id: string;
           status: "ok";
       };
+
+interface FcmConfig {
+    clientEmail: string;
+    privateKey: string;
+    projectID: string;
+}
 
 interface NotificationServiceOptions {
     receiptDelayMs?: number;
@@ -209,9 +234,21 @@ export class NotificationService {
                 ? { ...query, deviceID: dispatch.deviceID }
                 : query,
         );
-        const expoSubscriptions = subscriptions;
-        if (expoSubscriptions.length === 0) {
-            console.info("[spire-notify] no Expo push subscriptions", {
+        const expoSubscriptions = subscriptions.filter(
+            (sub) => sub.channel === "expo",
+        );
+        const apnsSubscriptions = subscriptions.filter(
+            (sub) => sub.channel === "apnsVoip",
+        );
+        const fcmSubscriptions = subscriptions.filter(
+            (sub) => sub.channel === "fcmCall",
+        );
+        if (
+            expoSubscriptions.length === 0 &&
+            apnsSubscriptions.length === 0 &&
+            fcmSubscriptions.length === 0
+        ) {
+            console.info("[spire-notify] no push subscriptions", {
                 deviceScoped: Boolean(dispatch.deviceID),
                 event: dispatch.event,
                 transmissionID: dispatch.transmissionID,
@@ -223,6 +260,14 @@ export class NotificationService {
         for (let i = 0; i < expoSubscriptions.length; i += EXPO_BATCH_SIZE) {
             const batch = expoSubscriptions.slice(i, i + EXPO_BATCH_SIZE);
             await this.sendExpoBatch(batch, dispatch);
+        }
+        if (dispatch.event === "callWake") {
+            if (apnsSubscriptions.length > 0) {
+                await this.sendApnsVoipBatch(apnsSubscriptions, dispatch);
+            }
+            if (fcmSubscriptions.length > 0) {
+                await this.sendFcmCallBatch(fcmSubscriptions, dispatch);
+            }
         }
     }
 
@@ -328,6 +373,59 @@ export class NotificationService {
         (timer as { unref?: () => void }).unref?.();
     }
 
+    private async sendApnsVoipBatch(
+        subscriptions: NotificationSubscription[],
+        dispatch: NotificationDispatch,
+    ): Promise<void> {
+        const config = readApnsConfig();
+        if (!config) {
+            console.warn("[spire-notify] APNs VoIP env is not configured", {
+                event: dispatch.event,
+                size: subscriptions.length,
+                transmissionID: dispatch.transmissionID,
+            });
+            return;
+        }
+
+        const providerToken = jwt.sign({}, config.privateKey, {
+            algorithm: "ES256",
+            expiresIn: "50m",
+            header: { alg: "ES256", kid: config.keyID },
+            issuer: config.teamID,
+        });
+
+        for (const subscription of subscriptions) {
+            const response = await sendApnsVoipNotification(
+                config,
+                providerToken,
+                subscription,
+                dispatch,
+            );
+            if (response.status >= 200 && response.status < 300) {
+                continue;
+            }
+
+            console.warn("[spire-notify] APNs VoIP delivery failed", {
+                body: response.body.slice(0, 500),
+                status: response.status,
+                subscriptionID: subscription.subscriptionID,
+                transmissionID: dispatch.transmissionID,
+            });
+            if (
+                response.status === 400 ||
+                response.status === 410 ||
+                response.body.includes("BadDeviceToken") ||
+                response.body.includes("Unregistered")
+            ) {
+                await this.db.removeNotificationSubscription({
+                    deviceID: subscription.deviceID,
+                    subscriptionID: subscription.subscriptionID,
+                    userID: subscription.userID,
+                });
+            }
+        }
+    }
+
     private async sendExpoBatch(
         subscriptions: NotificationSubscription[],
         dispatch: NotificationDispatch,
@@ -419,10 +517,68 @@ export class NotificationService {
         }
     }
 
+    private async sendFcmCallBatch(
+        subscriptions: NotificationSubscription[],
+        dispatch: NotificationDispatch,
+    ): Promise<void> {
+        const config = readFcmConfig();
+        if (!config) {
+            console.warn("[spire-notify] FCM call env is not configured", {
+                event: dispatch.event,
+                size: subscriptions.length,
+                transmissionID: dispatch.transmissionID,
+            });
+            return;
+        }
+
+        const accessToken = await fetchFcmAccessToken(config);
+        for (const subscription of subscriptions) {
+            const res = await fetchWithTimeout(
+                `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(
+                    config.projectID,
+                )}/messages:send`,
+                {
+                    body: JSON.stringify(
+                        fcmCallMessageForSubscription(subscription, dispatch),
+                    ),
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        "Content-Type": "application/json",
+                    },
+                    method: "POST",
+                },
+                "FCM call push request",
+            );
+            if (res.ok) {
+                continue;
+            }
+
+            const body = await res.text().catch(() => "");
+            console.warn("[spire-notify] FCM call delivery failed", {
+                body: body.slice(0, 500),
+                status: res.status,
+                subscriptionID: subscription.subscriptionID,
+                transmissionID: dispatch.transmissionID,
+            });
+            if (
+                res.status === 400 ||
+                res.status === 404 ||
+                body.includes("UNREGISTERED") ||
+                body.includes("registration-token-not-registered")
+            ) {
+                await this.db.removeNotificationSubscription({
+                    deviceID: subscription.deviceID,
+                    subscriptionID: subscription.subscriptionID,
+                    userID: subscription.userID,
+                });
+            }
+        }
+    }
+
     private startPush(dispatch: NotificationDispatch): void {
         void this.notifyPush(dispatch).catch((err: unknown) => {
             // Push is best-effort; websocket/inbox delivery remain authoritative.
-            console.warn("[spire-notify] Expo push fanout failed", {
+            console.warn("[spire-notify] push fanout failed", {
                 event: dispatch.event,
                 message: err instanceof Error ? err.message : String(err),
                 transmissionID: dispatch.transmissionID,
@@ -432,12 +588,36 @@ export class NotificationService {
     }
 }
 
+function apnsExpiration(dispatch: NotificationDispatch): string {
+    const expiresAt = notifyDataFields(dispatch.data)["expiresAt"];
+    if (typeof expiresAt === "string") {
+        const epochSeconds = Math.floor(Date.parse(expiresAt) / 1000);
+        if (Number.isFinite(epochSeconds) && epochSeconds > 0) {
+            return String(epochSeconds);
+        }
+    }
+    return String(Math.floor((Date.now() + 60_000) / 1000));
+}
+
 function bodyForEvent(event: string): string | undefined {
+    if (event === "callWake") return "Incoming voice call.";
     if (event === "callInvite") return "Incoming voice call.";
     if (event === "mail") return undefined;
     if (event === "deviceRequest") return "Review the device request.";
     if (event === "deviceListChanged") return "Your device list changed.";
     return "Open Vex for the latest update.";
+}
+
+function callWakeTtl(dispatch: NotificationDispatch): string {
+    const expiresAt = notifyDataFields(dispatch.data)["expiresAt"];
+    if (typeof expiresAt !== "string") {
+        return "60s";
+    }
+    const ms = Date.parse(expiresAt) - Date.now();
+    if (!Number.isFinite(ms) || ms <= 0) {
+        return "1s";
+    }
+    return `${Math.max(1, Math.ceil(ms / 1000)).toString()}s`;
 }
 
 function expoMessageForSubscription(
@@ -462,6 +642,7 @@ function expoMessageForSubscription(
     const title = titleForEvent(dispatch.event);
     const body = bodyForEvent(dispatch.event);
     const data = {
+        ...notifyDataFields(dispatch.data),
         deviceID: dispatch.deviceID ?? null,
         event: dispatch.event,
         title,
@@ -491,6 +672,73 @@ function expoMessageForSubscription(
         }
     }
     return message;
+}
+
+function fcmCallMessageForSubscription(
+    subscription: NotificationSubscription,
+    dispatch: NotificationDispatch,
+): Record<string, unknown> {
+    return {
+        message: {
+            android: {
+                priority: "HIGH",
+                ttl: callWakeTtl(dispatch),
+            },
+            data: stringRecord({
+                ...notifyDataFields(dispatch.data),
+                deviceID: dispatch.deviceID ?? "",
+                event: dispatch.event,
+                transmissionID: dispatch.transmissionID,
+            }),
+            token: subscription.token,
+        },
+    };
+}
+
+async function fetchFcmAccessToken(config: FcmConfig): Promise<string> {
+    const assertion = jwt.sign(
+        {
+            scope: "https://www.googleapis.com/auth/firebase.messaging",
+        },
+        config.privateKey,
+        {
+            algorithm: "RS256",
+            audience: FCM_TOKEN_ENDPOINT,
+            expiresIn: "55m",
+            issuer: config.clientEmail,
+            subject: config.clientEmail,
+        },
+    );
+    const body = new URLSearchParams({
+        assertion,
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    });
+    const res = await fetchWithTimeout(
+        FCM_TOKEN_ENDPOINT,
+        {
+            body,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method: "POST",
+        },
+        "FCM OAuth token request",
+    );
+    if (!res.ok) {
+        const responseBody = await res.text().catch(() => "");
+        throw new Error(
+            `FCM OAuth token request failed with status ${res.status.toString()}${
+                responseBody ? `: ${responseBody.slice(0, 500)}` : ""
+            }`,
+        );
+    }
+    const raw = await res.json();
+    if (!isRecord(raw) || typeof raw["access_token"] !== "string") {
+        throw new Error(
+            "FCM OAuth token response did not include access_token",
+        );
+    }
+    return raw["access_token"];
 }
 
 async function fetchWithTimeout(
@@ -547,6 +795,24 @@ function normalizeExpoTickets(data: unknown): ExpoPushTicket[] {
     return tickets.filter(isExpoPushTicket);
 }
 
+function normalizePrivateKey(value: string): string {
+    return value.replaceAll("\\n", "\n");
+}
+
+function notifyDataFields(data: unknown): Record<string, unknown> {
+    if (!isRecord(data)) {
+        return {};
+    }
+    const out: Record<string, unknown> = {};
+    for (const key of ["callID", "expiresAt", "mailID", "mailNonce"]) {
+        const value = data[key];
+        if (typeof value === "string") {
+            out[key] = value;
+        }
+    }
+    return out;
+}
+
 function parseExpoPushResponse(raw: unknown): ParsedExpoPushResponse {
     if (!isRecord(raw)) {
         return { errors: [], tickets: [] };
@@ -578,6 +844,153 @@ function parseExpoReceipts(data: unknown): Record<string, ExpoPushReceipt> {
     return receipts;
 }
 
+function readApnsConfig(): ApnsConfig | null {
+    const teamID = readEnv("SPIRE_APNS_TEAM_ID");
+    const keyID = readEnv("SPIRE_APNS_KEY_ID");
+    const bundleID = readEnv("SPIRE_APNS_BUNDLE_ID");
+    const topic = readEnv("SPIRE_APNS_TOPIC") ?? `${bundleID ?? ""}.voip`;
+    const privateKey = readPrivateKeyEnv(
+        "SPIRE_APNS_PRIVATE_KEY",
+        "SPIRE_APNS_PRIVATE_KEY_FILE",
+    );
+    if (!teamID || !keyID || !bundleID || !topic || !privateKey) {
+        return null;
+    }
+    const environment =
+        readEnv("SPIRE_APNS_ENV") === "sandbox" ? "sandbox" : "production";
+    return {
+        environment,
+        keyID,
+        privateKey,
+        teamID,
+        topic,
+    };
+}
+
+function readEnv(name: string): null | string {
+    const value = process.env[name]?.trim();
+    return value && value.length > 0 ? value : null;
+}
+
+function readFcmConfig(): FcmConfig | null {
+    const json = readEnv("SPIRE_FCM_SERVICE_ACCOUNT_JSON");
+    if (json) {
+        try {
+            const raw = JSON.parse(json) as unknown;
+            if (
+                isRecord(raw) &&
+                typeof raw["client_email"] === "string" &&
+                typeof raw["private_key"] === "string" &&
+                typeof raw["project_id"] === "string"
+            ) {
+                return {
+                    clientEmail: raw["client_email"],
+                    privateKey: normalizePrivateKey(raw["private_key"]),
+                    projectID: raw["project_id"],
+                };
+            }
+        } catch {
+            return null;
+        }
+    }
+
+    const clientEmail = readEnv("SPIRE_FCM_CLIENT_EMAIL");
+    const projectID = readEnv("SPIRE_FCM_PROJECT_ID");
+    const privateKey = readPrivateKeyEnv(
+        "SPIRE_FCM_PRIVATE_KEY",
+        "SPIRE_FCM_PRIVATE_KEY_FILE",
+    );
+    if (!clientEmail || !projectID || !privateKey) {
+        return null;
+    }
+    return { clientEmail, privateKey, projectID };
+}
+
+function readPrivateKeyEnv(valueName: string, fileName: string): null | string {
+    const inline = readEnv(valueName);
+    if (inline) {
+        return normalizePrivateKey(inline);
+    }
+    const file = readEnv(fileName);
+    if (!file) {
+        return null;
+    }
+    try {
+        return normalizePrivateKey(readFileSync(file, "utf8"));
+    } catch {
+        return null;
+    }
+}
+
+function sendApnsVoipNotification(
+    config: ApnsConfig,
+    providerToken: string,
+    subscription: NotificationSubscription,
+    dispatch: NotificationDispatch,
+): Promise<ApnsResponse> {
+    const host =
+        config.environment === "sandbox"
+            ? "api.sandbox.push.apple.com"
+            : "api.push.apple.com";
+    const payload = JSON.stringify({
+        aps: {
+            "content-available": 1,
+        },
+        ...notifyDataFields(dispatch.data),
+        event: dispatch.event,
+        transmissionID: dispatch.transmissionID,
+    });
+
+    return new Promise<ApnsResponse>((resolve, reject) => {
+        const client = http2.connect(`https://${host}`);
+        const timer = setTimeout(() => {
+            client.close();
+            reject(
+                new Error(
+                    `APNs VoIP request timed out after ${EXPO_REQUEST_TIMEOUT_MS.toString()}ms`,
+                ),
+            );
+        }, EXPO_REQUEST_TIMEOUT_MS);
+        (timer as { unref?: () => void }).unref?.();
+
+        client.once("error", (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+
+        const req = client.request({
+            ":method": "POST",
+            ":path": `/3/device/${subscription.token}`,
+            "apns-expiration": apnsExpiration(dispatch),
+            "apns-priority": "10",
+            "apns-push-type": "voip",
+            "apns-topic": config.topic,
+            authorization: `bearer ${providerToken}`,
+        });
+        let status = 0;
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("response", (headers) => {
+            const rawStatus = headers[":status"];
+            status = typeof rawStatus === "number" ? rawStatus : 0;
+        });
+        req.on("data", (chunk: string) => {
+            body += chunk;
+        });
+        req.on("error", (err) => {
+            clearTimeout(timer);
+            client.close();
+            reject(err);
+        });
+        req.on("end", () => {
+            clearTimeout(timer);
+            client.close();
+            resolve({ body, status });
+        });
+        req.end(payload);
+    });
+}
+
 function shouldDeferMailPush(
     dispatch: NotificationDispatch,
     websocketDeliveries: number,
@@ -600,7 +1013,18 @@ function shouldSendHeadlessPush(dispatch: NotificationDispatch): boolean {
     );
 }
 
+function stringRecord(input: Record<string, unknown>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(input)) {
+        if (typeof value === "string") {
+            out[key] = value;
+        }
+    }
+    return out;
+}
+
 function titleForEvent(event: string): string {
+    if (event === "callWake") return "Incoming Vex call";
     if (event === "callInvite") return "Incoming Vex call";
     if (event === "mail") return "New Message";
     if (event === "deviceRequest") return "Device approval request";
