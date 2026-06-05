@@ -1,5 +1,17 @@
 # @vex-chat/spire
 
+## 2.5.0
+
+### Minor Changes
+
+- [#237](https://github.com/vex-protocol/vex-protocol/pull/237) [`5469fa4`](https://github.com/vex-protocol/vex-protocol/commit/5469fa4f4c8e9228d2f7d7a72eb800eb44d6cec7) Thanks [@yuki111888](https://github.com/yuki111888)! - Move voice-call signaling onto signed encrypted mail envelopes and add opaque call wake notifications for native call integrations.
+
+### Patch Changes
+
+- Updated dependencies [[`5469fa4`](https://github.com/vex-protocol/vex-protocol/commit/5469fa4f4c8e9228d2f7d7a72eb800eb44d6cec7)]:
+    - @vex-chat/types@4.2.0
+    - @vex-chat/crypto@9.0.0
+
 ## 2.4.0
 
 ### Minor Changes
