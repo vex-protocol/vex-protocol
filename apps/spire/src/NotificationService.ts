@@ -257,17 +257,21 @@ export class NotificationService {
             return;
         }
 
+        if (dispatch.event === "callWake") {
+            await this.sendCallWakePushes(
+                {
+                    apns: apnsSubscriptions,
+                    expo: expoSubscriptions,
+                    fcm: fcmSubscriptions,
+                },
+                dispatch,
+            );
+            return;
+        }
+
         for (let i = 0; i < expoSubscriptions.length; i += EXPO_BATCH_SIZE) {
             const batch = expoSubscriptions.slice(i, i + EXPO_BATCH_SIZE);
             await this.sendExpoBatch(batch, dispatch);
-        }
-        if (dispatch.event === "callWake") {
-            if (apnsSubscriptions.length > 0) {
-                await this.sendApnsVoipBatch(apnsSubscriptions, dispatch);
-            }
-            if (fcmSubscriptions.length > 0) {
-                await this.sendFcmCallBatch(fcmSubscriptions, dispatch);
-            }
         }
     }
 
@@ -426,11 +430,71 @@ export class NotificationService {
         }
     }
 
+    private async sendCallWakePushes(
+        subscriptions: {
+            apns: NotificationSubscription[];
+            expo: NotificationSubscription[];
+            fcm: NotificationSubscription[];
+        },
+        dispatch: NotificationDispatch,
+    ): Promise<void> {
+        const failures: Error[] = [];
+        const run = async (
+            label: "APNs VoIP" | "Expo fallback" | "FCM call",
+            send: () => Promise<void>,
+        ): Promise<void> => {
+            try {
+                await send();
+            } catch (err: unknown) {
+                const error =
+                    err instanceof Error ? err : new Error(String(err));
+                failures.push(error);
+                console.warn(`[spire-notify] ${label} push fanout failed`, {
+                    event: dispatch.event,
+                    message: error.message,
+                    transmissionID: dispatch.transmissionID,
+                    userID: dispatch.userID,
+                });
+            }
+        };
+
+        const sends: Array<Promise<void>> = [];
+        if (subscriptions.apns.length > 0) {
+            sends.push(
+                run("APNs VoIP", () =>
+                    this.sendApnsVoipBatch(subscriptions.apns, dispatch),
+                ),
+            );
+        }
+        if (subscriptions.fcm.length > 0) {
+            sends.push(
+                run("FCM call", () =>
+                    this.sendFcmCallBatch(subscriptions.fcm, dispatch),
+                ),
+            );
+        }
+        for (let i = 0; i < subscriptions.expo.length; i += EXPO_BATCH_SIZE) {
+            const batch = subscriptions.expo.slice(i, i + EXPO_BATCH_SIZE);
+            sends.push(
+                run("Expo fallback", () =>
+                    this.sendExpoBatch(batch, dispatch, { headless: true }),
+                ),
+            );
+        }
+
+        await Promise.all(sends);
+        const failure = failures[0];
+        if (failure) {
+            throw failure;
+        }
+    }
+
     private async sendExpoBatch(
         subscriptions: NotificationSubscription[],
         dispatch: NotificationDispatch,
+        options: { headless?: boolean } = {},
     ): Promise<void> {
-        const headless = shouldSendHeadlessPush(dispatch);
+        const headless = options.headless ?? shouldSendHeadlessPush(dispatch);
         const messages = subscriptions.map((sub) =>
             expoMessageForSubscription(sub, dispatch, headless),
         );
@@ -629,6 +693,7 @@ function expoMessageForSubscription(
         return {
             _contentAvailable: true,
             data: {
+                ...pushDataFields(dispatch),
                 deviceID: dispatch.deviceID ?? null,
                 event: dispatch.event,
                 headless: true,
@@ -642,7 +707,7 @@ function expoMessageForSubscription(
     const title = titleForEvent(dispatch.event);
     const body = bodyForEvent(dispatch.event);
     const data = {
-        ...notifyDataFields(dispatch.data),
+        ...pushDataFields(dispatch),
         deviceID: dispatch.deviceID ?? null,
         event: dispatch.event,
         title,
@@ -685,7 +750,7 @@ function fcmCallMessageForSubscription(
                 ttl: callWakeTtl(dispatch),
             },
             data: stringRecord({
-                ...notifyDataFields(dispatch.data),
+                ...pushDataFields(dispatch),
                 deviceID: dispatch.deviceID ?? "",
                 event: dispatch.event,
                 transmissionID: dispatch.transmissionID,
@@ -844,6 +909,16 @@ function parseExpoReceipts(data: unknown): Record<string, ExpoPushReceipt> {
     return receipts;
 }
 
+function pushDataFields(
+    dispatch: NotificationDispatch,
+): Record<string, unknown> {
+    const out = notifyDataFields(dispatch.data);
+    if (dispatch.event === "callWake") {
+        out["kind"] = "voiceCall";
+    }
+    return out;
+}
+
 function readApnsConfig(): ApnsConfig | null {
     const teamID = readEnv("SPIRE_APNS_TEAM_ID");
     const keyID = readEnv("SPIRE_APNS_KEY_ID");
@@ -936,7 +1011,7 @@ function sendApnsVoipNotification(
         aps: {
             "content-available": 1,
         },
-        ...notifyDataFields(dispatch.data),
+        ...pushDataFields(dispatch),
         event: dispatch.event,
         transmissionID: dispatch.transmissionID,
     });
