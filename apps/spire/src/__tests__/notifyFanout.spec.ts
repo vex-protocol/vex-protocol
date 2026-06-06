@@ -74,6 +74,12 @@ function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     };
 }
 
+function fetchInputURL(input: Parameters<typeof fetch>[0]): string {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+    return input.url;
+}
+
 function pendingReceiptCount(service: NotificationService): number {
     return (
         service as unknown as {
@@ -537,7 +543,7 @@ describe("Spire notify fanout", () => {
         });
     });
 
-    it("sends Expo callWake pushes with opaque call data", async () => {
+    it("sends Expo callWake fallback pushes as headless opaque data", async () => {
         const callSubscription: NotificationSubscription = {
             ...subscription,
             events: ["callWake"],
@@ -572,16 +578,22 @@ describe("Spire notify fanout", () => {
             | undefined
             | { body?: unknown };
         const messages = JSON.parse(String(init?.body)) as Array<{
+            _contentAvailable?: boolean;
             body?: string;
+            channelId?: string;
             data?: Record<string, unknown>;
             title?: string;
         }>;
-        expect(messages[0]?.title).toBe("Incoming Vex call");
-        expect(messages[0]?.body).toBe("Incoming voice call.");
+        expect(messages[0]?._contentAvailable).toBe(true);
+        expect(messages[0]).not.toHaveProperty("body");
+        expect(messages[0]).not.toHaveProperty("channelId");
+        expect(messages[0]).not.toHaveProperty("title");
         expect(messages[0]?.data).toMatchObject({
             callID: "call-1",
             event: "callWake",
             expiresAt: "2026-06-05T12:01:00.000Z",
+            headless: true,
+            kind: "voiceCall",
             mailID: "mail-1",
             mailNonce: "abcd",
             transmissionID: "00000000-0000-0000-0000-000000000017",
@@ -663,12 +675,95 @@ describe("Spire notify fanout", () => {
         expect(body.message?.data).toMatchObject({
             callID: "call-fcm",
             event: "callWake",
+            kind: "voiceCall",
             mailID: "mail-fcm",
             mailNonce: "beef",
             transmissionID: "00000000-0000-0000-0000-000000000018",
         });
         expect(body.message?.data).not.toHaveProperty("callerUserID");
         expect(body.message?.data).not.toHaveProperty("sdp");
+    });
+
+    it("still sends direct FCM call wakes when the Expo fallback fails", async () => {
+        const { privateKey } = generateKeyPairSync("rsa", {
+            modulusLength: 2048,
+        });
+        const expoCallSubscription: NotificationSubscription = {
+            ...subscription,
+            events: ["callWake"],
+            subscriptionID: "sub-expo-call",
+        };
+        const fcmSubscription: NotificationSubscription = {
+            ...subscription,
+            channel: "fcmCall",
+            events: ["callWake"],
+            platform: "android",
+            subscriptionID: "sub-fcm-call",
+            token: "fcm-token",
+        };
+        const fetchMock = vi.fn((input: Parameters<typeof fetch>[0]) => {
+            const url = fetchInputURL(input);
+            if (url === "https://oauth2.googleapis.com/token") {
+                return Promise.resolve({
+                    json: () =>
+                        Promise.resolve({ access_token: "access-token" }),
+                    ok: true,
+                });
+            }
+            if (
+                url ===
+                "https://fcm.googleapis.com/v1/projects/vex-test/messages:send"
+            ) {
+                return Promise.resolve({ ok: true });
+            }
+            if (url === "https://exp.host/--/api/v2/push/send") {
+                return Promise.resolve({
+                    ok: false,
+                    status: 503,
+                    text: () => Promise.resolve("expo unavailable"),
+                });
+            }
+            return Promise.reject(new Error(`unexpected fetch ${url}`));
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        process.env["SPIRE_FCM_CLIENT_EMAIL"] = "spire@example.invalid";
+        process.env["SPIRE_FCM_PRIVATE_KEY"] = privateKey.export({
+            format: "pem",
+            type: "pkcs8",
+        });
+        process.env["SPIRE_FCM_PROJECT_ID"] = "vex-test";
+        try {
+            const { db } = createSpireHarness(
+                [],
+                [expoCallSubscription, fcmSubscription],
+            );
+            const service = new NotificationService(db, [], () => {});
+
+            await expect(
+                service["notifyPush"]({
+                    data: {
+                        callID: "call-fcm-with-expo",
+                        expiresAt: "2026-06-05T12:01:00.000Z",
+                        mailID: "mail-fcm-with-expo",
+                        mailNonce: "cafe",
+                    },
+                    deviceID: fcmSubscription.deviceID,
+                    event: "callWake",
+                    transmissionID: "00000000-0000-0000-0000-000000000019",
+                    userID: fcmSubscription.userID,
+                }),
+            ).rejects.toThrow("Expo push request failed");
+        } finally {
+            delete process.env["SPIRE_FCM_CLIENT_EMAIL"];
+            delete process.env["SPIRE_FCM_PRIVATE_KEY"];
+            delete process.env["SPIRE_FCM_PROJECT_ID"];
+        }
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://fcm.googleapis.com/v1/projects/vex-test/messages:send",
+            expect.objectContaining({ method: "POST" }),
+        );
     });
 
     it("requests the default sound for iOS visible Expo pushes only", async () => {
