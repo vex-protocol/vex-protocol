@@ -7,6 +7,9 @@
 import type { PasskeyRow, ServerDatabase } from "./db/schema.ts";
 import type { SpireOptions } from "./Spire.ts";
 import type {
+    AccountEntitlements,
+    AccountEntitlementSource,
+    AccountTier,
     Channel,
     Device,
     DevicePayload,
@@ -38,7 +41,12 @@ import {
     getCryptoProfile,
     XUtils,
 } from "@vex-chat/crypto";
-import { MailType } from "@vex-chat/types";
+import {
+    AccountEntitlementSourceSchema,
+    AccountTierSchema,
+    buildAccountEntitlements,
+    MailType,
+} from "@vex-chat/types";
 
 import argon2 from "argon2";
 
@@ -945,6 +953,29 @@ export class Database extends EventEmitter {
         });
     }
 
+    public async retrieveAccountEntitlements(
+        userID: string,
+    ): Promise<AccountEntitlements> {
+        const row = await this.db
+            .selectFrom("account_entitlements")
+            .selectAll()
+            .where("userID", "=", userID)
+            .limit(1)
+            .executeTakeFirst();
+
+        if (!row) {
+            return buildAccountEntitlements({ userID });
+        }
+
+        return buildAccountEntitlements({
+            expiresAt: row.expiresAt,
+            refreshedAt: row.updatedAt,
+            source: parseAccountEntitlementSource(row.source),
+            tier: parseAccountTier(row.tier),
+            userID,
+        });
+    }
+
     /**
      * Retrives a list of users that should be notified when a specific resourceID
      * experiences changes.
@@ -1499,6 +1530,49 @@ export class Database extends EventEmitter {
         }
     }
 
+    public async setAccountEntitlementTier(
+        userID: string,
+        tier: AccountTier,
+        options?: {
+            expiresAt?: null | string | undefined;
+            source?: AccountEntitlementSource | undefined;
+        },
+    ): Promise<AccountEntitlements> {
+        const parsedTier = AccountTierSchema.parse(tier);
+        const source = AccountEntitlementSourceSchema.parse(
+            options?.source ?? "dev_override",
+        );
+        const expiresAt = options?.expiresAt ?? null;
+        const updatedAt = new Date().toISOString();
+
+        await this.db
+            .insertInto("account_entitlements")
+            .values({
+                expiresAt,
+                source,
+                tier: parsedTier,
+                updatedAt,
+                userID,
+            })
+            .onConflict((oc) =>
+                oc.column("userID").doUpdateSet({
+                    expiresAt,
+                    source,
+                    tier: parsedTier,
+                    updatedAt,
+                }),
+            )
+            .execute();
+
+        return buildAccountEntitlements({
+            expiresAt,
+            refreshedAt: updatedAt,
+            source,
+            tier: parsedTier,
+            userID,
+        });
+    }
+
     private async init(): Promise<void> {
         const migrator = new Migrator({
             db: this.db,
@@ -1625,6 +1699,18 @@ function normalizeRegistrationUsername(
     }
     const seed = userID.replaceAll("-", "").slice(0, 12);
     return `key_${seed}`;
+}
+
+function parseAccountEntitlementSource(
+    source: string,
+): AccountEntitlementSource {
+    const parsed = AccountEntitlementSourceSchema.safeParse(source);
+    return parsed.success ? parsed.data : "default";
+}
+
+function parseAccountTier(tier: string): AccountTier {
+    const parsed = AccountTierSchema.safeParse(tier);
+    return parsed.success ? parsed.data : "free";
 }
 
 function toDevice(row: {
