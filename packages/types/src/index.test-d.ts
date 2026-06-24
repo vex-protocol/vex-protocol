@@ -5,6 +5,8 @@
  */
 
 import {
+    type AccountEntitlements,
+    type AccountTier,
     type BaseMsg,
     type Device,
     MailType,
@@ -22,6 +24,8 @@ const _connect: 6 = TokenScopes.Connect;
 
 const _initial: 0 = MailType.initial;
 const _subsequent: 1 = MailType.subsequent;
+
+const _tier: AccountTier = "plus";
 
 const _badSig: 0 = SocketAuthErrors.BadSignature;
 const _invalidToken: 1 = SocketAuthErrors.InvalidToken;
@@ -51,6 +55,31 @@ const _successMsg: SuccessMsg = {
     type: "success",
 };
 
+const _entitlements: AccountEntitlements = {
+    capabilities: {
+        "attachments.encrypted_uploads": true,
+        "calls.relay_priority": false,
+        "devices.additional_slots": true,
+        "identity.profile_customization": true,
+        "servers.custom_invites": true,
+        "servers.custom_profile": true,
+        "servers.extended_assets": false,
+    },
+    expiresAt: null,
+    limits: {
+        "attachments.max_encrypted_bytes": 104857600,
+        "devices.max_trusted_devices": 5,
+        "identity.max_profile_assets": 4,
+        "servers.max_custom_invites": 25,
+        "servers.max_emoji_slots": 50,
+        "servers.max_sticker_slots": 50,
+    },
+    refreshedAt: new Date().toISOString(),
+    source: "dev_override",
+    tier: _tier,
+    userID: "a",
+};
+
 // Tuple export sidesteps `noUnusedLocals` — these bindings exist purely
 // for compile-time assertions.
 export type _Assertions = [
@@ -61,8 +90,10 @@ export type _Assertions = [
     typeof _subsequent,
     typeof _badSig,
     typeof _invalidToken,
+    typeof _tier,
     typeof _user,
     typeof _device,
     typeof _baseMsg,
     typeof _successMsg,
+    typeof _entitlements,
 ];
