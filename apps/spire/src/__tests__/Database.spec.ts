@@ -298,23 +298,26 @@ describe("Database", () => {
                                 sender: "sender-a",
                                 time,
                             });
+                            const baseTimeMs = Date.now() - 60_000;
+                            const isoTime = (offsetMs: number) =>
+                                new Date(baseTimeMs + offsetMs).toISOString();
 
                             await provider["db"]
                                 .insertInto("mail")
                                 .values([
                                     mail(
                                         "00000000-0000-0000-0000-000000000003",
-                                        "2026-05-07T12:00:02.000Z",
+                                        isoTime(2_000),
                                         "06",
                                     ),
                                     mail(
                                         "00000000-0000-0000-0000-000000000001",
-                                        "2026-05-07T12:00:00.000Z",
+                                        isoTime(0),
                                         "04",
                                     ),
                                     mail(
                                         "00000000-0000-0000-0000-000000000002",
-                                        "2026-05-07T12:00:01.000Z",
+                                        isoTime(1_000),
                                         "05",
                                     ),
                                 ])
