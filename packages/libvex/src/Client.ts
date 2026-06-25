@@ -14,6 +14,8 @@ import type {
 } from "./types/index.js";
 import type { KeyPair } from "@vex-chat/crypto";
 import type {
+    AccountEntitlements,
+    AccountTier,
     ActionToken,
     CallEvent,
     CallResourceData,
@@ -335,6 +337,7 @@ function spireErrorBodyMessage(data: unknown, max = 8_000): string {
 
 import { msgpack } from "./codec.js";
 import {
+    AccountEntitlementsCodec,
     ActionTokenCodec,
     AuthResponseCodec,
     ChannelArrayCodec,
@@ -561,6 +564,23 @@ export interface Emojis {
     retrieve: (emojiID: string) => Promise<Emoji | null>;
     /** Lists emojis available on a server. */
     retrieveList: (serverID: string) => Promise<Emoji[]>;
+}
+
+/**
+ * @ignore
+ */
+export interface Entitlements {
+    /** Retrieves the server-authoritative entitlement snapshot. */
+    retrieve: () => Promise<AccountEntitlements>;
+    /**
+     * Local development helper. Spire only serves this endpoint when
+     * `VEX_ENABLE_DEV_ENTITLEMENTS=1`, `DEV_API_KEY` is configured, and
+     * `NODE_ENV` is not `production`.
+     */
+    setDevTier: (
+        tier: AccountTier,
+        options?: { expiresAt?: null | string },
+    ) => Promise<AccountEntitlements>;
 }
 
 /**
@@ -1428,6 +1448,12 @@ export class Client {
         create: this.uploadEmoji.bind(this),
         retrieve: this.retrieveEmojiByID.bind(this),
         retrieveList: this.retrieveEmojiList.bind(this),
+    };
+
+    /** Account entitlement methods. */
+    public entitlements: Entitlements = {
+        retrieve: this.getAccountEntitlements.bind(this),
+        setDevTier: this.setDevAccountTier.bind(this),
     };
 
     /** File upload/download methods. */
@@ -3452,6 +3478,13 @@ export class Client {
             failed: failCount,
             targets: targetDevices.length,
         });
+    }
+
+    private async getAccountEntitlements(): Promise<AccountEntitlements> {
+        const res = await this.http.get(
+            this.getHost() + "/user/" + this.getUser().userID + "/entitlements",
+        );
+        return decodeHttpResponse(AccountEntitlementsCodec, res.data);
     }
 
     private async getChannelByID(channelID: string): Promise<Channel | null> {
@@ -5929,6 +5962,23 @@ export class Client {
 
     private setAlive(status: boolean) {
         this.isAlive = status;
+    }
+
+    private async setDevAccountTier(
+        tier: AccountTier,
+        options?: { expiresAt?: null | string },
+    ): Promise<AccountEntitlements> {
+        const res = await this.http.patch(
+            this.getHost() +
+                "/__dev/user/" +
+                this.getUser().userID +
+                "/entitlements",
+            {
+                expiresAt: options?.expiresAt ?? null,
+                tier,
+            },
+        );
+        return decodeHttpResponse(AccountEntitlementsCodec, res.data);
     }
 
     private setUser(user: User): void {

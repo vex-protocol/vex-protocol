@@ -14,6 +14,7 @@
  * For trust boundary validation, use codec.decodeSafe() directly.
  */
 import {
+    AccountEntitlementsSchema,
     ActionTokenSchema,
     ChannelSchema,
     DeviceSchema,
@@ -43,6 +44,7 @@ export const InviteCodec = createCodec(InviteSchema);
 export const EmojiCodec = createCodec(EmojiSchema);
 export const FileSQLCodec = createCodec(FileSQLSchema);
 export const ActionTokenCodec = createCodec(ActionTokenSchema);
+export const AccountEntitlementsCodec = createCodec(AccountEntitlementsSchema);
 export const KeyBundleCodec = createCodec(KeyBundleSchema);
 
 // ── Array codecs ────────────────────────────────────────────────────────────

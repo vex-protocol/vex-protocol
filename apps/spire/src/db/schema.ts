@@ -8,6 +8,18 @@ import type { Insertable, Selectable, Updateable } from "kysely";
 
 // ── Table interfaces ────────────────────────────────────────────────────
 
+export type AccountEntitlementRow = Selectable<AccountEntitlementsTable>;
+
+export interface AccountEntitlementsTable {
+    expiresAt: null | string;
+    source: string;
+    tier: string;
+    updatedAt: string;
+    userID: string;
+}
+
+export type AccountEntitlementUpdate = Updateable<AccountEntitlementsTable>;
+
 export type ChannelRow = Selectable<ChannelsTable>;
 
 export interface ChannelsTable {
@@ -92,8 +104,9 @@ export interface MailTable {
     time: string;
 }
 export type MailUpdate = Updateable<MailTable>;
-export type NewChannel = Insertable<ChannelsTable>;
+export type NewAccountEntitlement = Insertable<AccountEntitlementsTable>;
 
+export type NewChannel = Insertable<ChannelsTable>;
 export type NewDevice = Insertable<DevicesTable>;
 export type NewDevicePasskeyApproval = Insertable<DevicePasskeyApprovalsTable>;
 export type NewEmoji = Insertable<EmojisTable>;
@@ -177,6 +190,7 @@ export interface PreKeysTable {
 }
 export type PreKeyUpdate = Updateable<PreKeysTable>;
 export interface ServerDatabase {
+    account_entitlements: AccountEntitlementsTable;
     channels: ChannelsTable;
     device_passkey_approvals: DevicePasskeyApprovalsTable;
     devices: DevicesTable;
