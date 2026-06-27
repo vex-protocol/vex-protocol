@@ -1,5 +1,17 @@
 # @vex-chat/spire
 
+## 2.5.0
+
+### Minor Changes
+
+- [#251](https://github.com/vex-protocol/vex-protocol/pull/251) [`f7778b4`](https://github.com/vex-protocol/vex-protocol/commit/f7778b43fae18580b70ed18d4aa47392a05f5fc1) Thanks [@dream9x](https://github.com/dream9x)! - Adds account entitlement support across the stack. `@vex-chat/types` exports new entitlement schemas and validators; `@vex-chat/libvex` exposes an account entitlement client API on the `Client`; `@vex-chat/spire` gains an entitlements endpoint and the backing database schema and migration.
+
+### Patch Changes
+
+- Updated dependencies [[`f7778b4`](https://github.com/vex-protocol/vex-protocol/commit/f7778b43fae18580b70ed18d4aa47392a05f5fc1)]:
+    - @vex-chat/types@4.2.0
+    - @vex-chat/crypto@9.0.0
+
 ## 2.4.0
 
 ### Minor Changes
