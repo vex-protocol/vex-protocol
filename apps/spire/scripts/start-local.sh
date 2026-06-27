@@ -7,16 +7,20 @@ ENV_FILE="${SPIRE_LOCAL_ENV_FILE:-$SPIRE_DIR/.env.local}"
 
 cd "$SPIRE_DIR"
 
+write_env() {
+    printf "%s=%q\n" "$1" "$2"
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
     {
         node scripts/gen-spk.js
-        echo "DB_TYPE=sqlite3"
-        echo "API_PORT=${API_PORT:-16777}"
-        echo "DEV_API_KEY=${DEV_API_KEY:-local-dev}"
-        echo "SPIRE_PASSKEY_RP_ID=${SPIRE_PASSKEY_RP_ID:-localhost}"
-        echo "SPIRE_PASSKEY_RP_NAME=${SPIRE_PASSKEY_RP_NAME:-Vex Local}"
-        echo "SPIRE_PASSKEY_ORIGINS=${SPIRE_PASSKEY_ORIGINS:-http://localhost:5180,http://127.0.0.1:5180}"
-        echo "SPIRE_STUN_URLS=${SPIRE_STUN_URLS:-stun:stun.l.google.com:19302}"
+        write_env DB_TYPE "sqlite3"
+        write_env API_PORT "${API_PORT:-16777}"
+        write_env DEV_API_KEY "${DEV_API_KEY:-local-dev}"
+        write_env SPIRE_PASSKEY_RP_ID "${SPIRE_PASSKEY_RP_ID:-localhost}"
+        write_env SPIRE_PASSKEY_RP_NAME "${SPIRE_PASSKEY_RP_NAME:-Vex Local}"
+        write_env SPIRE_PASSKEY_ORIGINS "${SPIRE_PASSKEY_ORIGINS:-http://localhost:5180,http://127.0.0.1:5180}"
+        write_env SPIRE_STUN_URLS "${SPIRE_STUN_URLS:-stun:stun.l.google.com:19302}"
         echo "# Optional Cloudflare TURN credentials. Keep these server-side."
         echo "# SPIRE_CLOUDFLARE_TURN_KEY_ID="
         echo "# SPIRE_CLOUDFLARE_TURN_API_TOKEN="
