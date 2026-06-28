@@ -5,9 +5,20 @@
  */
 
 export {
+    accountEntitlementCapabilitiesForTier,
+    AccountEntitlementCapabilitySchema,
+    AccountEntitlementCapabilityValues,
+    AccountEntitlementLimitSchema,
+    accountEntitlementLimitsForTier,
+    AccountEntitlementLimitValues,
+    AccountEntitlementSourceSchema,
+    AccountEntitlementsSchema,
+    AccountTierSchema,
+    AccountTierValues,
     ActionTokenSchema,
     AuthorizedMsgSchema,
     BaseMsgSchema,
+    buildAccountEntitlements,
     CallActionSchema,
     CallEventSchema,
     CallParticipantSchema,
@@ -61,6 +72,11 @@ export {
 
 // Types (interfaces — source of truth)
 export type {
+    AccountEntitlementCapability,
+    AccountEntitlementLimit,
+    AccountEntitlements,
+    AccountEntitlementSource,
+    AccountTier,
     ActionToken,
     AuthorizedMsg,
     BaseMsg,

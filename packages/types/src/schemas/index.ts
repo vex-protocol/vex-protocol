@@ -32,6 +32,25 @@ export {
 } from "./common.js";
 
 export {
+    accountEntitlementCapabilitiesForTier,
+    type AccountEntitlementCapability,
+    AccountEntitlementCapabilitySchema,
+    AccountEntitlementCapabilityValues,
+    type AccountEntitlementLimit,
+    AccountEntitlementLimitSchema,
+    accountEntitlementLimitsForTier,
+    AccountEntitlementLimitValues,
+    type AccountEntitlements,
+    type AccountEntitlementSource,
+    AccountEntitlementSourceSchema,
+    AccountEntitlementsSchema,
+    type AccountTier,
+    AccountTierSchema,
+    AccountTierValues,
+    buildAccountEntitlements,
+} from "./entitlements.js";
+
+export {
     type Emoji,
     EmojiSchema,
     type FilePayload,

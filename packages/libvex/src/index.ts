@@ -15,6 +15,7 @@ export type {
     DeviceRegistrationResult,
     Devices,
     Emojis,
+    Entitlements,
     FileProgress,
     FileRes,
     Files,
@@ -98,6 +99,8 @@ export type {
 } from "./types/index.js";
 // Re-export app-facing types
 export type {
+    AccountEntitlements,
+    AccountTier,
     CallAction,
     CallEvent,
     CallParticipant,
