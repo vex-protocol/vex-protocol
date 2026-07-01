@@ -11,7 +11,7 @@ catalog:
     msgpackr: ^1.11.9
     tsx: 4.20.6
     typescript: 6.0.2
-    uuid: ^14.0.0
+    uuid: ^14.0.1
     vitest: 4.1.4
     zod: ^4.3.6
 
