@@ -1,5 +1,16 @@
 # @vex-chat/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- [#258](https://github.com/vex-protocol/vex-protocol/pull/258) [`b543820`](https://github.com/vex-protocol/vex-protocol/commit/b5438201765efdb7366928478a44632bb7224a3d) Thanks [@dream9x](https://github.com/dream9x)! - Adds App Store and Google Play subscription verification across the stack. `@vex-chat/types` exports new billing schemas and types (`BillingProduct`, `BillingSubscription`, `BillingAccountState`, `AppleTransactionVerificationRequest`, `GooglePurchaseVerificationRequest`, and related validators); `@vex-chat/libvex` exposes a `client.billing` API for fetching the product catalog, retrieving subscription state, and submitting store transactions for server-side verification; `@vex-chat/spire` gains billing verification endpoints and the backing database schema and migration; `@vex-chat/cli` adds an `entitlements` command to inspect account subscription state from the terminal.
+
+### Patch Changes
+
+- Updated dependencies [[`b543820`](https://github.com/vex-protocol/vex-protocol/commit/b5438201765efdb7366928478a44632bb7224a3d)]:
+    - @vex-chat/libvex@7.4.0
+
 ## 0.3.0
 
 ### Minor Changes
