@@ -8,6 +8,7 @@ import {
     type AccountEntitlements,
     type AccountTier,
     type BaseMsg,
+    type BillingAccountState,
     type Device,
     MailType,
     SocketAuthErrors,
@@ -80,6 +81,23 @@ const _entitlements: AccountEntitlements = {
     userID: "a",
 };
 
+const _billingAccountState: BillingAccountState = {
+    entitlements: _entitlements,
+    subscriptions: [
+        {
+            environment: "sandbox",
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+            platform: "apple_app_store",
+            productID: "apple_plus_monthly",
+            status: "active",
+            storeProductID: "chat.vex.plus.monthly",
+            subscriptionID: "sub_1",
+            tier: "plus",
+            updatedAt: new Date().toISOString(),
+        },
+    ],
+};
+
 // Tuple export sidesteps `noUnusedLocals` — these bindings exist purely
 // for compile-time assertions.
 export type _Assertions = [
@@ -96,4 +114,5 @@ export type _Assertions = [
     typeof _baseMsg,
     typeof _successMsg,
     typeof _entitlements,
+    typeof _billingAccountState,
 ];
