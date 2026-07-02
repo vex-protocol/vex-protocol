@@ -17,6 +17,9 @@ import type {
     AccountEntitlements,
     AccountTier,
     ActionToken,
+    AppleTransactionVerificationRequest,
+    BillingAccountState,
+    BillingProduct,
     CallEvent,
     CallResourceData,
     CallSession,
@@ -28,6 +31,7 @@ import type {
     Emoji,
     FileResponse,
     FileSQL,
+    GooglePurchaseVerificationRequest,
     IceServerConfig,
     Invite,
     KeyBundle,
@@ -340,6 +344,8 @@ import {
     AccountEntitlementsCodec,
     ActionTokenCodec,
     AuthResponseCodec,
+    BillingAccountStateCodec,
+    BillingProductArrayCodec,
     ChannelArrayCodec,
     ChannelCodec,
     ConnectResponseCodec,
@@ -376,6 +382,24 @@ import { sqlSessionToCrypto } from "./utils/sqlSessionToCrypto.js";
 import { uuidToUint8 } from "./utils/uint8uuid.js";
 
 const _protocolMsgRegex = /��\w+:\w+��/g;
+
+/**
+ * @ignore
+ */
+export interface Billing {
+    /** Returns the configured StoreKit / Play Billing product catalog. */
+    products: () => Promise<BillingProduct[]>;
+    /** Returns the current billing subscriptions and derived entitlements. */
+    retrieve: () => Promise<BillingAccountState>;
+    /** Submits an App Store transaction for server-side verification. */
+    submitAppleTransaction: (
+        request: AppleTransactionVerificationRequest,
+    ) => Promise<BillingAccountState>;
+    /** Submits a Google Play purchase token for server-side verification. */
+    submitGooglePurchase: (
+        request: GooglePurchaseVerificationRequest,
+    ) => Promise<BillingAccountState>;
+}
 
 /**
  * Voice-call signaling operations.
@@ -453,6 +477,18 @@ export interface ClientOptions {
 }
 
 export type DeviceRegistrationResult = Device | PendingDeviceRegistration;
+
+/**
+ * Permission is a permission to a resource.
+ *
+ * Common fields:
+ * - `permissionID`: unique permission row ID
+ * - `userID`: user receiving this grant
+ * - `resourceID`: target server/channel/etc.
+ * - `resourceType`: type string for the resource
+ * - `powerLevel`: authorization level
+ */
+export type { Permission } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -537,18 +573,6 @@ export interface Devices {
     /** Fetches one device by ID. */
     retrieve: (deviceIdentifier: string) => Promise<Device | null>;
 }
-
-/**
- * Permission is a permission to a resource.
- *
- * Common fields:
- * - `permissionID`: unique permission row ID
- * - `userID`: user receiving this grant
- * - `resourceID`: target server/channel/etc.
- * - `resourceType`: type string for the resource
- * - `powerLevel`: authorization level
- */
-export type { Permission } from "@vex-chat/types";
 
 /**
  * @ignore
@@ -1341,6 +1365,14 @@ export class Client {
     public static encryptKeyDataAsync = XUtils.encryptKeyDataAsync;
 
     private static readonly NOT_FOUND_TTL = 30 * 60 * 1000;
+
+    /** Store subscription billing methods. */
+    public billing: Billing = {
+        products: this.getBillingProducts.bind(this),
+        retrieve: this.getBillingAccountState.bind(this),
+        submitAppleTransaction: this.submitAppleTransaction.bind(this),
+        submitGooglePurchase: this.submitGooglePurchase.bind(this),
+    };
 
     /**
      * Voice-call signaling operations.
@@ -3485,6 +3517,16 @@ export class Client {
             this.getHost() + "/user/" + this.getUser().userID + "/entitlements",
         );
         return decodeHttpResponse(AccountEntitlementsCodec, res.data);
+    }
+
+    private async getBillingAccountState(): Promise<BillingAccountState> {
+        const res = await this.http.get(this.getHost() + "/billing/account");
+        return decodeHttpResponse(BillingAccountStateCodec, res.data);
+    }
+
+    private async getBillingProducts(): Promise<BillingProduct[]> {
+        const res = await this.http.get(this.getHost() + "/billing/products");
+        return decodeHttpResponse(BillingProductArrayCodec, res.data);
     }
 
     private async getChannelByID(channelID: string): Promise<Channel | null> {
@@ -6021,6 +6063,26 @@ export class Client {
                 this.signKeys.secretKey,
             ),
         );
+    }
+
+    private async submitAppleTransaction(
+        request: AppleTransactionVerificationRequest,
+    ): Promise<BillingAccountState> {
+        const res = await this.http.post(
+            this.getHost() + "/billing/apple/transactions",
+            request,
+        );
+        return decodeHttpResponse(BillingAccountStateCodec, res.data);
+    }
+
+    private async submitGooglePurchase(
+        request: GooglePurchaseVerificationRequest,
+    ): Promise<BillingAccountState> {
+        const res = await this.http.post(
+            this.getHost() + "/billing/google/purchases",
+            request,
+        );
+        return decodeHttpResponse(BillingAccountStateCodec, res.data);
     }
 
     private async submitOTK(amount: number) {
