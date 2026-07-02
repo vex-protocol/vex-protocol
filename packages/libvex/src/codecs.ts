@@ -16,6 +16,8 @@
 import {
     AccountEntitlementsSchema,
     ActionTokenSchema,
+    BillingAccountStateSchema,
+    BillingProductSchema,
     ChannelSchema,
     DeviceSchema,
     EmojiSchema,
@@ -45,6 +47,7 @@ export const EmojiCodec = createCodec(EmojiSchema);
 export const FileSQLCodec = createCodec(FileSQLSchema);
 export const ActionTokenCodec = createCodec(ActionTokenSchema);
 export const AccountEntitlementsCodec = createCodec(AccountEntitlementsSchema);
+export const BillingAccountStateCodec = createCodec(BillingAccountStateSchema);
 export const KeyBundleCodec = createCodec(KeyBundleSchema);
 
 // ── Array codecs ────────────────────────────────────────────────────────────
@@ -58,6 +61,9 @@ export const InviteArrayCodec = createCodec(z.array(InviteSchema));
 export const EmojiArrayCodec = createCodec(z.array(EmojiSchema));
 export const ServerChannelBootstrapCodec = createCodec(
     ServerChannelBootstrapSchema,
+);
+export const BillingProductArrayCodec = createCodec(
+    z.array(BillingProductSchema),
 );
 
 // ── Inline ad-hoc response codecs ───────────────────────────────────────────

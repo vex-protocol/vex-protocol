@@ -20,6 +20,51 @@ export interface AccountEntitlementsTable {
 
 export type AccountEntitlementUpdate = Updateable<AccountEntitlementsTable>;
 
+export type BillingStoreSubscriptionRow =
+    Selectable<BillingStoreSubscriptionsTable>;
+
+export interface BillingStoreSubscriptionsTable {
+    createdAt: string;
+    environment: string;
+    expiresAt: null | string;
+    externalOriginalID: null | string;
+    externalTransactionID: null | string;
+    platform: string;
+    productID: string;
+    purchaseToken: null | string;
+    purchaseTokenHash: null | string;
+    rawPayload: string;
+    status: string;
+    storeProductID: string;
+    subscriptionID: string;
+    tier: string;
+    updatedAt: string;
+    userID: string;
+}
+
+export type BillingStoreSubscriptionUpdate =
+    Updateable<BillingStoreSubscriptionsTable>;
+
+export type BillingStoreTransactionRow =
+    Selectable<BillingStoreTransactionsTable>;
+
+export interface BillingStoreTransactionsTable {
+    environment: string;
+    eventType: string;
+    externalTransactionID: null | string;
+    platform: string;
+    processedAt: string;
+    purchaseTokenHash: null | string;
+    rawPayload: string;
+    storeProductID: string;
+    subscriptionID: string;
+    transactionID: string;
+    userID: string;
+}
+
+export type BillingStoreTransactionUpdate =
+    Updateable<BillingStoreTransactionsTable>;
+
 export type ChannelRow = Selectable<ChannelsTable>;
 
 export interface ChannelsTable {
@@ -105,6 +150,10 @@ export interface MailTable {
 }
 export type MailUpdate = Updateable<MailTable>;
 export type NewAccountEntitlement = Insertable<AccountEntitlementsTable>;
+export type NewBillingStoreSubscription =
+    Insertable<BillingStoreSubscriptionsTable>;
+export type NewBillingStoreTransaction =
+    Insertable<BillingStoreTransactionsTable>;
 
 export type NewChannel = Insertable<ChannelsTable>;
 export type NewDevice = Insertable<DevicesTable>;
@@ -191,6 +240,8 @@ export interface PreKeysTable {
 export type PreKeyUpdate = Updateable<PreKeysTable>;
 export interface ServerDatabase {
     account_entitlements: AccountEntitlementsTable;
+    billing_store_subscriptions: BillingStoreSubscriptionsTable;
+    billing_store_transactions: BillingStoreTransactionsTable;
     channels: ChannelsTable;
     device_passkey_approvals: DevicePasskeyApprovalsTable;
     devices: DevicesTable;

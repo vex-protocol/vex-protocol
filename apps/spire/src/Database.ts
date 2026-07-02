@@ -10,6 +10,11 @@ import type {
     AccountEntitlements,
     AccountEntitlementSource,
     AccountTier,
+    BillingAccountState,
+    BillingEnvironment,
+    BillingPlatform,
+    BillingSubscription,
+    BillingSubscriptionStatus,
     Channel,
     Device,
     DevicePayload,
@@ -30,7 +35,7 @@ import type {
 import type { Migration, MigrationProvider } from "kysely";
 
 import { EventEmitter } from "events";
-import { pbkdf2Sync } from "node:crypto";
+import { createHash, pbkdf2Sync } from "node:crypto";
 import { statSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -44,6 +49,9 @@ import {
 import {
     AccountEntitlementSourceSchema,
     AccountTierSchema,
+    BillingEnvironmentSchema,
+    BillingPlatformSchema,
+    BillingSubscriptionStatusSchema,
     buildAccountEntitlements,
     MailType,
 } from "@vex-chat/types";
@@ -51,6 +59,29 @@ import {
 import argon2 from "argon2";
 
 import { serverMailRetentionCutoffIso } from "./mailRetention.ts";
+
+export interface StoreSubscriptionUpsertInput {
+    environment: BillingEnvironment;
+    expiresAt: null | string;
+    externalOriginalID?: null | string | undefined;
+    externalTransactionID?: null | string | undefined;
+    platform: BillingPlatform;
+    productID: string;
+    purchaseToken?: null | string | undefined;
+    rawPayload: unknown;
+    status: BillingSubscriptionStatus;
+    storeProductID: string;
+    tier: AccountTier;
+    userID: string;
+}
+
+export interface StoreTransactionRecordInput {
+    eventType: string;
+    externalTransactionID?: null | string | undefined;
+    rawPayload: unknown;
+    subscriptionID: string;
+    userID: string;
+}
 
 /**
  * Narrow a plain integer from the `mailType` SQL column to the
@@ -811,6 +842,78 @@ export class Database extends EventEmitter {
             .executeTakeFirst();
     }
 
+    public async recalculateStoreEntitlements(
+        userID: string,
+    ): Promise<AccountEntitlements> {
+        const subscriptions = await this.retrieveBillingSubscriptions(userID);
+        const nowMs = Date.now();
+        const active = subscriptions
+            .filter((subscription) =>
+                billingStatusCarriesEntitlement(subscription.status),
+            )
+            .filter((subscription) => {
+                if (!subscription.expiresAt) {
+                    return true;
+                }
+                const expiresAtMs = Date.parse(subscription.expiresAt);
+                return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
+            })
+            .sort((a, b) => {
+                const tierDelta =
+                    accountTierRank(b.tier) - accountTierRank(a.tier);
+                if (tierDelta !== 0) {
+                    return tierDelta;
+                }
+                return expiryRank(b.expiresAt) - expiryRank(a.expiresAt);
+            });
+
+        const best = active[0];
+        if (best) {
+            return this.setAccountEntitlementTier(userID, best.tier, {
+                expiresAt: best.expiresAt,
+                source: "store",
+            });
+        }
+
+        const current = await this.retrieveAccountEntitlements(userID);
+        if (current.source !== "store") {
+            return current;
+        }
+
+        return this.setAccountEntitlementTier(userID, "free", {
+            expiresAt: null,
+            source: "store",
+        });
+    }
+
+    public async recordStoreTransaction(
+        input: StoreTransactionRecordInput,
+    ): Promise<void> {
+        const subscription = await this.db
+            .selectFrom("billing_store_subscriptions")
+            .selectAll()
+            .where("subscriptionID", "=", input.subscriptionID)
+            .limit(1)
+            .executeTakeFirstOrThrow();
+
+        await this.db
+            .insertInto("billing_store_transactions")
+            .values({
+                environment: subscription.environment,
+                eventType: input.eventType,
+                externalTransactionID: input.externalTransactionID ?? null,
+                platform: subscription.platform,
+                processedAt: new Date().toISOString(),
+                purchaseTokenHash: subscription.purchaseTokenHash,
+                rawPayload: JSON.stringify(input.rawPayload),
+                storeProductID: subscription.storeProductID,
+                subscriptionID: input.subscriptionID,
+                transactionID: crypto.randomUUID(),
+                userID: input.userID,
+            })
+            .execute();
+    }
+
     public async recoverDevice(
         owner: string,
         payload: DevicePayload,
@@ -997,6 +1100,28 @@ export class Database extends EventEmitter {
         }
 
         return users;
+    }
+
+    public async retrieveBillingAccountState(
+        userID: string,
+    ): Promise<BillingAccountState> {
+        return {
+            entitlements: await this.retrieveAccountEntitlements(userID),
+            subscriptions: await this.retrieveBillingSubscriptions(userID),
+        };
+    }
+
+    public async retrieveBillingSubscriptions(
+        userID: string,
+    ): Promise<BillingSubscription[]> {
+        const rows = await this.db
+            .selectFrom("billing_store_subscriptions")
+            .selectAll()
+            .where("userID", "=", userID)
+            .orderBy("updatedAt", "desc")
+            .execute();
+
+        return rows.map(toBillingSubscription);
     }
 
     public async retrieveChannel(channelID: string): Promise<Channel | null> {
@@ -1368,6 +1493,37 @@ export class Database extends EventEmitter {
         return rows.map(toServer);
     }
 
+    public async retrieveStoreSubscriptionOwner(args: {
+        environment: BillingEnvironment;
+        externalOriginalID?: null | string | undefined;
+        platform: BillingPlatform;
+        purchaseToken?: null | string | undefined;
+    }): Promise<null | string> {
+        const purchaseTokenHash = args.purchaseToken
+            ? billingPurchaseTokenHash(
+                  args.platform,
+                  args.environment,
+                  args.purchaseToken,
+              )
+            : null;
+        const existing = await this.findExistingStoreSubscription({
+            environment: args.environment,
+            externalOriginalID: args.externalOriginalID ?? null,
+            platform: args.platform,
+            purchaseTokenHash,
+        });
+        if (!existing) {
+            return null;
+        }
+        const row = await this.db
+            .selectFrom("billing_store_subscriptions")
+            .select(["userID"])
+            .where("subscriptionID", "=", existing.subscriptionID)
+            .limit(1)
+            .executeTakeFirst();
+        return row?.userID ?? null;
+    }
+
     // The identifier is matched as either a userID (UUID branch) or a
     // username (string branch). Username comparison is case-folded so
     // `User` and `user` resolve to the same row regardless of how the
@@ -1573,6 +1729,104 @@ export class Database extends EventEmitter {
         });
     }
 
+    public async upsertStoreSubscription(
+        input: StoreSubscriptionUpsertInput,
+    ): Promise<BillingSubscription> {
+        const now = new Date().toISOString();
+        const purchaseTokenHash = input.purchaseToken
+            ? billingPurchaseTokenHash(
+                  input.platform,
+                  input.environment,
+                  input.purchaseToken,
+              )
+            : null;
+        const existing = await this.findExistingStoreSubscription({
+            environment: input.environment,
+            externalOriginalID: input.externalOriginalID ?? null,
+            platform: input.platform,
+            purchaseTokenHash,
+        });
+        const subscriptionID = existing?.subscriptionID ?? crypto.randomUUID();
+        const row = {
+            environment: input.environment,
+            expiresAt: input.expiresAt,
+            externalOriginalID: input.externalOriginalID ?? null,
+            externalTransactionID: input.externalTransactionID ?? null,
+            platform: input.platform,
+            productID: input.productID,
+            purchaseToken: input.purchaseToken ?? null,
+            purchaseTokenHash,
+            rawPayload: JSON.stringify(input.rawPayload),
+            status: input.status,
+            storeProductID: input.storeProductID,
+            tier: input.tier,
+            updatedAt: now,
+            userID: input.userID,
+        };
+
+        if (existing) {
+            await this.db
+                .updateTable("billing_store_subscriptions")
+                .set(row)
+                .where("subscriptionID", "=", subscriptionID)
+                .execute();
+        } else {
+            await this.db
+                .insertInto("billing_store_subscriptions")
+                .values({
+                    ...row,
+                    createdAt: now,
+                    subscriptionID,
+                })
+                .execute();
+        }
+
+        const saved = await this.db
+            .selectFrom("billing_store_subscriptions")
+            .selectAll()
+            .where("subscriptionID", "=", subscriptionID)
+            .executeTakeFirstOrThrow();
+
+        return toBillingSubscription(saved);
+    }
+
+    private async findExistingStoreSubscription(args: {
+        environment: BillingEnvironment;
+        externalOriginalID: null | string;
+        platform: BillingPlatform;
+        purchaseTokenHash: null | string;
+    }): Promise<null | { subscriptionID: string }> {
+        if (args.externalOriginalID) {
+            const byOriginal = await this.db
+                .selectFrom("billing_store_subscriptions")
+                .select(["subscriptionID"])
+                .where("platform", "=", args.platform)
+                .where("environment", "=", args.environment)
+                .where("externalOriginalID", "=", args.externalOriginalID)
+                .limit(1)
+                .executeTakeFirst();
+            if (byOriginal) {
+                return byOriginal;
+            }
+        }
+
+        if (args.purchaseTokenHash) {
+            const byToken = await this.db
+                .selectFrom("billing_store_subscriptions")
+                .select(["subscriptionID"])
+                .where("platform", "=", args.platform)
+                .where("environment", "=", args.environment)
+                .where("purchaseTokenHash", "=", args.purchaseTokenHash)
+                .limit(1)
+                .executeTakeFirst();
+            if (byToken) {
+                return byToken;
+            }
+        }
+
+        return null;
+    }
+
     private async init(): Promise<void> {
         const migrator = new Migrator({
             db: this.db,
@@ -1662,6 +1916,54 @@ export async function verifyPassword(
     return { needsRehash: valid, valid };
 }
 
+function accountTierRank(tier: AccountTier): number {
+    switch (tier) {
+        case "free":
+            return 0;
+        case "plus":
+            return 1;
+        case "pro":
+            return 2;
+    }
+}
+
+function billingEnvironmentFromRow(environment: string): BillingEnvironment {
+    const parsed = BillingEnvironmentSchema.safeParse(environment);
+    return parsed.success ? parsed.data : "production";
+}
+
+function billingPlatformFromRow(platform: string): BillingPlatform {
+    const parsed = BillingPlatformSchema.safeParse(platform);
+    return parsed.success ? parsed.data : "apple_app_store";
+}
+
+function billingPurchaseTokenHash(
+    platform: BillingPlatform,
+    environment: BillingEnvironment,
+    token: string,
+): string {
+    return createHash("sha256")
+        .update(`${platform}:${environment}:${token}`)
+        .digest("hex");
+}
+
+function billingStatusCarriesEntitlement(
+    status: BillingSubscriptionStatus,
+): boolean {
+    return (
+        status === "active" ||
+        status === "billing_retry" ||
+        status === "grace_period"
+    );
+}
+
+function billingSubscriptionStatusFromRow(
+    status: string,
+): BillingSubscriptionStatus {
+    const parsed = BillingSubscriptionStatusSchema.safeParse(status);
+    return parsed.success ? parsed.data : "pending";
+}
+
 function decodeNotificationEvents(events: string): string[] {
     try {
         const parsed: unknown = JSON.parse(events);
@@ -1682,6 +1984,14 @@ function encodeNotificationEvents(events: string[]): string {
         (event) => event.length > 0,
     );
     return JSON.stringify(unique.length > 0 ? unique : ["mail"]);
+}
+
+function expiryRank(expiresAt: null | string): number {
+    if (!expiresAt) {
+        return Number.MAX_SAFE_INTEGER;
+    }
+    const value = Date.parse(expiresAt);
+    return Number.isFinite(value) ? value : 0;
 }
 
 // Mirrors `Spire.normalizeRegistrationUsername` — kept in sync so a
@@ -1711,6 +2021,30 @@ function parseAccountEntitlementSource(
 function parseAccountTier(tier: string): AccountTier {
     const parsed = AccountTierSchema.safeParse(tier);
     return parsed.success ? parsed.data : "free";
+}
+
+function toBillingSubscription(row: {
+    environment: string;
+    expiresAt: null | string;
+    platform: string;
+    productID: string;
+    status: string;
+    storeProductID: string;
+    subscriptionID: string;
+    tier: string;
+    updatedAt: string;
+}): BillingSubscription {
+    return {
+        environment: billingEnvironmentFromRow(row.environment),
+        expiresAt: row.expiresAt,
+        platform: billingPlatformFromRow(row.platform),
+        productID: row.productID,
+        status: billingSubscriptionStatusFromRow(row.status),
+        storeProductID: row.storeProductID,
+        subscriptionID: row.subscriptionID,
+        tier: parseAccountTier(row.tier),
+        updatedAt: row.updatedAt,
+    };
 }
 
 function toDevice(row: {

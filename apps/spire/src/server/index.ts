@@ -32,6 +32,7 @@ import { verifyPreKeyWsSignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { getAvatarRouter } from "./avatar.ts";
+import { getBillingRouter } from "./billing.ts";
 import { getCliPasskeyPageRouter } from "./cliPasskeyPage.ts";
 import { getEntitlementRouter } from "./entitlements.ts";
 import { errorHandler } from "./errors.ts";
@@ -256,6 +257,7 @@ export const initApp = (
     const userRouter = getUserRouter(db, tokenValidator, notify);
     const fileRouter = getFileRouter(db);
     const avatarRouter = getAvatarRouter();
+    const billingRouter = getBillingRouter(db, notify);
     const entitlementRouter = getEntitlementRouter(db, notify);
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
     const passkeyRouter = getPasskeyRouter(db);
@@ -1026,6 +1028,7 @@ export const initApp = (
     // an authenticated device) and `/auth/passkey/...` (public
     // sign-in). The router itself defines the full path on each
     // route handler.
+    api.use(billingRouter);
     api.use(entitlementRouter);
     api.use(passkeyRouter);
     api.use(passkeyDeviceRouter);

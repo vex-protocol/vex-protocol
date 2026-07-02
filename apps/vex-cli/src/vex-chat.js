@@ -145,6 +145,9 @@ async function main() {
             case "invite":
                 await inviteCommand(ctx, positionals);
                 break;
+            case "entitlements":
+                await entitlementsCommand(ctx, positionals);
+                break;
             case "group":
                 await groupCommand(ctx, positionals);
                 break;
@@ -176,6 +179,7 @@ function isCommand(command) {
         "channels",
         "chat",
         "dm",
+        "entitlements",
         "group",
         "help",
         "invite",
@@ -285,6 +289,7 @@ async function createContext(flags) {
     return {
         dataDir,
         configPath,
+        flags,
         clientOptions: {
             dbFolder: path.join(dataDir, "db"),
             deviceName: "vex-chat-cli",
@@ -375,6 +380,11 @@ function httpFromApiUrl(raw) {
     } catch {
         return true;
     }
+}
+
+function apiBaseUrl(ctx) {
+    const scheme = ctx.clientOptions.unsafeHttp ? "http" : "https";
+    return `${scheme}://${ctx.clientOptions.host}`;
 }
 
 function normalizeAccountHost(host) {
@@ -1493,6 +1503,47 @@ async function inviteCommand(ctx, args) {
             "Usage: vex invite list <server-id> | create <server-id> [duration] | redeem <invite-id>",
         );
     });
+}
+
+async function entitlementsCommand(ctx, args) {
+    const sub = args.shift() ?? "status";
+    if (sub === "set" || sub === "grant") {
+        const userID = requireArg(args, 0, "user id");
+        const tier = requireArg(args, 1, "tier");
+        if (!["free", "plus", "pro"].includes(tier)) {
+            throw new Error("Tier must be one of: free, plus, pro.");
+        }
+        const devKey = ctx.clientOptions.devApiKey;
+        if (!devKey) {
+            throw new Error(
+                "A dev key is required. Pass --dev-key or set DEV_API_KEY.",
+            );
+        }
+        const expiresAt = ctx.flags["expires-at"]
+            ? String(ctx.flags["expires-at"])
+            : null;
+        const res = await fetch(`${apiBaseUrl(ctx)}/__dev/billing/grants`, {
+            body: JSON.stringify({ expiresAt, tier, userID }),
+            headers: {
+                "Content-Type": "application/json",
+                "x-dev-api-key": devKey,
+            },
+            method: "POST",
+        });
+        if (!res.ok) {
+            throw new Error(
+                `Entitlement grant failed with HTTP ${String(res.status)}: ${await res.text()}`,
+            );
+        }
+        const body = await res.json();
+        console.log(
+            `${color(ROOT_ACCENT, "granted")} ${color("bold", tier)} ${color("dim", `to ${userID}`)} ${color("dim", `source=${body.source ?? "unknown"}`)}`,
+        );
+        return;
+    }
+    throw new Error(
+        "Usage: vex entitlements set <user-id> <free|plus|pro> [--expires-at <iso>] --dev-key <key>",
+    );
 }
 
 async function groupCommand(ctx, args) {
@@ -4642,6 +4693,7 @@ Commands:
   vex auth requests            list pending device login requests
   vex auth accounts
   vex auth use <username>
+  vex entitlements set <user-id> <free|plus|pro> --dev-key <key>
   vex whoami
 
 Flags:
