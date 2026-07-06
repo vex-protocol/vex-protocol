@@ -9,7 +9,6 @@ import type { SpireOptions } from "../Spire.ts";
 import { describe, expect, it, vi } from "vitest";
 
 import { Database } from "../Database.ts";
-import { passkeySecondFactorError } from "../Spire.ts";
 
 vi.mock("uuid", () => ({
     parse: (s: string) => {
@@ -203,52 +202,9 @@ describe("Database passkeys", () => {
         });
     });
 
-    describe("passkeySecondFactorError", () => {
-        it("allows bootstrap login when the account has no passkeys", async () => {
+    describe("device passkey approval records", () => {
+        it("records passkey-backed device approval metadata", async () => {
             expect.assertions(1);
-            await withDb(async (db) => {
-                await expect(
-                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
-                ).resolves.toBeNull();
-            });
-        });
-
-        it("requires a matching passkey once the account has one", async () => {
-            expect.assertions(3);
-            await withDb(async (db) => {
-                const created = await db.createPasskey(
-                    userID,
-                    samplePasskey.name,
-                    samplePasskey.credentialID,
-                    samplePasskey.publicKeyHex,
-                    samplePasskey.algorithm,
-                    samplePasskey.transports,
-                );
-
-                await expect(
-                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
-                ).resolves.toBe("Passkey verification required.");
-                await expect(
-                    passkeySecondFactorError(
-                        db,
-                        userID,
-                        "not-this-passkey",
-                        "mismatch",
-                    ),
-                ).resolves.toBe("mismatch");
-                await expect(
-                    passkeySecondFactorError(
-                        db,
-                        userID,
-                        created.passkeyID,
-                        "mismatch",
-                    ),
-                ).resolves.toBeNull();
-            });
-        });
-
-        it("does not treat device approval as future passkey verification", async () => {
-            expect.assertions(3);
             await withDb(async (db) => {
                 const created = await db.createPasskey(
                     userID,
@@ -265,14 +221,8 @@ describe("Database passkeys", () => {
                 );
 
                 await expect(
-                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
-                ).resolves.toBe("Passkey verification required.");
-                await expect(
                     db.isDevicePasskeyApproved(userID, device.deviceID),
                 ).resolves.toBe(true);
-                await expect(
-                    passkeySecondFactorError(db, userID, undefined, "mismatch"),
-                ).resolves.toBe("Passkey verification required.");
             });
         });
 

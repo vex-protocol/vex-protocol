@@ -415,7 +415,7 @@
                     },
                     "password": {
                         "type": "string",
-                        "description": "Account password. Required for new accounts; omitted for existing-account device approval requests."
+                        "description": "Account password. Required for new accounts and for existing-account device approval requests unless the request is authorized by passkey."
                     }
                 },
                 "required": [
@@ -506,9 +506,6 @@
                     },
                     "401": {
                         "description": "Invalid credentials"
-                    },
-                    "403": {
-                        "description": "Passkey verification required for enrolled accounts"
                     }
                 }
             }
@@ -639,9 +636,6 @@
                                 }
                             }
                         }
-                    },
-                    "403": {
-                        "description": "Passkey verification required for enrolled accounts"
                     }
                 }
             }
@@ -690,7 +684,7 @@
                                     },
                                     "password": {
                                         "type": "string",
-                                        "description": "Account password. Required for new accounts; omitted for existing-account device approval requests."
+                                        "description": "Account password. Required for new accounts and for existing-account device approval requests unless the request is authorized by passkey."
                                     }
                                 },
                                 "required": [

@@ -53,7 +53,6 @@ import {
     MailIngressValidationError,
     validateMailIngress,
 } from "./server/mailIngress.ts";
-import { passkeySecondFactorError } from "./server/passkeySecondFactor.ts";
 import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
 import { createPendingDeviceEnrollmentRequest } from "./server/user.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
@@ -61,8 +60,6 @@ import { resolveSpireListenPort } from "./spireListenPort.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
 import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
-
-export { passkeySecondFactorError } from "./server/passkeySecondFactor.ts";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
@@ -797,22 +794,6 @@ export class Spire extends EventEmitter {
                         .send({ error: "Device owner not found." });
                 }
 
-                const passkeyError = await passkeySecondFactorError(
-                    this.db,
-                    user.userID,
-                    req.passkey?.passkeyID,
-                    "Passkey verification does not match this device.",
-                );
-                if (passkeyError) {
-                    const body: { error: string; username?: string } = {
-                        error: passkeyError,
-                    };
-                    if (passkeyError === "Passkey verification required.") {
-                        body.username = user.username;
-                    }
-                    return res.status(403).send(body);
-                }
-
                 // Issue short-lived JWT (1 hour, not 7 days)
                 const token = jwt.sign(
                     { user: censorUser(user) },
@@ -1109,19 +1090,6 @@ export class Spire extends EventEmitter {
                     await this.db.rehashPassword(userEntry.userID, newHash);
                 }
 
-                const passkeyError = await passkeySecondFactorError(
-                    this.db,
-                    userEntry.userID,
-                    req.passkey?.passkeyID,
-                    "Passkey verification does not match this account.",
-                );
-                if (passkeyError) {
-                    res.status(403).send({
-                        error: passkeyError,
-                    });
-                    return;
-                }
-
                 const token = jwt.sign(
                     { user: censorUser(userEntry) },
                     getJwtSecret(),
@@ -1196,19 +1164,48 @@ export class Spire extends EventEmitter {
                         }
                         let requesterPasskeyID: string | undefined;
                         if (req.passkey?.passkeyID) {
-                            const passkeyError = await passkeySecondFactorError(
-                                this.db,
-                                existingUser.userID,
-                                req.passkey.passkeyID,
-                                "Passkey verification does not match this account.",
-                            );
-                            if (passkeyError) {
+                            const passkey =
+                                await this.db.retrievePasskeyInternal(
+                                    req.passkey.passkeyID,
+                                );
+                            if (
+                                !passkey ||
+                                passkey.userID !== existingUser.userID
+                            ) {
                                 res.status(403).send({
-                                    error: passkeyError,
+                                    error: "Passkey verification does not match this account.",
                                 });
                                 return;
                             }
                             requesterPasskeyID = req.passkey.passkeyID;
+                        } else {
+                            if (
+                                typeof normalizedPayload.password !==
+                                    "string" ||
+                                normalizedPayload.password.trim().length === 0
+                            ) {
+                                res.status(401).send({
+                                    error: "Password is required to add this device.",
+                                });
+                                return;
+                            }
+                            const { needsRehash, valid } = await verifyPassword(
+                                normalizedPayload.password,
+                                existingUser,
+                            );
+                            if (!valid) {
+                                res.sendStatus(401);
+                                return;
+                            }
+                            if (needsRehash) {
+                                const newHash = await hashPasswordArgon2(
+                                    normalizedPayload.password,
+                                );
+                                await this.db.rehashPassword(
+                                    existingUser.userID,
+                                    newHash,
+                                );
+                            }
                         }
                         const pendingResponse =
                             createPendingDeviceEnrollmentRequest(
