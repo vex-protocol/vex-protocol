@@ -1,6 +1,6 @@
 {
     "name": "@vex-chat/types",
-    "version": "4.3.1",
+    "version": "4.3.2",
     "description": "Wire protocol types for the Vex encrypted chat platform",
     "type": "module",
     "sideEffects": false,

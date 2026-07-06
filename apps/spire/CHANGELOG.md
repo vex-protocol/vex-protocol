@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 3.0.1
+
+### Patch Changes
+
+- [#264](https://github.com/vex-protocol/vex-protocol/pull/264) [`941e52e`](https://github.com/vex-protocol/vex-protocol/commit/941e52ef8640cd2c46c53c43f0c0495a10673b80) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes the auth credential contract: spire no longer enforces passkey second-factor verification for accounts that have passkeys enrolled, and no longer blocks deletion of the last passkey on an account. The `RegistrationPayload.password` description and OpenAPI spec are updated to accurately reflect when a password is required for device approval requests.
+
 ## 3.0.0
 
 ### Major Changes
