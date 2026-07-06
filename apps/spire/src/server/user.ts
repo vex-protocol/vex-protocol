@@ -28,7 +28,6 @@ import { msgpack } from "../utils/msgpack.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { AppError } from "./errors.ts";
-import { passkeySecondFactorError } from "./passkeySecondFactor.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { buildAndroidApkKeyHashOrigins } from "./wellKnown.ts";
 
@@ -914,14 +913,13 @@ export const getUserRouter = (
 
             let requesterPasskeyID: string | undefined;
             if (req.passkey?.passkeyID) {
-                const passkeyError = await passkeySecondFactorError(
-                    db,
-                    userDetails.userID,
+                const passkey = await db.retrievePasskeyInternal(
                     req.passkey.passkeyID,
-                    "Passkey verification does not match this account.",
                 );
-                if (passkeyError) {
-                    res.status(403).send({ error: passkeyError });
+                if (!passkey || passkey.userID !== userDetails.userID) {
+                    res.status(403).send({
+                        error: "Passkey verification does not match this account.",
+                    });
                     return;
                 }
                 requesterPasskeyID = req.passkey.passkeyID;
@@ -1032,15 +1030,15 @@ export const getUserRouter = (
             // Older clients may still satisfy this with an approval-side passkey.
             const approvedByPasskeyID =
                 pending.requesterPasskeyID ?? req.passkey?.passkeyID;
-            const passkeyError = await passkeySecondFactorError(
-                db,
-                userID,
-                approvedByPasskeyID,
-                "Passkey verification does not match this account.",
-            );
-            if (passkeyError) {
-                res.status(403).send({ error: passkeyError });
-                return;
+            if (approvedByPasskeyID) {
+                const passkey =
+                    await db.retrievePasskeyInternal(approvedByPasskeyID);
+                if (!passkey || passkey.userID !== userID) {
+                    res.status(403).send({
+                        error: "Passkey verification does not match this account.",
+                    });
+                    return;
+                }
             }
 
             const opened = await spireXSignOpenAsync(

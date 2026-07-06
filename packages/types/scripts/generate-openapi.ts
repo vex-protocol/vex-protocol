@@ -101,9 +101,6 @@ registry.registerPath({
             },
         },
         401: { description: "Invalid credentials" },
-        403: {
-            description: "Passkey verification required for enrolled accounts",
-        },
     },
 });
 
@@ -173,9 +170,6 @@ registry.registerPath({
                     }),
                 },
             },
-        },
-        403: {
-            description: "Passkey verification required for enrolled accounts",
         },
     },
 });

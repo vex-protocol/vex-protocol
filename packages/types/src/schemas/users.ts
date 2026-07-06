@@ -33,7 +33,7 @@ export interface DevicePayload {
 
 /** User registration payload (HTTP). */
 export interface RegistrationPayload extends DevicePayload {
-    /** Required for new accounts; omitted for existing-account device approval requests. */
+    /** Required for new accounts and existing-account device approval requests unless passkey-authorized. */
     password?: string | undefined;
 }
 
@@ -105,7 +105,7 @@ export const RegistrationPayloadSchema: z.ZodType<RegistrationPayload> =
                 .string()
                 .optional()
                 .describe(
-                    "Account password. Required for new accounts; omitted for existing-account device approval requests.",
+                    "Account password. Required for new accounts and for existing-account device approval requests unless the request is authorized by passkey.",
                 ),
         })
         .describe("User registration payload");

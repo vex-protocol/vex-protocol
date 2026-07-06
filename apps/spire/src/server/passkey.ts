@@ -407,13 +407,6 @@ export const getPasskeyRouter = (db: Database) => {
                 res.sendStatus(404);
                 return;
             }
-            const passkeys = await db.retrievePasskeysByUser(userID);
-            if (passkeys.length <= 1) {
-                res.status(400).send({
-                    error: "You can't delete your last passkey.",
-                });
-                return;
-            }
             await db.deletePasskey(passkeyID);
             res.sendStatus(200);
         },
