@@ -1282,8 +1282,10 @@ export interface Users {
  *     const client = await Client.create(privateKey);
  *
  *     // you must register once before you can log in
- *     await client.register(Client.randomUsername());
- *     await client.login();
+ *     const username = Client.randomUsername();
+ *     const password = "correct horse battery staple";
+ *     await client.register(username, password);
+ *     await client.login(username, password);
  *
  *     // The ready event fires after connect() finishes post-auth setup.
  *     // Wait for it before performing messaging or user operations.
@@ -2334,12 +2336,12 @@ export class Client {
      * Registers a new account on the server.
      *
      * @param username - Optional username to register (must be unique when provided).
-     * @param password - Optional legacy password used when talking to pre-keycluster servers.
+     * @param password - Password for new accounts. Existing-account device approval requests may omit it.
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
      * ```ts
-     * const [user, err] = await client.register("MyUsername");
+     * const [user, err] = await client.register("MyUsername", "correct horse battery staple");
      * ```
      */
     public async register(
@@ -2361,7 +2363,7 @@ export class Client {
             const resolvedPassword =
                 password?.trim().length !== 0 && password !== undefined
                     ? password
-                    : uuid.v4();
+                    : undefined;
             const signKey = XUtils.encodeHex(this.signKeys.publicKey);
             const signed = XUtils.encodeHex(
                 await xSignAsync(
@@ -2372,7 +2374,6 @@ export class Client {
             const preKeyIndex = this.xKeyRing.preKeys.index;
             const regMsg: RegistrationPayload = {
                 deviceName: this.options?.deviceName ?? "unknown",
-                password: resolvedPassword,
                 preKey: XUtils.encodeHex(
                     this.xKeyRing.preKeys.keyPair.publicKey,
                 ),
@@ -2384,6 +2385,9 @@ export class Client {
                 signKey,
                 username: resolvedUsername,
             };
+            if (resolvedPassword !== undefined) {
+                regMsg.password = resolvedPassword;
+            }
             try {
                 const res = await this.http.post(
                     this.getHost() + "/register",
@@ -2436,6 +2440,14 @@ export class Client {
                     this.setUser(legacyUser);
 
                     // Legacy servers require /auth after /register to get a JWT.
+                    if (resolvedPassword === undefined) {
+                        return [
+                            null,
+                            new Error(
+                                "Legacy register succeeded without a password, so the SDK could not complete login.",
+                            ),
+                        ];
+                    }
                     const loginResult = await this.login(
                         resolvedUsername,
                         resolvedPassword,

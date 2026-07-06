@@ -415,7 +415,7 @@
                     },
                     "password": {
                         "type": "string",
-                        "description": "Account password"
+                        "description": "Account password. Required for new accounts; omitted for existing-account device approval requests."
                     }
                 },
                 "required": [
@@ -436,7 +436,7 @@
             "post": {
                 "operationId": "login",
                 "summary": "Login with username, password, and passkey when enrolled",
-                "description": "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys may use this session to enroll their first passkey before connecting a device.",
+                "description": "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys can connect devices and may enroll passkeys later.",
                 "tags": [
                     "auth"
                 ],
@@ -572,7 +572,7 @@
             "post": {
                 "operationId": "verifyDeviceChallenge",
                 "summary": "Verify device auth challenge",
-                "description": "Submit the signed challenge with a fresh passkey-scoped bearer token when the account already has passkeys. Accounts with no passkeys may use the resulting session to enroll their first passkey before connecting a device.",
+                "description": "Submit the signed challenge. Accounts with enrolled passkeys require a matching fresh passkey-scoped bearer token; accounts with no passkeys can use the resulting device-key session to connect.",
                 "tags": [
                     "auth"
                 ],
@@ -650,7 +650,7 @@
             "post": {
                 "operationId": "register",
                 "summary": "Register a new user account",
-                "description": "Create a new user account with cryptographic device registration. Requires a signed registration payload with Ed25519 keys; the account must enroll a passkey before the device can connect.",
+                "description": "Create a new user account with password authentication and cryptographic device registration. The account may enroll passkeys later.",
                 "tags": [
                     "auth"
                 ],
@@ -690,7 +690,7 @@
                                     },
                                     "password": {
                                         "type": "string",
-                                        "description": "Account password"
+                                        "description": "Account password. Required for new accounts; omitted for existing-account device approval requests."
                                     }
                                 },
                                 "required": [

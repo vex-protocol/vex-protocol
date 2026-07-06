@@ -426,13 +426,15 @@ export class Database extends EventEmitter {
                 regPayload.username,
                 userID,
             );
-            const passwordHash =
-                typeof regPayload.password === "string" &&
-                regPayload.password.length > 0
-                    ? await hashPasswordArgon2(regPayload.password)
-                    : "";
-            const hashAlgo =
-                passwordHash.length > 0 ? "argon2id" : "keycluster";
+            if (
+                typeof regPayload.password !== "string" ||
+                regPayload.password.trim().length === 0
+            ) {
+                throw new Error(
+                    "Password is required to register a new account.",
+                );
+            }
+            const passwordHash = await hashPasswordArgon2(regPayload.password);
 
             const user: UserRecord = {
                 lastSeen: new Date().toISOString(),
@@ -446,7 +448,7 @@ export class Database extends EventEmitter {
                 .insertInto("users")
                 .values({
                     ...user,
-                    hashAlgo,
+                    hashAlgo: "argon2id",
                     lastSeen: user.lastSeen,
                 })
                 .execute();
