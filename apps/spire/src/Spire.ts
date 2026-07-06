@@ -1181,6 +1181,59 @@ export class Spire extends EventEmitter {
                         TokenScopes.Register,
                     )
                 ) {
+                    const existingUser = await this.db.retrieveUser(
+                        normalizedPayload.username,
+                    );
+                    if (existingUser) {
+                        const existingBySignKey = await this.db.retrieveDevice(
+                            normalizedPayload.signKey,
+                        );
+                        if (existingBySignKey) {
+                            res.status(400).send({
+                                error: "Public key is already registered.",
+                            });
+                            return;
+                        }
+                        let requesterPasskeyID: string | undefined;
+                        if (req.passkey?.passkeyID) {
+                            const passkeyError = await passkeySecondFactorError(
+                                this.db,
+                                existingUser.userID,
+                                req.passkey.passkeyID,
+                                "Passkey verification does not match this account.",
+                            );
+                            if (passkeyError) {
+                                res.status(403).send({
+                                    error: passkeyError,
+                                });
+                                return;
+                            }
+                            requesterPasskeyID = req.passkey.passkeyID;
+                        }
+                        const pendingResponse =
+                            createPendingDeviceEnrollmentRequest(
+                                existingUser.userID,
+                                normalizedPayload,
+                                this.notify.bind(this),
+                                {
+                                    deferOwnerNotification: true,
+                                    ...(requesterPasskeyID
+                                        ? { requesterPasskeyID }
+                                        : {}),
+                                },
+                            );
+                        res.status(202).send(msgpack.encode(pendingResponse));
+                        return;
+                    }
+                    if (
+                        typeof normalizedPayload.password !== "string" ||
+                        normalizedPayload.password.trim().length === 0
+                    ) {
+                        res.status(400).send({
+                            error: "Password is required to register a new account.",
+                        });
+                        return;
+                    }
                     const [user, err] = await this.db.createUser(
                         regKey,
                         normalizedPayload,
@@ -1202,57 +1255,9 @@ export class Spire extends EventEmitter {
                             errCode === "SQLITE_CONSTRAINT_UNIQUE" ||
                             errText.includes("UNIQUE constraint failed");
                         if (isUniqueConstraint && usernameConflict) {
-                            const existingUser = await this.db.retrieveUser(
-                                normalizedPayload.username,
-                            );
-                            if (!existingUser) {
-                                res.status(400).send({
-                                    error: "Username is already registered.",
-                                });
-                                return;
-                            }
-                            const existingBySignKey =
-                                await this.db.retrieveDevice(
-                                    normalizedPayload.signKey,
-                                );
-                            if (existingBySignKey) {
-                                res.status(400).send({
-                                    error: "Public key is already registered.",
-                                });
-                                return;
-                            }
-                            let requesterPasskeyID: string | undefined;
-                            if (req.passkey?.passkeyID) {
-                                const passkeyError =
-                                    await passkeySecondFactorError(
-                                        this.db,
-                                        existingUser.userID,
-                                        req.passkey.passkeyID,
-                                        "Passkey verification does not match this account.",
-                                    );
-                                if (passkeyError) {
-                                    res.status(403).send({
-                                        error: passkeyError,
-                                    });
-                                    return;
-                                }
-                                requesterPasskeyID = req.passkey.passkeyID;
-                            }
-                            const pendingResponse =
-                                createPendingDeviceEnrollmentRequest(
-                                    existingUser.userID,
-                                    normalizedPayload,
-                                    this.notify.bind(this),
-                                    {
-                                        deferOwnerNotification: true,
-                                        ...(requesterPasskeyID
-                                            ? { requesterPasskeyID }
-                                            : {}),
-                                    },
-                                );
-                            res.status(202).send(
-                                msgpack.encode(pendingResponse),
-                            );
+                            res.status(400).send({
+                                error: "Username is already registered.",
+                            });
                             return;
                         }
                         if (isUniqueConstraint && signKeyConflict) {
