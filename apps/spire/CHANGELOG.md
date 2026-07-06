@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 3.0.0
+
+### Major Changes
+
+- [#261](https://github.com/vex-protocol/vex-protocol/pull/261) [`bce7127`](https://github.com/vex-protocol/vex-protocol/commit/bce7127455a3b35e7e7254b5740404cda4702517) Thanks [@yuki111888](https://github.com/yuki111888)! - New account registration requires an explicit password again; passkeys are optional credentials that can be enrolled after signup. Call `client.register(username, password)` for new accounts, and use `vex auth register <username> <password>` or `--password` in the CLI. Spire no longer blocks device connect while an account has no passkeys, but existing accounts can still request device approval without supplying a password.
+
 ## 2.6.0
 
 ### Minor Changes
