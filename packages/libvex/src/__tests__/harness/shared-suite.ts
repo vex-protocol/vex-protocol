@@ -79,6 +79,34 @@ export function platformSuite(
             expect(true).toBe(true);
         });
 
+        test("existing-account device request requires password", async () => {
+            const SK2 = await e2eGenerateSecretKey();
+            const opts2: ClientOptions = e2eClientOptionsBase();
+            const storage2 = await makeStorage(SK2, opts2);
+            const client2 = await Client.create(SK2, opts2, storage2);
+
+            try {
+                const [missingPasswordUser, missingPasswordErr] =
+                    await client2.register(username);
+                expect(missingPasswordUser).toBeNull();
+                expect(missingPasswordErr?.message).toContain(
+                    "Password is required to add this device.",
+                );
+
+                const [pendingUser, pendingErr] = await client2.register(
+                    username,
+                    password,
+                );
+                expect(pendingUser).toBeNull();
+                expect(pendingErr?.name).toBe("DeviceApprovalRequiredError");
+                expect(
+                    (pendingErr as null | { requestID?: unknown })?.requestID,
+                ).toEqual(expect.any(String));
+            } finally {
+                await client2.close().catch(() => {});
+            }
+        });
+
         test("send and receive DM (self)", async () => {
             const me = client.me.user();
             const msgPromise = waitForMessage(

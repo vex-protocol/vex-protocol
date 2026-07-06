@@ -2368,7 +2368,7 @@ export class Client {
      * Registers a new account on the server.
      *
      * @param username - Optional username to register (must be unique when provided).
-     * @param password - Password for new accounts. Existing-account device approval requests may omit it.
+     * @param password - Password for new accounts and existing-account device approval requests.
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
