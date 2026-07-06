@@ -46,11 +46,7 @@ import {
     hasPermission,
     userHasPermission,
 } from "./permissions.ts";
-import {
-    devApiKeyMatches,
-    globalLimiter,
-    keyBundleLimiter,
-} from "./rateLimit.ts";
+import { globalLimiter, keyBundleLimiter } from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -688,17 +684,6 @@ export const initApp = (
             res.sendStatus(401);
             return;
         }
-        const passkeys = await db.retrievePasskeysByUser(device.owner);
-        // The CLI stress harness cannot perform a WebAuthn ceremony.
-        // Keep normal clients gated, but let the existing dev/load-test key
-        // exercise device connect on disposable accounts.
-        if (passkeys.length === 0 && !devApiKeyMatches(req)) {
-            res.status(403).send({
-                error: "A passkey must be registered before this device can connect.",
-            });
-            return;
-        }
-
         const regKey = await spireXSignOpenAsync(
             signed,
             XUtils.decodeHex(device.signKey),

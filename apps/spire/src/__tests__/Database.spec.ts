@@ -81,6 +81,36 @@ describe("Database", () => {
         dbType: "sqlite3mem",
     };
 
+    describe("createUser", () => {
+        it("requires a password for new accounts", async () => {
+            expect.assertions(3);
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const [user, err] = await provider.createUser(
+                                new Uint8Array(16),
+                                devicePayload("desktop", "b".repeat(64)),
+                            );
+                            expect(user).toBeNull();
+                            expect(err).toBeInstanceOf(Error);
+                            expect(err?.message).toBe(
+                                "Password is required to register a new account.",
+                            );
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
+
     describe("saveOTK", () => {
         it("takes a userId and one time key, adds a keyId and saves it to oneTimeKey table", async () => {
             expect.assertions(1);

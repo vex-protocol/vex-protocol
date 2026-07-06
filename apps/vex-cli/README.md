@@ -6,12 +6,18 @@ Terminal chat client for Vex backed by `@vex-chat/libvex`.
 pnpm vex
 ```
 
-On first run, `vex` prompts for a username and registers a local device key.
-After that it opens straight into a live chat session.
+On first run, `vex` prompts for a username and password, registers a local
+device key, and opens straight into a live chat session.
 
 By default the CLI connects to production at `api.vex.wtf`. For local Spire development, pass `--local` to use `127.0.0.1:16777` over http/ws. Custom targets can use `--api-url <url>` to set both the host and protocol, or `--host <host:port> --http` to set them separately.
 
-When creating a new account, the CLI opens a browser passkey page to attach the account's first passkey before connecting. When adding this machine to an account that already exists, the same page can restore the pending device with a saved passkey. Use `--passkey-url <url>` or `VEX_CHAT_PASSKEY_URL` when the WebAuthn page is hosted somewhere other than the API origin; use `--no-browser` or `VEX_CHAT_NO_BROWSER=1` to print the URL without launching a browser.
+New accounts use the password you set during registration. Passkeys can be added
+later as a supplemental recovery/sign-in method. When adding this machine to an
+account that already exists, the browser passkey page can restore the pending
+device with a saved passkey. Use `--passkey-url <url>` or
+`VEX_CHAT_PASSKEY_URL` when the WebAuthn page is hosted somewhere other than the
+API origin; use `--no-browser` or `VEX_CHAT_NO_BROWSER=1` to print the URL
+without launching a browser.
 
 Inside the app:
 
@@ -43,8 +49,8 @@ Inside the app:
 Scriptable helpers still exist:
 
 ```sh
-pnpm vex auth register alice
-pnpm vex auth register bob
+pnpm vex auth register alice alice-password
+pnpm vex auth register bob bob-password
 pnpm vex alice
 pnpm vex bob
 pnpm vex auth accounts

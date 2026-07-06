@@ -204,10 +204,9 @@ export const getPasskeyRouter = (db: Database) => {
             }
 
             const existing = await db.retrievePasskeysByUser(userID);
-            // A freshly registered account has a bearer token but cannot
-            // get a device token until its first passkey exists. Allow
-            // exactly that bootstrap case; every later passkey addition
-            // must come from an authenticated device session.
+            // A freshly registered account may add its first passkey with
+            // the account bearer before finishing device connect. Every later
+            // passkey addition must come from an authenticated device session.
             if (!req.device && existing.length > 0) {
                 res.status(401).send({
                     error: "Adding another passkey requires an authenticated device.",

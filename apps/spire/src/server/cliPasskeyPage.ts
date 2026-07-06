@@ -167,7 +167,7 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
 
         if (mode === "register") {
             titleEl.textContent = "Create a passkey for Vex.";
-            copyEl.textContent = "This adds the first passkey required by your new CLI account.";
+            copyEl.textContent = "This adds a passkey to your Vex account.";
             action.textContent = "Create passkey";
             setStatus("Ready to create passkey.");
         } else {
