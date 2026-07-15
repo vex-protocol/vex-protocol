@@ -1,5 +1,17 @@
 # @vex-chat/types
 
+## 4.3.2
+
+### Patch Changes
+
+- [#264](https://github.com/vex-protocol/vex-protocol/pull/264) [`941e52e`](https://github.com/vex-protocol/vex-protocol/commit/941e52ef8640cd2c46c53c43f0c0495a10673b80) Thanks [@yuki111888](https://github.com/yuki111888)! - Fixes the auth credential contract: spire no longer enforces passkey second-factor verification for accounts that have passkeys enrolled, and no longer blocks deletion of the last passkey on an account. The `RegistrationPayload.password` description and OpenAPI spec are updated to accurately reflect when a password is required for device approval requests.
+
+## 4.3.1
+
+### Patch Changes
+
+- [#261](https://github.com/vex-protocol/vex-protocol/pull/261) [`bce7127`](https://github.com/vex-protocol/vex-protocol/commit/bce7127455a3b35e7e7254b5740404cda4702517) Thanks [@yuki111888](https://github.com/yuki111888)! - New account registration requires an explicit password again; passkeys are optional credentials that can be enrolled after signup. Call `client.register(username, password)` for new accounts, and use `vex auth register <username> <password>` or `--password` in the CLI. Spire no longer blocks device connect while an account has no passkeys, but existing accounts can still request device approval without supplying a password.
+
 ## 4.3.0
 
 ### Minor Changes
