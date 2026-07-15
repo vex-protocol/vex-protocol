@@ -1,5 +1,11 @@
 # @vex-chat/libvex
 
+## 9.1.1
+
+### Patch Changes
+
+- [#279](https://github.com/vex-protocol/vex-protocol/pull/279) [`29e970f`](https://github.com/vex-protocol/vex-protocol/commit/29e970ff566f7f350f3d99023ae7d5e6845b9fba) Thanks [@yuki111888](https://github.com/yuki111888)! - Harden server icon URL resolution and refresh the browser passkey bridge with a compact Vex authentication experience and trusted desktop completion callback.
+
 ## 9.1.0
 
 ### Minor Changes
