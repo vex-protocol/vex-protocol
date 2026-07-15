@@ -51,7 +51,6 @@
         "stress:docs-pack": "pnpm run integration:docs-pack",
         "stress:llm-triage": "pnpm run integration:llm-triage",
         "gen-spk": "node scripts/gen-spk.js",
-        "gen-spk-fips": "node scripts/gen-spk-fips.js",
         "docs": "node ./scripts/generate-docs.js",
         "service:status-monitor": "node ./services/status-monitor/index.js",
         "service:status-monitor:clear-history": "node ./services/status-monitor/clear-history.js",

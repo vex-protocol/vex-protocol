@@ -9,7 +9,7 @@ Use this page as the **entry point** for public protocol, client, server, and se
 | Topic | Description |
 |--------|-------------|
 | **[Spire — reference server](../apps/spire/README.md)** | Install, Docker quick start, env vars, TLS, and how Spire fits in the stack. |
-| **[libvex — TypeScript client](../packages/libvex/README.md)** | Client install, storage backends, crypto profiles, and integration with Spire. |
+| **[libvex — TypeScript client](../packages/libvex/README.md)** | Client install, storage backends, cryptography, and integration with Spire. |
 | **[Protocol threat model](security/threat-model.md)** | Security model: trust boundaries, adversaries, crypto usage, and operational assumptions. |
 | **[Spire “box” instructions](../apps/spire/AGENTS.md)** | How `@vex-chat/spire` is published as a **box of files** for operators (what ships in the npm tarball, runtime boot model, CI integration jobs). Read this before packaging or deploying Spire from source. |
 
@@ -23,7 +23,7 @@ Use this page as the **entry point** for public protocol, client, server, and se
 
 ## Related packages (deeper dives)
 
-- [`@vex-chat/crypto`](../packages/crypto/README.md) — primitives and profiles (`tweetnacl` vs FIPS-shaped async APIs).
+- [`@vex-chat/crypto`](../packages/crypto/README.md) — TweetNaCl-based primitives and async convenience APIs.
 - [`@vex-chat/types`](../packages/types/README.md) — shared wire schemas.
 
 ---

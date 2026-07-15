@@ -12,30 +12,12 @@ import { encode } from '@stablelib/utf8';
 import { encode as encode_2 } from '@stablelib/base64';
 
 // @public
-export type CryptoProfile = "fips" | "tweetnacl";
-
-// @public
-export function enterCryptoProfileScope(profile: CryptoProfile): void;
-
-// @public
-export function fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(ecdsaSpki: Uint8Array): Promise<Uint8Array>;
-
-// @public
-export function getCryptoProfile(): CryptoProfile;
-
-// @public
 export interface KeyPair {
     // (undocumented)
     publicKey: Uint8Array;
     // (undocumented)
     secretKey: Uint8Array;
 }
-
-// @public
-export function leaveCryptoProfileScope(): void;
-
-// @public
-export function setCryptoProfile(profile: CryptoProfile): void;
 
 // @public
 export function xBoxKeyPair(): KeyPair;
@@ -78,9 +60,6 @@ export function xDH(myPrivateKey: Uint8Array, theirPublicKey: Uint8Array): Uint8
 export function xDHAsync(myPrivateKey: Uint8Array, theirPublicKey: Uint8Array): Promise<Uint8Array>;
 
 // @public
-export function xEcdhKeyPairFromEcdsaKeyPairAsync(sign: KeyPair): Promise<KeyPair>;
-
-// @public
 export function xEncode(curveType: "X448" | "X25519", publicKey: Uint8Array): Uint8Array;
 
 // @public
@@ -108,7 +87,7 @@ export function xMessageKeySubkeys(messageKey: Uint8Array): {
 export function xMnemonic(entropy: Uint8Array, wordList?: string[]): string;
 
 // @public
-export function xPreKeySignaturePayload(publicKey: Uint8Array, kind: "one-time" | "signed", profile?: CryptoProfile): Uint8Array;
+export function xPreKeySignaturePayload(publicKey: Uint8Array, kind: "one-time" | "signed"): Uint8Array;
 
 // @public
 export function xRandomBytes(length: number): Uint8Array;
@@ -159,7 +138,7 @@ export class XUtils {
     static decodeUTF8: typeof encode;
     static decryptKeyData: (keyData: Uint8Array, password: string) => string;
     static decryptKeyDataAsync: (keyData: Uint8Array, password: string) => Promise<string>;
-    static deriveLocalAtRestAesKey(identitySk: Uint8Array, profile: CryptoProfile): Uint8Array;
+    static deriveLocalAtRestAesKey(identitySk: Uint8Array): Uint8Array;
     static emptyHeader(): Uint8Array<ArrayBuffer>;
     // (undocumented)
     static encodeBase64: typeof encode_2;

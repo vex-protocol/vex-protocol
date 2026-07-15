@@ -12,7 +12,7 @@ import {
 } from "../spireListenPort.ts";
 
 describe("resolveSpireListenPort", () => {
-    it("uses default for tweetnacl and fips when no explicit port", () => {
+    it("uses the default when no explicit port is provided", () => {
         expect(resolveSpireListenPort(undefined)).toBe(DEFAULT_SPIRE_API_PORT);
     });
 

@@ -14,12 +14,8 @@ import type {
 import type { Device, PreKeysSQL, SessionSQL } from "@vex-chat/types";
 
 import {
-    getCryptoProfile,
     xBoxKeyPairFromSecret,
-    xBoxKeyPairFromSecretAsync,
-    xSecretbox,
     xSecretboxAsync,
-    xSecretboxOpen,
     xSecretboxOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
@@ -117,10 +113,7 @@ export class MemoryStorage extends EventEmitter implements Storage {
         const sk = XUtils.decodeHex(otk.privateKey);
         return {
             index: otk.index,
-            keyPair:
-                getCryptoProfile() === "fips"
-                    ? await xBoxKeyPairFromSecretAsync(sk)
-                    : xBoxKeyPairFromSecret(sk),
+            keyPair: xBoxKeyPairFromSecret(sk),
             signature: XUtils.decodeHex(otk.signature),
         };
     }
@@ -132,10 +125,7 @@ export class MemoryStorage extends EventEmitter implements Storage {
         const sk = XUtils.decodeHex(pk.privateKey);
         return {
             index: pk.index,
-            keyPair:
-                getCryptoProfile() === "fips"
-                    ? await xBoxKeyPairFromSecretAsync(sk)
-                    : xBoxKeyPairFromSecret(sk),
+            keyPair: xBoxKeyPairFromSecret(sk),
             signature: XUtils.decodeHex(pk.signature),
         };
     }
@@ -223,18 +213,11 @@ export class MemoryStorage extends EventEmitter implements Storage {
             return;
         }
         const copy = { ...message };
-        const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeUTF8(message.message),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
-              )
-            : xSecretbox(
-                  XUtils.decodeUTF8(message.message),
-                  XUtils.decodeHex(message.nonce),
-                  this.atRestAesKey,
-              );
+        const ct = await xSecretboxAsync(
+            XUtils.decodeUTF8(message.message),
+            XUtils.decodeHex(message.nonce),
+            this.atRestAesKey,
+        );
         copy.message = XUtils.encodeHex(ct);
         this.messages.push(copy);
     }
@@ -302,18 +285,11 @@ export class MemoryStorage extends EventEmitter implements Storage {
             next.extra = patch.extra;
         }
         if (patch.message !== undefined) {
-            const fips = getCryptoProfile() === "fips";
-            const ct = fips
-                ? await xSecretboxAsync(
-                      XUtils.decodeUTF8(patch.message),
-                      XUtils.decodeHex(current.nonce),
-                      this.atRestAesKey,
-                  )
-                : xSecretbox(
-                      XUtils.decodeUTF8(patch.message),
-                      XUtils.decodeHex(current.nonce),
-                      this.atRestAesKey,
-                  );
+            const ct = await xSecretboxAsync(
+                XUtils.decodeUTF8(patch.message),
+                XUtils.decodeHex(current.nonce),
+                this.atRestAesKey,
+            );
             next.message = XUtils.encodeHex(ct);
         }
         this.messages[idx] = next;
@@ -323,18 +299,11 @@ export class MemoryStorage extends EventEmitter implements Storage {
     private async decryptMessage(msg: Message): Promise<Message> {
         const copy = { ...msg };
         if (copy.decrypted) {
-            const fips = getCryptoProfile() === "fips";
-            const dec = fips
-                ? await xSecretboxOpenAsync(
-                      XUtils.decodeHex(copy.message),
-                      XUtils.decodeHex(copy.nonce),
-                      this.atRestAesKey,
-                  )
-                : xSecretboxOpen(
-                      XUtils.decodeHex(copy.message),
-                      XUtils.decodeHex(copy.nonce),
-                      this.atRestAesKey,
-                  );
+            const dec = await xSecretboxOpenAsync(
+                XUtils.decodeHex(copy.message),
+                XUtils.decodeHex(copy.nonce),
+                this.atRestAesKey,
+            );
             if (dec) copy.message = XUtils.encodeUTF8(dec);
         }
         return copy;

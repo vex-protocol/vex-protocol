@@ -5,7 +5,6 @@
  */
 
 import {
-    setCryptoProfile,
     xBoxKeyPairAsync,
     xDHAsync,
     xSecretboxAsync,
@@ -16,38 +15,19 @@ import {
     XUtils,
 } from "../index.js";
 
-afterEach(() => {
-    setCryptoProfile("tweetnacl");
-});
-
-test("tweetnacl async wrappers preserve sign/open semantics", async () => {
-    setCryptoProfile("tweetnacl");
+test("async wrappers preserve sign/open semantics", async () => {
     const keys = await xSignKeyPairAsync();
     const message = XUtils.decodeUTF8("hello async");
     const signed = await xSignAsync(message, keys.secretKey);
     const opened = await xSignOpenAsync(signed, keys.publicKey);
 
     if (opened === null) {
-        throw new Error("Expected signed message to verify in tweetnacl mode.");
+        throw new Error("Expected signed message to verify.");
     }
     expect(XUtils.encodeUTF8(opened)).toBe("hello async");
 });
 
-test("fips async sign/open roundtrip", async () => {
-    setCryptoProfile("fips");
-    const keys = await xSignKeyPairAsync();
-    const message = XUtils.decodeUTF8("hello fips");
-    const signed = await xSignAsync(message, keys.secretKey);
-    const opened = await xSignOpenAsync(signed, keys.publicKey);
-
-    if (opened === null) {
-        throw new Error("Expected signed message to verify in fips mode.");
-    }
-    expect(XUtils.encodeUTF8(opened)).toBe("hello fips");
-});
-
-test("fips async ecdh and aes-gcm roundtrip", async () => {
-    setCryptoProfile("fips");
+test("async X25519 and secretbox roundtrip", async () => {
     const alice = await xBoxKeyPairAsync();
     const bob = await xBoxKeyPairAsync();
     const aliceShared = await xDHAsync(alice.secretKey, bob.publicKey);
@@ -57,13 +37,13 @@ test("fips async ecdh and aes-gcm roundtrip", async () => {
 
     const nonce = new Uint8Array(24);
     nonce.set(crypto.getRandomValues(new Uint8Array(24)));
-    const plaintext = XUtils.decodeUTF8("portable fips path");
+    const plaintext = XUtils.decodeUTF8("portable async path");
 
     const ciphertext = await xSecretboxAsync(plaintext, nonce, aliceShared);
     const decrypted = await xSecretboxOpenAsync(ciphertext, nonce, bobShared);
 
     if (decrypted === null) {
-        throw new Error("Expected ciphertext to decrypt in fips mode.");
+        throw new Error("Expected ciphertext to decrypt.");
     }
-    expect(XUtils.encodeUTF8(decrypted)).toBe("portable fips path");
+    expect(XUtils.encodeUTF8(decrypted)).toBe("portable async path");
 });

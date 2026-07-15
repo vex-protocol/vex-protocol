@@ -11,7 +11,6 @@ const NORMALIZED_ENV_VARS = [
     ...REQUIRED_ENV_VARS,
     "API_PORT",
     "SPIRE_TRUST_PROXY_HOPS",
-    "SPIRE_FIPS",
     "SPIRE_PASSKEY_RP_ID",
     "SPIRE_PASSKEY_RP_NAME",
     "SPIRE_PASSKEY_ORIGINS",
@@ -21,11 +20,6 @@ const NORMALIZED_ENV_VARS = [
 ] as const;
 const HEX_BYTES_RE = /^(?:[0-9a-fA-F]{2})+$/;
 const TWEETNACL_SPK_HEX_LENGTH = 128;
-
-export function isSpireFipsEnabled(value: string | undefined): boolean {
-    const normalized = value == null ? "" : normalizeEnvValue(value);
-    return normalized === "1" || normalized === "true";
-}
 
 /* Populate process.env with vars from .env and verify required vars are present. */
 export function loadEnv(): void {
@@ -62,25 +56,19 @@ export function validateSpireRuntimeEnv(
     const jwtSecret = normalizeEnvValue(env["JWT_SECRET"] ?? "");
     if (!HEX_BYTES_RE.test(spk)) {
         throw new Error(
-            "SPK must be an even-length hex string. Generate one with `pnpm --filter @vex-chat/spire gen-spk` or `gen-spk-fips`.",
+            "SPK must be an even-length hex string. Generate one with `pnpm --filter @vex-chat/spire gen-spk`.",
         );
     }
 
-    if (isSpireFipsEnabled(env["SPIRE_FIPS"])) {
-        if (spk.length === TWEETNACL_SPK_HEX_LENGTH) {
-            throw new Error(
-                "SPIRE_FIPS=true requires an SPK from `pnpm --filter @vex-chat/spire gen-spk-fips`; the configured SPK looks like a tweetnacl key.",
-            );
-        }
-    } else if (spk.length !== TWEETNACL_SPK_HEX_LENGTH) {
+    if (spk.length !== TWEETNACL_SPK_HEX_LENGTH) {
         throw new Error(
-            "SPIRE_FIPS is not enabled, so SPK must be 128 hex characters from `pnpm --filter @vex-chat/spire gen-spk`.",
+            "SPK must be 128 hex characters from `pnpm --filter @vex-chat/spire gen-spk`.",
         );
     }
 
     if (jwtSecret.length === 0) {
         throw new Error(
-            "JWT_SECRET must be set. Generate one with `pnpm --filter @vex-chat/spire gen-spk` or `gen-spk-fips`.",
+            "JWT_SECRET must be set. Generate one with `pnpm --filter @vex-chat/spire gen-spk`.",
         );
     }
     if (jwtSecret.length < 32) {

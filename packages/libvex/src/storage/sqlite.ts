@@ -37,13 +37,9 @@ import type { Device, PreKeysSQL, SessionSQL } from "@vex-chat/types";
  * smaller “crypto state” store separate from bulk message history.
  */
 import {
-    getCryptoProfile,
     xBoxKeyPairFromSecret,
-    xBoxKeyPairFromSecretAsync,
     xMakeNonce,
-    xSecretbox,
     xSecretboxAsync,
-    xSecretboxOpen,
     xSecretboxOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
@@ -223,10 +219,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const rawSk = await this.unsealHex(otkInfo.privateKey);
         return {
             index: otkInfo.index,
-            keyPair:
-                getCryptoProfile() === "fips"
-                    ? await xBoxKeyPairFromSecretAsync(XUtils.decodeHex(rawSk))
-                    : xBoxKeyPairFromSecret(XUtils.decodeHex(rawSk)),
+            keyPair: xBoxKeyPairFromSecret(XUtils.decodeHex(rawSk)),
             signature: XUtils.decodeHex(otkInfo.signature),
         };
     }
@@ -246,10 +239,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const rawPk = await this.unsealHex(preKeyInfo.privateKey);
         return {
             index: preKeyInfo.index,
-            keyPair:
-                getCryptoProfile() === "fips"
-                    ? await xBoxKeyPairFromSecretAsync(XUtils.decodeHex(rawPk))
-                    : xBoxKeyPairFromSecret(XUtils.decodeHex(rawPk)),
+            keyPair: xBoxKeyPairFromSecret(XUtils.decodeHex(rawPk)),
             signature: XUtils.decodeHex(preKeyInfo.signature),
         };
     }
@@ -947,10 +937,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
 
     private async sealBytes(plaintext: Uint8Array): Promise<string> {
         const nonce = xMakeNonce();
-        const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(plaintext, nonce, this.atRestAesKey)
-            : xSecretbox(plaintext, nonce, this.atRestAesKey);
+        const ct = await xSecretboxAsync(plaintext, nonce, this.atRestAesKey);
         const sealed = new Uint8Array(nonce.length + ct.length);
         sealed.set(nonce);
         sealed.set(ct, nonce.length);
@@ -1038,10 +1025,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
         }
         const nonce = bytes.slice(0, STORAGE_NONCE_BYTES);
         const ct = bytes.slice(STORAGE_NONCE_BYTES);
-        const fips = getCryptoProfile() === "fips";
-        const plain = fips
-            ? await xSecretboxOpenAsync(ct, nonce, this.atRestAesKey)
-            : xSecretboxOpen(ct, nonce, this.atRestAesKey);
+        const plain = await xSecretboxOpenAsync(ct, nonce, this.atRestAesKey);
         if (!plain) {
             throw new Error("Failed to decrypt sealed column value.");
         }

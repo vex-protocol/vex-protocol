@@ -105,7 +105,7 @@ The unit suite runs browser-safe and offline. The e2e suite needs a running Spir
 
 **Local Spire (dev):** `pnpm --filter @vex-chat/libvex test:local-spire` runs the e2e suite against an instance of `apps/spire/` brought up locally; see `scripts/test-local-spire.mjs`. Bring spire up via `pnpm --filter @vex-chat/spire start` (or `docker compose up` in `apps/spire/`) before running.
 
-**Applications** using `@vex-chat/libvex` configure the client with **`ClientOptions`** only (e.g. `host`, `unsafeHttp`, `devApiKey`, `cryptoProfile`)—the library does not read `.env` or any environment variables. **This repository's e2e tests** (not the published API) can use `API_URL` / `DEV_API_KEY` in your shell or CI when you run `vitest`. When `API_URL` points at Spire, the suite **reads** `GET …/status` to pick the same `cryptoProfile` (tweetnacl vs fips) as the server, so you usually do not set `LIBVEX_E2E_CRYPTO` by hand. There is no separate `.env` contract for the npm package.
+**Applications** using `@vex-chat/libvex` configure the client with **`ClientOptions`** only (for example `host`, `unsafeHttp`, and `devApiKey`); the library does not read `.env` or any environment variables. This repository's e2e tests can use `API_URL` / `DEV_API_KEY` in the shell or CI. There is no separate `.env` contract for the npm package.
 
 See the root [AGENTS.md](../../AGENTS.md) and this package's [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish via OIDC) and the rules for writing changesets.
 

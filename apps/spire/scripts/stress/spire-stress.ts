@@ -89,7 +89,6 @@ import {
     httpFailureTotal,
     recordHttpFailure,
 } from "./stress-http-stats.ts";
-import { stressHttpGet } from "./stress-http.ts";
 import { StressKnobs } from "./stress-knobs.ts";
 import {
     parseStressLoadPacing,
@@ -128,13 +127,6 @@ import {
 
 /** libvex / `ws` attach many `"message"` handlers; default (10) spams MaxListenersExceededWarning. */
 EventEmitter.defaultMaxListeners = 100;
-
-type StressCryptoProfile = "fips" | "tweetnacl";
-
-let resolvedStressCryptoProfile:
-    | null
-    | Promise<StressCryptoProfile>
-    | StressCryptoProfile = null;
 
 function attachStdinTuning(
     knobsRef: { knobs: StressKnobs },
@@ -199,12 +191,7 @@ async function bootstrapClient(
         const bootCtx: TelemetryTouchCtx = { burst, phase };
 
         const devKeyRaw = process.env["DEV_API_KEY"]?.trim();
-        const cryptoProfile = await resolveStressCryptoProfile(
-            host,
-            devKeyRaw ?? "",
-        );
         const createOpts: ClientOptions = {
-            cryptoProfile,
             dbFolder,
             host,
             inMemoryDb: true,
@@ -222,7 +209,6 @@ async function bootstrapClient(
             Client.create(undefined, createOpts),
             {
                 inputs: {
-                    cryptoProfile,
                     dbFolder: basename(dbFolder),
                     host,
                     inMemoryDb: true,
@@ -1360,13 +1346,6 @@ function openStressDashboardInBrowser(url: string): void {
     child.unref();
 }
 
-function parseStressCryptoProfile(raw: string): null | StressCryptoProfile {
-    if (raw === "fips" || raw === "tweetnacl") {
-        return raw;
-    }
-    return null;
-}
-
 function printSpireStressCliHelp(): void {
     process.stdout.write(
         [
@@ -1394,62 +1373,6 @@ function printSpireStressCliHelp(): void {
             "",
         ].join("\n"),
     );
-}
-
-function readCryptoProfileField(data: unknown): null | string {
-    if (typeof data !== "object" || data === null) {
-        return null;
-    }
-    if (!("cryptoProfile" in data)) {
-        return null;
-    }
-    const profile = data["cryptoProfile"];
-    return typeof profile === "string" ? profile : null;
-}
-
-async function resolveStressCryptoProfile(
-    host: string,
-    devApiKey: string,
-): Promise<StressCryptoProfile> {
-    const env = process.env["SPIRE_STRESS_CRYPTO_PROFILE"]?.trim();
-    if (env !== undefined && env.length > 0) {
-        const parsed = parseStressCryptoProfile(env);
-        if (parsed === null) {
-            throw new Error(
-                `SPIRE_STRESS_CRYPTO_PROFILE must be "tweetnacl" or "fips" (received "${env}")`,
-            );
-        }
-        return parsed;
-    }
-
-    if (resolvedStressCryptoProfile !== null) {
-        return await Promise.resolve(resolvedStressCryptoProfile);
-    }
-
-    resolvedStressCryptoProfile = (async (): Promise<StressCryptoProfile> => {
-        const base = httpStatusBase(host);
-        const headers =
-            devApiKey.length > 0 ? { "x-dev-api-key": devApiKey } : undefined;
-        const res = await stressHttpGet(
-            `${base}/status`,
-            headers === undefined ? {} : { headers },
-        );
-        const profileRaw = readCryptoProfileField(res.data);
-        if (profileRaw === null) {
-            throw new Error(
-                "Could not determine Spire crypto profile from GET /status.",
-            );
-        }
-        const parsed = parseStressCryptoProfile(profileRaw);
-        if (parsed === null) {
-            throw new Error(
-                `Unknown Spire crypto profile from /status: "${profileRaw}"`,
-            );
-        }
-        return parsed;
-    })();
-
-    return await resolvedStressCryptoProfile;
 }
 
 /** Returns number of logical operations awaited (per client slot). */

@@ -5,8 +5,7 @@
  */
 
 /**
- * Default HTTP/WS port for the Spire API (tweetnacl and FIPS), unless
- * `API_PORT` / `apiPort` is set. Clients can tell profiles apart via `GET /status`.
+ * Default HTTP/WS port for the Spire API unless `API_PORT` / `apiPort` is set.
  */
 export const DEFAULT_SPIRE_API_PORT = 16777;
 

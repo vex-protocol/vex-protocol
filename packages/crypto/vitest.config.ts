@@ -1,13 +1,12 @@
 import { defineConfig } from "vitest/config";
 
 const asyncTestFiles = [
-    "src/__tests__/cryptoProfileScope.test.ts",
     "src/__tests__/xAsyncProfile.ts",
     "src/__tests__/xAsyncApi.extended.test.ts",
 ];
 
 /**
- * Two projects so CI can run "core" vs "async API (tweetnacl + FIPS)" as separate
+ * Two projects so CI can run core and async API tests as separate
  * steps with no duplicate work. `vitest run` (default `npm test`) still executes both.
  */
 export default defineConfig({

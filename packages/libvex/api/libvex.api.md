@@ -182,7 +182,6 @@ export interface ClientEvents {
 
 // @public
 export interface ClientOptions {
-    cryptoProfile?: "fips" | "tweetnacl";
     dbFolder?: string;
     devApiKey?: string;
     deviceName?: string;

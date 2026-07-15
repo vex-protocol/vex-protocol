@@ -12,8 +12,6 @@
 
 import type { BaseMsg } from "@vex-chat/types";
 
-import { numberToBytesBE } from "@noble/curves/abstract/utils";
-import { p256 } from "@noble/curves/p256";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { hmac } from "@noble/hashes/hmac.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
@@ -35,14 +33,10 @@ const KEY_DATA_PBKDF2_ITERATIONS = 220_000;
 const KEY_DATA_PBKDF2_MIN_ITERATIONS = 1_000;
 const KEY_DATA_PBKDF2_MAX_ITERATIONS = 2_000_000;
 
-/** Runtime crypto profile selector. */
-export type CryptoProfile = "fips" | "tweetnacl";
-
 interface CryptoProvider {
     boxBefore(myPrivateKey: Uint8Array, theirPublicKey: Uint8Array): Uint8Array;
     boxKeyPair(): KeyPair;
     boxKeyPairFromSecret(secretKey: Uint8Array): KeyPair;
-    profile: CryptoProfile;
     randomBytes(length: number): Uint8Array;
     secretbox(
         plaintext: Uint8Array,
@@ -63,29 +57,9 @@ interface CryptoProvider {
     ): null | Uint8Array;
 }
 
-type WebCryptoKeyUsage =
-    | "decrypt"
-    | "deriveBits"
-    | "deriveKey"
-    | "encrypt"
-    | "sign"
-    | "unwrapKey"
-    | "verify"
-    | "wrapKey";
-
 interface WebCryptoLike {
     getRandomValues: Crypto["getRandomValues"];
     subtle: SubtleCrypto;
-}
-
-function getWebCrypto(): WebCryptoLike {
-    const cryptoCandidate: unknown = globalThis.crypto;
-    if (!isWebCryptoLike(cryptoCandidate)) {
-        throw new Error(
-            "Web Crypto API is not available in this runtime for fips profile operations.",
-        );
-    }
-    return cryptoCandidate;
 }
 
 function isWebCryptoLike(value: unknown): value is WebCryptoLike {
@@ -134,37 +108,12 @@ async function pbkdf2Sha512Async(
     return new Uint8Array(bits);
 }
 
-function randomBytesWebCrypto(length: number): Uint8Array {
-    if (!Number.isInteger(length) || length < 0) {
-        throw new Error(
-            `Expected non-negative integer length, received ${String(length)}.`,
-        );
-    }
-    const cryptoImpl = getWebCrypto();
-    const result = new Uint8Array(length);
-    let offset = 0;
-    while (offset < length) {
-        const chunkLength = Math.min(65536, length - offset);
-        const chunk = result.subarray(offset, offset + chunkLength);
-        cryptoImpl.getRandomValues(chunk);
-        offset += chunkLength;
-    }
-    return result;
-}
-
-function unsupported(profile: CryptoProfile, operation: string): never {
-    throw new Error(
-        `Crypto profile "${profile}" does not implement ${operation} yet.`,
-    );
-}
-
 const tweetnaclProvider: CryptoProvider = {
     boxBefore: (myPrivateKey, theirPublicKey) =>
         nacl.box.before(theirPublicKey, myPrivateKey),
     boxKeyPair: () => nacl.box.keyPair(),
     boxKeyPairFromSecret: (secretKey) =>
         nacl.box.keyPair.fromSecretKey(secretKey),
-    profile: "tweetnacl",
     randomBytes: (length) => nacl.randomBytes(length),
     secretbox: (plaintext, nonce, key) => nacl.secretbox(plaintext, nonce, key),
     secretboxOpen: (ciphertext, nonce, key) =>
@@ -177,246 +126,8 @@ const tweetnaclProvider: CryptoProvider = {
         nacl.sign.open(signedMessage, publicKey),
 };
 
-const fipsProvider: CryptoProvider = {
-    boxBefore: (myPrivateKey, theirPublicKey) => {
-        void myPrivateKey;
-        void theirPublicKey;
-        return unsupported("fips", "xDH");
-    },
-    boxKeyPair: () => unsupported("fips", "xBoxKeyPair"),
-    boxKeyPairFromSecret: (secretKey) => {
-        void secretKey;
-        return unsupported("fips", "xBoxKeyPairFromSecret");
-    },
-    profile: "fips",
-    randomBytes: (length) => randomBytesWebCrypto(length),
-    secretbox: (plaintext, nonce, key) => {
-        void plaintext;
-        void nonce;
-        void key;
-        return unsupported("fips", "xSecretbox");
-    },
-    secretboxOpen: (ciphertext, nonce, key) => {
-        void ciphertext;
-        void nonce;
-        void key;
-        return unsupported("fips", "xSecretboxOpen");
-    },
-    sign: (message, secretKey) => {
-        void message;
-        void secretKey;
-        return unsupported("fips", "xSign");
-    },
-    signKeyPair: () => unsupported("fips", "xSignKeyPair"),
-    signKeyPairFromSecret: (secretKey) => {
-        void secretKey;
-        return unsupported("fips", "xSignKeyPairFromSecret");
-    },
-    signOpen: (signedMessage, publicKey) => {
-        void signedMessage;
-        void publicKey;
-        return unsupported("fips", "xSignOpen");
-    },
-};
-
-const providers: Record<CryptoProfile, CryptoProvider> = {
-    fips: fipsProvider,
-    tweetnacl: tweetnaclProvider,
-};
-
-let activeCryptoProfile: CryptoProfile = "tweetnacl";
-let activeCryptoProvider: CryptoProvider = providers[activeCryptoProfile];
-
-/** Returns the currently configured crypto profile. */
-export function getCryptoProfile(): CryptoProfile {
-    return activeCryptoProfile;
-}
-
-/**
- * Sets the runtime crypto profile.
- *
- * `tweetnacl` preserves existing behavior.
- * `fips` currently enables only backend-agnostic helpers; NaCl-coupled
- * primitives throw until a FIPS backend implementation is wired in.
- */
-export function setCryptoProfile(profile: CryptoProfile): void {
-    activeCryptoProfile = profile;
-    activeCryptoProvider = providers[profile];
-}
-
-const cryptoProfileScopeStack: CryptoProfile[] = [];
-
-/**
- * Saves the current profile and switches to `profile`. Pair every call with
- * {@link leaveCryptoProfileScope} in a `finally` block.
- *
- * **Why:** `setCryptoProfile` is process-wide. Several async libvex `Client`s
- * can overlap on `readMail`; a naive save/restore in `finally` can reset the
- * profile while another client still needs FIPS — `xSecretboxOpenAsync` then
- * reads `tweetnacl` and fails to decrypt AES-GCM payloads. Nesting this stack
- * fixes that.
- */
-export function enterCryptoProfileScope(profile: CryptoProfile): void {
-    cryptoProfileScopeStack.push(activeCryptoProfile);
-    setCryptoProfile(profile);
-}
-
-/** Restores the profile saved by the innermost {@link enterCryptoProfileScope}. */
-export function leaveCryptoProfileScope(): void {
-    const prev = cryptoProfileScopeStack.pop();
-    if (prev === undefined) {
-        throw new Error(
-            "leaveCryptoProfileScope called without a matching enterCryptoProfileScope",
-        );
-    }
-    setCryptoProfile(prev);
-}
-
-function bytesToBase64Url(bytes: Uint8Array): string {
-    return globalThis
-        .btoa(String.fromCodePoint(...Array.from(bytes)))
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+/g, "");
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
-}
-
-function decodeFipsSignedMessage(signedMessage: Uint8Array): {
-    message: Uint8Array;
-    signature: Uint8Array;
-} {
-    if (signedMessage.length < 2) {
-        throw new Error(
-            "Invalid FIPS signed message: missing signature length prefix.",
-        );
-    }
-    const signatureLength =
-        (signedMessage[0] ?? 0) * 256 + (signedMessage[1] ?? 0);
-    const signatureStart = 2;
-    const signatureEnd = signatureStart + signatureLength;
-    if (signedMessage.length < signatureEnd) {
-        throw new Error(
-            "Invalid FIPS signed message: signature length exceeds message length.",
-        );
-    }
-    return {
-        message: signedMessage.slice(signatureEnd),
-        signature: signedMessage.slice(signatureStart, signatureEnd),
-    };
-}
-
-function encodeFipsSignedMessage(
-    signature: Uint8Array,
-    message: Uint8Array,
-): Uint8Array {
-    if (signature.length > 65535) {
-        throw new Error("FIPS signature too long to encode.");
-    }
-    const prefix = new Uint8Array(2);
-    prefix[0] = (signature.length >> 8) & 0xff;
-    prefix[1] = signature.length & 0xff;
-    return concatBytes(concatBytes(prefix, signature), message);
-}
-
-async function fipsEcdhKeyPairFrom32ByteSeed(
-    secretKey: Uint8Array,
-    subtle: SubtleCrypto,
-): Promise<KeyPair> {
-    if (secretKey.length !== 32) {
-        throw new Error(
-            "FIPS: expected a 32-byte IKM/seed for ECDH from-secret.",
-        );
-    }
-    const d = p256.utils.normPrivateKeyToScalar(Uint8Array.from(secretKey));
-    const d32 = numberToBytesBE(d, 32);
-    const rawPub = p256.getPublicKey(d, false);
-    if (rawPub[0] !== 0x04) {
-        throw new Error("FIPS: expected uncompressed P-256 public key.");
-    }
-    const jwk: JsonWebKey = {
-        crv: "P-256",
-        d: bytesToBase64Url(d32),
-        kty: "EC",
-        x: bytesToBase64Url(rawPub.subarray(1, 33)),
-        y: bytesToBase64Url(rawPub.subarray(33, 65)),
-    };
-    const ecdhPriv = await subtle.importKey(
-        "jwk",
-        jwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveBits"],
-    );
-    const ecdhPubJwk = await subtle.exportKey("jwk", ecdhPriv);
-    const ecdhPubJwkNoD: JsonWebKey = { ...ecdhPubJwk };
-    delete ecdhPubJwkNoD.d;
-    ecdhPubJwkNoD.key_ops = [];
-    const ecdhPub = await subtle.importKey(
-        "jwk",
-        ecdhPubJwkNoD,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        [],
-    );
-    return {
-        publicKey: new Uint8Array(await subtle.exportKey("raw", ecdhPub)),
-        secretKey: new Uint8Array(await subtle.exportKey("pkcs8", ecdhPriv)),
-    };
-}
-
-async function fipsEcdhKeyPairFromPkcs8(
-    secretKey: Uint8Array,
-    subtle: SubtleCrypto,
-): Promise<KeyPair> {
-    const ecdhPriv = await subtle.importKey(
-        "pkcs8",
-        toBufferSource(secretKey),
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveBits"],
-    );
-    const jwk = await subtle.exportKey("jwk", ecdhPriv);
-    const ecdhPubJwk: JsonWebKey = { ...jwk };
-    delete ecdhPubJwk.d;
-    ecdhPubJwk.key_ops = [];
-    const ecdhPub = await subtle.importKey(
-        "jwk",
-        ecdhPubJwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        [],
-    );
-    return {
-        publicKey: new Uint8Array(await subtle.exportKey("raw", ecdhPub)),
-        secretKey: new Uint8Array(await subtle.exportKey("pkcs8", ecdhPriv)),
-    };
-}
-
-function getSubtleCrypto(): SubtleCrypto {
-    return getWebCrypto().subtle;
-}
-
 function provider(): CryptoProvider {
-    return activeCryptoProvider;
-}
-
-function requireAesGcmNonce(nonce: Uint8Array): Uint8Array {
-    if (nonce.length < 12) {
-        throw new Error(
-            `AES-GCM requires a nonce of at least 12 bytes, received ${String(nonce.length)}.`,
-        );
-    }
-    return nonce.slice(0, 12);
-}
-
-function toBufferSource(bytes: Uint8Array): ArrayBuffer {
-    return Uint8Array.from(bytes).buffer;
+    return tweetnaclProvider;
 }
 
 // msgpackr with useRecords:false emits standard msgpack (no nonstandard record extension).
@@ -534,10 +245,7 @@ export class XUtils {
         }
     };
 
-    /**
-     * Async variant of decryptKeyData for cross-runtime/FIPS backends.
-     * Supports both profile formats emitted by encryptKeyDataAsync.
-     */
+    /** Async variant of decryptKeyData for cross-runtime callers. */
     public static decryptKeyDataAsync = async (
         keyData: Uint8Array,
         password: string,
@@ -552,18 +260,11 @@ export class XUtils {
             ITERATIONS,
         );
         try {
-            const decrypted =
-                activeCryptoProfile === "fips"
-                    ? await xSecretboxOpenAsync(
-                          ENCRYPTED_KEY,
-                          ENCRYPTION_NONCE,
-                          DERIVED_KEY,
-                      )
-                    : xSecretboxOpen(
-                          ENCRYPTED_KEY,
-                          ENCRYPTION_NONCE,
-                          DERIVED_KEY,
-                      );
+            const decrypted = xSecretboxOpen(
+                ENCRYPTED_KEY,
+                ENCRYPTION_NONCE,
+                DERIVED_KEY,
+            );
 
             if (decrypted === null) {
                 throw new Error("Decryption failed. Wrong password?");
@@ -578,12 +279,9 @@ export class XUtils {
 
     /**
      * Derive a purpose-separated 32-byte key for local at-rest encryption.
-     * The result never aliases raw identity-key bytes in either crypto profile.
+     * The result never aliases raw identity-key bytes.
      */
-    public static deriveLocalAtRestAesKey(
-        identitySk: Uint8Array,
-        profile: CryptoProfile,
-    ): Uint8Array {
+    public static deriveLocalAtRestAesKey(identitySk: Uint8Array): Uint8Array {
         if (identitySk.length < 32) {
             throw new Error("Expected at least 32 bytes of identity secret.");
         }
@@ -592,7 +290,7 @@ export class XUtils {
                 sha256,
                 identitySk,
                 new Uint8Array(0),
-                new TextEncoder().encode(`vex:at-rest:3:${profile}`),
+                new TextEncoder().encode("vex:at-rest:3:tweetnacl"),
                 32,
             ),
         );
@@ -676,10 +374,7 @@ export class XUtils {
         return result;
     };
 
-    /**
-     * Async variant of encryptKeyData for cross-runtime/FIPS backends.
-     * Format remains [iterations(6)|salt(24)|nonce(24)|ciphertext(N)].
-     */
+    /** Async variant of encryptKeyData for cross-runtime callers. */
     public static encryptKeyDataAsync = async (
         password: string,
         keyToSave: string,
@@ -699,14 +394,11 @@ export class XUtils {
         const NONCE = xMakeNonce();
         let ENCRYPTED_SIGNKEY: Uint8Array;
         try {
-            ENCRYPTED_SIGNKEY =
-                activeCryptoProfile === "fips"
-                    ? await xSecretboxAsync(
-                          UNENCRYPTED_SIGNKEY,
-                          NONCE,
-                          ENCRYPTION_KEY,
-                      )
-                    : xSecretbox(UNENCRYPTED_SIGNKEY, NONCE, ENCRYPTION_KEY);
+            ENCRYPTED_SIGNKEY = xSecretbox(
+                UNENCRYPTED_SIGNKEY,
+                NONCE,
+                ENCRYPTION_KEY,
+            );
         } finally {
             ENCRYPTION_KEY.fill(0);
             UNENCRYPTED_SIGNKEY.fill(0);
@@ -874,7 +566,6 @@ export function xMnemonic(entropy: Uint8Array, wordList?: string[]) {
 export function xPreKeySignaturePayload(
     publicKey: Uint8Array,
     kind: "one-time" | "signed",
-    profile: CryptoProfile = getCryptoProfile(),
 ): Uint8Array {
     if (publicKey.length === 0) {
         throw new Error("Prekey public key cannot be empty.");
@@ -883,7 +574,7 @@ export function xPreKeySignaturePayload(
     return xConcat(
         XUtils.decodeUTF8("vex:x3dh:prekey:v2"),
         separator,
-        XUtils.decodeUTF8(profile),
+        XUtils.decodeUTF8("tweetnacl"),
         separator,
         XUtils.decodeUTF8(kind),
         separator,
@@ -935,67 +626,14 @@ export interface XConstants {
     MIN_OTK_SUPPLY: number;
 }
 
-/**
- * FIPS: `device.signKey` in the database is the P-256 ECDSA public key (SPKI),
- * used for account/device signature verification. X3DH on the client expects
- * the same curve point as Web Crypto "raw" P-256 ECDH public bytes for
- * `importEcdhPublicKey`. This converts SPKI → raw without a private key.
- */
-export async function fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(
-    ecdsaSpki: Uint8Array,
-): Promise<Uint8Array> {
-    if (ecdsaSpki.length === 0) {
-        throw new Error("FIPS: empty ECDSA SPKI.");
-    }
-    const subtle = getSubtleCrypto();
-    const ecdsaPub = await importEcdsaPublicKey(ecdsaSpki);
-    const jwk = await subtle.exportKey("jwk", ecdsaPub);
-    if (
-        jwk.x === undefined ||
-        jwk.y === undefined ||
-        jwk.x.length === 0 ||
-        jwk.y.length === 0
-    ) {
-        throw new Error("FIPS: could not export ECDSA public as JWK.");
-    }
-    const ecdhJwk: JsonWebKey = { ...jwk };
-    delete ecdhJwk.d;
-    ecdhJwk.key_ops = [];
-    ecdhJwk.ext = true;
-    const ecdhPub = await subtle.importKey(
-        "jwk",
-        ecdhJwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        [],
-    );
-    return new Uint8Array(await subtle.exportKey("raw", ecdhPub));
-}
-
 /** Generate a fresh X25519 box key pair. */
 export function xBoxKeyPair(): KeyPair {
     return provider().boxKeyPair();
 }
 
-/** Async box keypair generation for the active profile. */
-export async function xBoxKeyPairAsync(): Promise<KeyPair> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xBoxKeyPair();
-    }
-    const subtle = getSubtleCrypto();
-    const pair = await subtle.generateKey(
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveBits"],
-    );
-    return {
-        publicKey: new Uint8Array(
-            await subtle.exportKey("raw", pair.publicKey),
-        ),
-        secretKey: new Uint8Array(
-            await subtle.exportKey("pkcs8", pair.privateKey),
-        ),
-    };
+/** Async X25519 box keypair generation. */
+export function xBoxKeyPairAsync(): Promise<KeyPair> {
+    return Promise.resolve(xBoxKeyPair());
 }
 
 /** Restore an X25519 box key pair from a 32-byte secret key. */
@@ -1005,17 +643,11 @@ export function xBoxKeyPairFromSecret(secretKey: Uint8Array): KeyPair {
 
 // ── Key pair type ───────────────────────────────────────────────────────────
 
-/** Async box key restore from private key material. */
-export async function xBoxKeyPairFromSecretAsync(
+/** Async X25519 box key restore from private key material. */
+export function xBoxKeyPairFromSecretAsync(
     secretKey: Uint8Array,
 ): Promise<KeyPair> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xBoxKeyPairFromSecret(secretKey);
-    }
-    if (secretKey.length === 32) {
-        return fipsEcdhKeyPairFrom32ByteSeed(secretKey, getSubtleCrypto());
-    }
-    return fipsEcdhKeyPairFromPkcs8(secretKey, getSubtleCrypto());
+    return Promise.resolve(xBoxKeyPairFromSecret(secretKey));
 }
 
 // ── Key generation ─────────────────────────────────────────────────────────
@@ -1060,70 +692,12 @@ export function xDH(
     return provider().boxBefore(myPrivateKey, theirPublicKey);
 }
 
-/** Async DH for cross-runtime/FIPS backends. */
-export async function xDHAsync(
+/** Async X25519 DH. */
+export function xDHAsync(
     myPrivateKey: Uint8Array,
     theirPublicKey: Uint8Array,
 ): Promise<Uint8Array> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xDH(myPrivateKey, theirPublicKey);
-    }
-    const subtle = getSubtleCrypto();
-    const privateKey = await importEcdhPrivateKey(myPrivateKey);
-    const publicKey = await importEcdhPublicKey(theirPublicKey);
-    const shared = await subtle.deriveBits(
-        { name: "ECDH", public: publicKey },
-        privateKey,
-        256,
-    );
-    return new Uint8Array(shared);
-}
-
-/**
- * In `fips` mode only: derive a P-256 ECDH `KeyPair` (raw public + pkcs8 secret)
- * from a P-256 ECDSA `KeyPair` (spki + pkcs8) using the same private scalar in Web Crypto.
- * In `tweetnacl` mode, use `XKeyConvert.convertKeyPair` to map Ed25519 → X25519 instead.
- */
-export async function xEcdhKeyPairFromEcdsaKeyPairAsync(
-    sign: KeyPair,
-): Promise<KeyPair> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return Promise.reject(
-            new Error(
-                'xEcdhKeyPairFromEcdsaKeyPairAsync is for crypto profile "fips" only. Use XKeyConvert.convertKeyPair in tweetnacl mode.',
-            ),
-        );
-    }
-    const subtle = getSubtleCrypto();
-    const ecdsaPriv = await importEcdsaPrivateKey(sign.secretKey);
-    const jwk = await subtle.exportKey("jwk", ecdsaPriv);
-    if (typeof jwk.d !== "string" || jwk.d.length === 0) {
-        throw new Error("FIPS: could not export ECDSA private as JWK.");
-    }
-    const ecdhJwk: JsonWebKey = { ...jwk, key_ops: ["deriveBits"] };
-    ecdhJwk.ext = true;
-    const ecdhPriv = await subtle.importKey(
-        "jwk",
-        ecdhJwk,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveBits"],
-    );
-    const ecdhPubJwk = await subtle.exportKey("jwk", ecdhPriv);
-    const ecdhPubJwkNoD: JsonWebKey = { ...ecdhPubJwk };
-    delete ecdhPubJwkNoD.d;
-    ecdhPubJwkNoD.key_ops = [];
-    const ecdhPub = await subtle.importKey(
-        "jwk",
-        ecdhPubJwkNoD,
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        [],
-    );
-    return {
-        publicKey: new Uint8Array(await subtle.exportKey("raw", ecdhPub)),
-        secretKey: new Uint8Array(await subtle.exportKey("pkcs8", ecdhPriv)),
-    };
+    return Promise.resolve(xDH(myPrivateKey, theirPublicKey));
 }
 
 // ── Signing ────────────────────────────────────────────────────────────────
@@ -1217,24 +791,13 @@ export function xSecretbox(
     return provider().secretbox(plaintext, nonce, key);
 }
 
-/** Async authenticated encryption for cross-runtime/FIPS backends. */
-export async function xSecretboxAsync(
+/** Async XSalsa20-Poly1305 encryption. */
+export function xSecretboxAsync(
     plaintext: Uint8Array,
     nonce: Uint8Array,
     key: Uint8Array,
 ): Promise<Uint8Array> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSecretbox(plaintext, nonce, key);
-    }
-    const subtle = getSubtleCrypto();
-    const iv = requireAesGcmNonce(nonce);
-    const aesKey = await importAesKey(key, ["encrypt"]);
-    const ciphertext = await subtle.encrypt(
-        { iv: toBufferSource(iv), name: "AES-GCM" },
-        aesKey,
-        toBufferSource(plaintext),
-    );
-    return new Uint8Array(ciphertext);
+    return Promise.resolve(xSecretbox(plaintext, nonce, key));
 }
 
 /** Decrypt with a shared secret key. Returns null if authentication fails. */
@@ -1246,28 +809,13 @@ export function xSecretboxOpen(
     return provider().secretboxOpen(ciphertext, nonce, key);
 }
 
-/** Async authenticated decryption for cross-runtime/FIPS backends. */
-export async function xSecretboxOpenAsync(
+/** Async XSalsa20-Poly1305 decryption. */
+export function xSecretboxOpenAsync(
     ciphertext: Uint8Array,
     nonce: Uint8Array,
     key: Uint8Array,
 ): Promise<null | Uint8Array> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSecretboxOpen(ciphertext, nonce, key);
-    }
-    const subtle = getSubtleCrypto();
-    const iv = requireAesGcmNonce(nonce);
-    const aesKey = await importAesKey(key, ["decrypt"]);
-    try {
-        const plaintext = await subtle.decrypt(
-            { iv: toBufferSource(iv), name: "AES-GCM" },
-            aesKey,
-            toBufferSource(ciphertext),
-        );
-        return new Uint8Array(plaintext);
-    } catch {
-        return null;
-    }
+    return Promise.resolve(xSecretboxOpen(ciphertext, nonce, key));
 }
 
 /** Sign a message with an Ed25519 secret key. Returns signed message (64-byte signature prefix + message). */
@@ -1275,24 +823,12 @@ export function xSign(message: Uint8Array, secretKey: Uint8Array): Uint8Array {
     return provider().sign(message, secretKey);
 }
 
-/** Async signing for cross-runtime/FIPS backends. */
-export async function xSignAsync(
+/** Async Ed25519 signing. */
+export function xSignAsync(
     message: Uint8Array,
     secretKey: Uint8Array,
 ): Promise<Uint8Array> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSign(message, secretKey);
-    }
-    const subtle = getSubtleCrypto();
-    const privateKey = await importEcdsaPrivateKey(secretKey);
-    const signature = new Uint8Array(
-        await subtle.sign(
-            { hash: "SHA-256", name: "ECDSA" },
-            privateKey,
-            toBufferSource(message),
-        ),
-    );
-    return encodeFipsSignedMessage(signature, message);
+    return Promise.resolve(xSign(message, secretKey));
 }
 
 /** Generate a fresh Ed25519 signing key pair. */
@@ -1300,25 +836,9 @@ export function xSignKeyPair(): KeyPair {
     return provider().signKeyPair();
 }
 
-/** Async keypair generation for the active profile. */
-export async function xSignKeyPairAsync(): Promise<KeyPair> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSignKeyPair();
-    }
-    const subtle = getSubtleCrypto();
-    const pair = await subtle.generateKey(
-        { name: "ECDSA", namedCurve: "P-256" },
-        true,
-        ["sign", "verify"],
-    );
-    return {
-        publicKey: new Uint8Array(
-            await subtle.exportKey("spki", pair.publicKey),
-        ),
-        secretKey: new Uint8Array(
-            await subtle.exportKey("pkcs8", pair.privateKey),
-        ),
-    };
+/** Async Ed25519 keypair generation. */
+export function xSignKeyPairAsync(): Promise<KeyPair> {
+    return Promise.resolve(xSignKeyPair());
 }
 
 /** Restore an Ed25519 signing key pair from a 64-byte secret key. */
@@ -1326,14 +846,11 @@ export function xSignKeyPairFromSecret(secretKey: Uint8Array): KeyPair {
     return provider().signKeyPairFromSecret(secretKey);
 }
 
-/** Async restore of signing keypair for the active profile. */
-export async function xSignKeyPairFromSecretAsync(
+/** Async restore of an Ed25519 signing keypair. */
+export function xSignKeyPairFromSecretAsync(
     secretKey: Uint8Array,
 ): Promise<KeyPair> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSignKeyPairFromSecret(secretKey);
-    }
-    return fipsEcdsaKeyPairFromPkcs8(secretKey, getSubtleCrypto());
+    return Promise.resolve(xSignKeyPairFromSecret(secretKey));
 }
 
 /** Verify and open a signed message. Returns the original message, or null if verification fails. */
@@ -1344,101 +861,12 @@ export function xSignOpen(
     return provider().signOpen(signedMessage, publicKey);
 }
 
-/** Async verify/open for cross-runtime/FIPS backends. */
-export async function xSignOpenAsync(
+/** Async Ed25519 verify/open. */
+export function xSignOpenAsync(
     signedMessage: Uint8Array,
     publicKey: Uint8Array,
 ): Promise<null | Uint8Array> {
-    if (activeCryptoProfile === "tweetnacl") {
-        return xSignOpen(signedMessage, publicKey);
-    }
-    const subtle = getSubtleCrypto();
-    const parsed = decodeFipsSignedMessage(signedMessage);
-    const verifyKey = await importEcdsaPublicKey(publicKey);
-    const valid = await subtle.verify(
-        { hash: "SHA-256", name: "ECDSA" },
-        verifyKey,
-        toBufferSource(parsed.signature),
-        toBufferSource(parsed.message),
-    );
-    return valid ? parsed.message : null;
-}
-
-async function fipsEcdsaKeyPairFromPkcs8(
-    secretKey: Uint8Array,
-    subtle: SubtleCrypto,
-): Promise<KeyPair> {
-    const ecdsaPriv = await importEcdsaPrivateKey(secretKey);
-    const jwk = await subtle.exportKey("jwk", ecdsaPriv);
-    const ecdsaPubJwk: JsonWebKey = { ...jwk };
-    delete ecdsaPubJwk.d;
-    ecdsaPubJwk.key_ops = ["verify"];
-    const ecdsaPub = await subtle.importKey(
-        "jwk",
-        ecdsaPubJwk,
-        { name: "ECDSA", namedCurve: "P-256" },
-        true,
-        ["verify"],
-    );
-    return {
-        publicKey: new Uint8Array(await subtle.exportKey("spki", ecdsaPub)),
-        secretKey: Uint8Array.from(secretKey),
-    };
-}
-
-async function importAesKey(
-    key: Uint8Array,
-    usages: WebCryptoKeyUsage[],
-): Promise<CryptoKey> {
-    return getSubtleCrypto().importKey(
-        "raw",
-        toBufferSource(key),
-        { name: "AES-GCM" },
-        false,
-        usages,
-    );
-}
-
-async function importEcdhPrivateKey(secretKey: Uint8Array): Promise<CryptoKey> {
-    return getSubtleCrypto().importKey(
-        "pkcs8",
-        toBufferSource(secretKey),
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveBits"],
-    );
-}
-
-async function importEcdhPublicKey(publicKey: Uint8Array): Promise<CryptoKey> {
-    return getSubtleCrypto().importKey(
-        "raw",
-        toBufferSource(publicKey),
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        [],
-    );
-}
-
-async function importEcdsaPrivateKey(
-    secretKey: Uint8Array,
-): Promise<CryptoKey> {
-    return getSubtleCrypto().importKey(
-        "pkcs8",
-        toBufferSource(secretKey),
-        { name: "ECDSA", namedCurve: "P-256" },
-        true,
-        ["sign"],
-    );
-}
-
-async function importEcdsaPublicKey(publicKey: Uint8Array): Promise<CryptoKey> {
-    return getSubtleCrypto().importKey(
-        "spki",
-        toBufferSource(publicKey),
-        { name: "ECDSA", namedCurve: "P-256" },
-        true,
-        ["verify"],
-    );
+    return Promise.resolve(xSignOpen(signedMessage, publicKey));
 }
 
 /**

@@ -34,13 +34,11 @@ The Dockerfile uses the monorepo as build context so the build can resolve `work
 
 ```sh
 cp .env.example .env
-# set SPK, JWT_SECRET, DB_TYPE, SPIRE_FIPS, … (see Configuration)
+# set SPK, JWT_SECRET, DB_TYPE, … (see Configuration)
 docker compose up --build
 ```
 
-**Crypto mode (tweetnacl vs FIPS):** `SPIRE_FIPS` in `.env` selects the server profile. It must match how you generated `SPK` — **`pnpm --filter @vex-chat/spire gen-spk`** (Ed25519) for tweetnacl, or **`pnpm --filter @vex-chat/spire gen-spk-fips`** (P-256) with **`SPIRE_FIPS=true`**. The generators print compose-safe, unquoted `SPK=...` and `JWT_SECRET=...` lines; paste those directly. You can override for one run without editing `.env`: `SPIRE_FIPS=true docker compose up` (or `=false`).
-
-Compose builds the image (context: monorepo root, dockerfile: `apps/spire/Dockerfile`), starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777** (see `ports` in `docker-compose.yml`). Spire itself listens on **16777** inside the `internal` network (same for tweetnacl and FIPS — `GET /status` reports the crypto profile). Nginx and the health check use `deploy/resolve-spire-listen-port.sh` to match. Use **http://127.0.0.1:16777** for HTTP and WebSocket. Runtime keys and passkey settings come from `apps/spire/.env` via Compose `env_file`; they are intentionally not copied into the Docker image.
+Compose builds the image (context: monorepo root, dockerfile: `apps/spire/Dockerfile`), starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on host **port 16777**. Runtime keys and passkey settings come from `apps/spire/.env` via Compose `env_file`; they are intentionally not copied into the Docker image.
 
 ## Running without Docker
 
@@ -64,18 +62,17 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 
 ### Required
 
-| Variable     | Description                                                                                                                                                                                                                                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SPK`        | Server private key, hex-encoded. **tweetnacl:** `pnpm --filter @vex-chat/spire gen-spk` (Ed25519). **FIPS:** `pnpm --filter @vex-chat/spire gen-spk-fips` and set `SPIRE_FIPS=true` (P-256 PKCS#8). Each command prints compose-safe `SPK` and `JWT_SECRET` lines. |
-| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                                   |
-| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                                                                                    |
+| Variable     | Description                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SPK`        | Server Ed25519 private key, hex-encoded. Generate it with `pnpm --filter @vex-chat/spire gen-spk`; the command also prints a separate `JWT_SECRET`.                                              |
+| `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `pnpm --filter @vex-chat/spire gen-spk` emits a dedicated value; do not reuse `SPK` here. |
+| `DB_TYPE`    | `sqlite3` or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`).                                                                                                  |
 
 ### Optional
 
 | Variable                 | Default    | Description                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SPIRE_FIPS`             | _falsy_    | If `true` or `1`, run the **FIPS** profile (P-256, Web Crypto). `SPK` must come from `pnpm --filter @vex-chat/spire gen-spk-fips`, not `gen-spk`. Any other value uses **tweetnacl** (Ed25519) and `gen-spk`. In Docker Compose, the service passes `SPIRE_FIPS=${SPIRE_FIPS:-false}` so the shell or `.env` can set the mode.                                                                     |
-| `API_PORT`               | (see text) | If unset, Spire listens on **16777** (all crypto profiles; use `GET /status` to see which). In Docker, nginx and the image healthcheck use `deploy/resolve-spire-listen-port.sh` to follow the same rule. Set explicitly to override.                                                                                                                                                              |
+| `API_PORT`               | (see text) | If unset, Spire listens on **16777**. Set explicitly to override.                                                                                                                                                                                                                                                                                                                                  |
 | `NODE_ENV`               | _(unset)_  | Set to `production` to disable interactive `/docs` / `/async-docs`. If unset or any other value, doc viewers are mounted. `helmet()` runs in all modes.                                                                                                                                                                                                                                            |
 | `CORS_ORIGINS`           | _(empty)_  | Comma-separated allowed `Origin` values. In production, an empty value rejects cross-origin browser requests; same-origin and native clients are unaffected. Development permits only localhost, loopback, Tauri, and Capacitor origins when unset.                                                                                                                                                |
 | `SPIRE_TRUST_PROXY_HOPS` | `0`        | Number of trusted reverse-proxy hops. Set `1` for the bundled single-nginx topology. This must match the real network path so clients cannot spoof `X-Forwarded-For` to evade IP rate limits.                                                                                                                                                                                                      |

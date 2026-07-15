@@ -22,10 +22,9 @@ Anything else — `.github/`, tsconfig, eslint config, `src/__tests__/**`, `vite
 
 ## Integration jobs in CI
 
-`.github/workflows/spire-integration-cli.yml` runs two Docker-backed jobs (tweetnacl + FIPS) in addition to the main `build.yml` checks:
+`.github/workflows/spire-integration-cli.yml` runs a Docker-backed integration job in addition to the main `build.yml` checks:
 
 - **`integration (tweetnacl)`** — uses `gen-spk.js`, default server profile, runs `pnpm run integration:cli` against `127.0.0.1:16777`.
-- **`integration (FIPS)`** — uses `gen-spk-fips.js`, sets `SPIRE_FIPS=true`, asserts `GET /status` reports `cryptoProfile: fips`. Same `pnpm run integration:cli` path.
 
 Both build the same image and use a fresh GHA layer cache. The repo previously ran a multi-OS matrix for native edge cases — if you reintroduce that, don't drop coverage without reason.
 

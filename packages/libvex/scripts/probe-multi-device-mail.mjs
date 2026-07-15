@@ -15,12 +15,7 @@
  * Copyright (c) 2020-2026 Vex Heavy Industries LLC
  * Licensed under AGPL-3.0. See LICENSE for details.
  */
-import {
-    setCryptoProfile,
-    xSignKeyPairFromSecret,
-    XKeyConvert,
-    XUtils,
-} from "@vex-chat/crypto";
+import { xSignKeyPairFromSecret, XKeyConvert, XUtils } from "@vex-chat/crypto";
 import { MemoryStorage } from "../dist/__tests__/harness/memory-storage.js";
 import { Client } from "../dist/index.js";
 import { msgpack } from "../dist/codec.js";
@@ -53,7 +48,6 @@ function apiUrlOverrideFromEnv() {
 
 /** Same in-memory path as the browser e2e — no native sqlite binding. */
 async function makeStorage(SK) {
-    setCryptoProfile("tweetnacl");
     const sign = xSignKeyPairFromSecret(XUtils.decodeHex(SK));
     const id = XKeyConvert.convertKeyPair(sign);
     if (!id) {

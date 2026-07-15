@@ -7,13 +7,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-    isSpireFipsEnabled,
     normalizeEnvValue,
     validateSpireRuntimeEnv,
 } from "../utils/loadEnv.ts";
 
 const TWEETNACL_SPK = "ab".repeat(64);
-const FIPS_SPK = "cd".repeat(90);
 const JWT_SECRET = "ef".repeat(32);
 
 describe("normalizeEnvValue", () => {
@@ -30,22 +28,11 @@ describe("normalizeEnvValue", () => {
     });
 });
 
-describe("isSpireFipsEnabled", () => {
-    it("accepts true and 1 only", () => {
-        expect(isSpireFipsEnabled("true")).toBe(true);
-        expect(isSpireFipsEnabled('"true"')).toBe(true);
-        expect(isSpireFipsEnabled("1")).toBe(true);
-        expect(isSpireFipsEnabled("false")).toBe(false);
-        expect(isSpireFipsEnabled(undefined)).toBe(false);
-    });
-});
-
 describe("validateSpireRuntimeEnv", () => {
     it("accepts quoted compose-safe tweetnacl keys", () => {
         expect(() => {
             validateSpireRuntimeEnv({
                 JWT_SECRET: `"${JWT_SECRET}"`,
-                SPIRE_FIPS: "false",
                 SPK: `"${TWEETNACL_SPK}"`,
             });
         }).not.toThrow();
@@ -60,22 +47,11 @@ describe("validateSpireRuntimeEnv", () => {
         }).toThrow(/SPK must be an even-length hex string/);
     });
 
-    it("rejects a FIPS flag with a tweetnacl-sized SPK", () => {
+    it("rejects an SPK with the wrong length", () => {
         expect(() => {
             validateSpireRuntimeEnv({
                 JWT_SECRET,
-                SPIRE_FIPS: "true",
-                SPK: TWEETNACL_SPK,
-            });
-        }).toThrow(/requires an SPK from .*gen-spk-fips/);
-    });
-
-    it("rejects a FIPS-sized SPK without the FIPS flag", () => {
-        expect(() => {
-            validateSpireRuntimeEnv({
-                JWT_SECRET,
-                SPIRE_FIPS: "false",
-                SPK: FIPS_SPK,
+                SPK: "cd".repeat(90),
             });
         }).toThrow(/SPK must be 128 hex characters/);
     });
