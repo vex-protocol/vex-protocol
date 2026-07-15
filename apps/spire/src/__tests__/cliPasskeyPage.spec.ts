@@ -44,15 +44,25 @@ describe("CLI passkey page", () => {
         expect(res.headers.get("permissions-policy")).toContain(
             "publickey-credentials-create=(self)",
         );
-        expect(html).toContain("Continue with your passkey.");
+        expect(html).toContain("Continue with your passkey");
+        expect(html).toContain("--accent: #e5484d");
+        expect(html).not.toContain("radial-gradient");
+        expect(html).toContain('role="status" aria-live="polite"');
         expect(html).toContain("resolveTrustedApiBase");
         expect(html).toContain("Passkey link API origin is not trusted.");
+        expect(html).toContain("resolveCompletionCallback");
+        expect(html).toContain('callback.protocol !== "vex:" ||');
+        expect(html).toContain('callback.pathname !== "/complete" ||');
         expect(html).toContain("window.history.replaceState");
         expect(html).toContain('mode === "register-handoff"');
         expect(html).toContain('mode === "authenticate-handoff"');
         expect(html).toContain('"/auth/passkey/browser-registration/"');
         expect(html).toContain('"/auth/passkey/browser-authentication/"');
         expect(html).toContain("action.disabled = nextBusy || completed");
+        expect(html).toContain("showCompletion(");
+        expect(html).toContain("action.hidden = true");
+        expect(html).toContain('err.name === "NotAllowedError"');
+        expect(html).toContain("apiRequestError(response.status, payload)");
         expect(html).toContain("navigator.credentials.create");
         expect(html).toContain("navigator.credentials.get");
     });

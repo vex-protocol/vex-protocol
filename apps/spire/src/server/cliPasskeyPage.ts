@@ -26,70 +26,138 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
     <style>
         :root {
             color-scheme: dark;
-            --bg: #080b0d;
-            --panel: #10161a;
-            --panel-border: #27323a;
-            --text: #eef6fb;
-            --muted: #9fb2be;
-            --accent: #a8c8df;
-            --accent-strong: #d3ebfb;
-            --danger: #ff776d;
+            --bg: #141519;
+            --panel: #202126;
+            --border: #2b2d33;
+            --border-strong: #41434b;
+            --text: #f2f3f5;
+            --text-secondary: #dbdee1;
+            --muted: #b5bac1;
+            --faint: #80848e;
+            --accent: #e5484d;
+            --accent-hover: #f05b60;
+            --accent-soft: rgba(229, 72, 77, 0.16);
+            --danger: #f23f42;
+            --success: #3ba55c;
         }
 
         * {
             box-sizing: border-box;
         }
 
-        html,
-        body {
+        html {
             min-height: 100%;
         }
 
         body {
             align-items: center;
-            background:
-                radial-gradient(circle at 50% 0%, rgba(168, 200, 223, 0.12), transparent 36rem),
-                var(--bg);
+            background: var(--bg);
             color: var(--text);
             display: flex;
             font-family:
                 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             justify-content: center;
             margin: 0;
-            padding: 24px;
+            min-height: 100vh;
+            padding: 20px;
         }
 
         main {
-            background: rgba(16, 22, 26, 0.95);
-            border: 1px solid var(--panel-border);
+            background: var(--panel);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
-            max-width: 460px;
-            padding: 28px;
+            box-shadow: 0 18px 56px rgba(0, 0, 0, 0.34);
+            max-width: 420px;
+            overflow: hidden;
             width: 100%;
         }
 
-        .mark {
-            color: var(--accent);
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 34px;
-            height: 44px;
-            line-height: 44px;
-            margin-bottom: 18px;
-            width: 44px;
+        .titlebar {
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            min-height: 52px;
+            padding: 0 20px;
+        }
+
+        .wordmark {
+            color: var(--text);
+            font-family: "Space Grotesk", Inter, ui-sans-serif, system-ui, sans-serif;
+            font-size: 17px;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .titlebar-divider {
+            background: var(--border-strong);
+            height: 18px;
+            margin: 0 11px;
+            width: 1px;
+        }
+
+        .titlebar-context {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .secure-context {
+            align-items: center;
+            color: var(--faint);
+            display: inline-flex;
+            font-size: 12px;
+            gap: 5px;
+            margin-left: auto;
+        }
+
+        .secure-context svg {
+            height: 14px;
+            width: 14px;
+        }
+
+        .content {
+            padding: 26px 26px 24px;
+        }
+
+        .passkey-icon {
+            align-items: center;
+            background: var(--accent-soft);
+            border: 1px solid rgba(229, 72, 77, 0.28);
+            border-radius: 8px;
+            color: var(--accent-hover);
+            display: flex;
+            height: 48px;
+            justify-content: center;
+            margin-bottom: 20px;
+            width: 48px;
+        }
+
+        .passkey-icon svg {
+            height: 24px;
+            width: 24px;
+        }
+
+        .eyebrow {
+            color: var(--faint);
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.3;
+            margin: 0 0 7px;
+            text-transform: uppercase;
         }
 
         h1 {
-            font-size: 24px;
-            font-weight: 650;
+            font-family: "Space Grotesk", Inter, ui-sans-serif, system-ui, sans-serif;
+            font-size: 23px;
+            font-weight: 700;
             letter-spacing: 0;
-            line-height: 1.15;
-            margin: 0 0 10px;
+            line-height: 1.2;
+            margin: 0 0 9px;
         }
 
-        p {
+        .description {
             color: var(--muted);
-            font-size: 15px;
+            font-size: 14px;
             line-height: 1.5;
             margin: 0;
         }
@@ -98,53 +166,229 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             align-items: center;
             appearance: none;
             background: var(--accent);
-            border: 0;
+            border: 1px solid var(--accent);
             border-radius: 8px;
-            color: #071014;
+            color: #ffffff;
             cursor: pointer;
             display: inline-flex;
             font: inherit;
-            font-weight: 700;
+            font-size: 14px;
+            font-weight: 650;
+            gap: 9px;
             justify-content: center;
-            margin-top: 24px;
-            min-height: 46px;
+            margin-top: 22px;
+            min-height: 44px;
             padding: 0 18px;
+            transition:
+                background 120ms ease,
+                border-color 120ms ease;
             width: 100%;
+        }
+
+        button:hover:not(:disabled) {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+        }
+
+        button:focus-visible {
+            outline: 2px solid var(--text);
+            outline-offset: 3px;
         }
 
         button:disabled {
             cursor: wait;
-            opacity: 0.72;
+            opacity: 0.78;
+        }
+
+        .spinner {
+            animation: spin 760ms linear infinite;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            border-top-color: #ffffff;
+            display: none;
+            height: 15px;
+            width: 15px;
+        }
+
+        button[data-busy="true"] .spinner {
+            display: block;
+        }
+
+        .helper {
+            color: var(--faint);
+            font-size: 12px;
+            line-height: 1.45;
+            margin: 11px 2px 0;
+            text-align: center;
         }
 
         .status {
-            border-top: 1px solid var(--panel-border);
+            align-items: flex-start;
+            border-top: 1px solid var(--border);
             color: var(--muted);
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 13px;
+            display: flex;
+            font-size: 12px;
+            gap: 9px;
             line-height: 1.45;
-            margin-top: 22px;
+            margin-top: 20px;
             min-height: 20px;
-            padding-top: 18px;
+            padding-top: 16px;
             word-break: break-word;
         }
 
-        .error {
+        .status-indicator {
+            background: var(--faint);
+            border-radius: 2px;
+            flex: 0 0 auto;
+            height: 7px;
+            margin-top: 5px;
+            width: 7px;
+        }
+
+        main[data-state="busy"] .status-indicator {
+            animation: pulse 1.1s ease-in-out infinite;
+            background: var(--accent-hover);
+        }
+
+        main[data-state="error"] .status {
             color: var(--danger);
         }
 
-        .success {
-            color: var(--accent-strong);
+        main[data-state="error"] .status-indicator {
+            background: var(--danger);
+        }
+
+        main[data-state="success"] .status {
+            color: var(--text-secondary);
+        }
+
+        main[data-state="success"] .status-indicator {
+            background: var(--success);
+        }
+
+        .completion {
+            align-items: center;
+            color: var(--text-secondary);
+            display: flex;
+            font-size: 13px;
+            gap: 9px;
+            line-height: 1.4;
+            margin-top: 22px;
+        }
+
+        .completion svg {
+            color: var(--success);
+            flex: 0 0 auto;
+            height: 20px;
+            width: 20px;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        @media (max-width: 460px) {
+            body {
+                padding: 12px;
+            }
+
+            .content {
+                padding: 24px 22px 22px;
+            }
+
+            .titlebar {
+                padding: 0 18px;
+            }
+        }
+
+        @media (max-height: 620px) {
+            body {
+                align-items: flex-start;
+            }
+
+            .content {
+                padding-bottom: 20px;
+                padding-top: 22px;
+            }
+
+            .passkey-icon {
+                margin-bottom: 16px;
+            }
+
+            button {
+                margin-top: 18px;
+            }
+
+            .status {
+                margin-top: 16px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
 <body>
-    <main>
-        <div class="mark">◈</div>
-        <h1 id="title">Continue with your passkey.</h1>
-        <p id="copy">Use the passkey saved in this browser or on a nearby device to finish signing in from the Vex CLI.</p>
-        <button id="action" type="button">Continue with passkey</button>
-        <div class="status" id="status">Waiting for passkey.</div>
+    <main id="surface" data-state="ready">
+        <header class="titlebar">
+            <span class="wordmark">vex</span>
+            <span class="titlebar-divider" aria-hidden="true"></span>
+            <span class="titlebar-context" id="titlebar-context">Passkey</span>
+            <span class="secure-context">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="11" x="3" y="11" rx="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                Secure
+            </span>
+        </header>
+        <section class="content">
+            <div class="passkey-icon">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="7.5" cy="15.5" r="5.5"></circle>
+                    <path d="m21 2-9.6 9.6"></path>
+                    <path d="m15.5 7.5 3 3L22 7l-3-3"></path>
+                </svg>
+            </div>
+            <p class="eyebrow" id="eyebrow">Secure sign in</p>
+            <h1 id="title">Continue with your passkey</h1>
+            <p class="description" id="copy">Use a passkey saved in this browser or on a nearby device to continue in Vex.</p>
+            <button id="action" type="button" data-busy="false">
+                <span class="spinner" aria-hidden="true"></span>
+                <span id="action-label">Continue with passkey</span>
+            </button>
+            <p class="helper" id="helper">Your password remains available as a sign-in method.</p>
+            <div class="completion" id="completion" hidden>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 6 9 17l-5-5"></path>
+                </svg>
+                <span id="completion-copy">You can close this page and return to Vex.</span>
+            </div>
+            <div class="status" id="status" role="status" aria-live="polite">
+                <span class="status-indicator" aria-hidden="true"></span>
+                <span id="status-copy">Ready for your passkey.</span>
+            </div>
+        </section>
     </main>
     <script>
         "use strict";
@@ -158,52 +402,137 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             );
         }
         var action = document.getElementById("action");
-        var statusEl = document.getElementById("status");
+        var actionLabel = document.getElementById("action-label");
+        var completion = document.getElementById("completion");
+        var completionCopy = document.getElementById("completion-copy");
         var titleEl = document.getElementById("title");
         var copyEl = document.getElementById("copy");
+        var eyebrowEl = document.getElementById("eyebrow");
+        var helperEl = document.getElementById("helper");
+        var statusCopy = document.getElementById("status-copy");
+        var surface = document.getElementById("surface");
+        var titlebarContext = document.getElementById("titlebar-context");
         var mode = params.get("mode") || "recover";
         var startupError = null;
         var apiBase = window.location.origin;
+        var completionCallback = null;
+        var actionDefaultLabel = "Continue with passkey";
         var busy = false;
         var completed = false;
 
+        configurePage();
+
         try {
             apiBase = resolveTrustedApiBase(params.get("api"));
+            completionCallback = resolveCompletionCallback(
+                params.get("callback"),
+            );
+            validateLinkParams();
         } catch (err) {
             startupError = err;
         }
 
-        if (mode === "register" || mode === "register-handoff") {
-            titleEl.textContent = "Create a passkey for Vex.";
-            copyEl.textContent = "This adds a passkey to your Vex account.";
-            action.textContent = "Create passkey";
-            setStatus("Ready to create passkey.");
-        } else if (mode === "authenticate-handoff") {
-            titleEl.textContent = "Continue signing in to Vex.";
-            copyEl.textContent =
-                "Use your passkey here, then return to the Vex desktop app.";
-            setStatus("Ready to verify passkey.");
-        } else {
-            setStatus("Ready to verify passkey.");
-        }
-
         if (startupError) {
             setStatus(errorMessage(startupError), "error");
-            action.disabled = true;
+            action.hidden = true;
+            helperEl.textContent =
+                "Open a new passkey request from Vex and try again.";
         }
 
         action.addEventListener("click", function () {
             void run();
         });
 
+        function configurePage() {
+            document.body.dataset.mode = mode;
+            if (mode === "register" || mode === "register-handoff") {
+                document.title = "Add a passkey - Vex";
+                titlebarContext.textContent = "Add passkey";
+                eyebrowEl.textContent = "Account security";
+                titleEl.textContent = "Create a passkey";
+                copyEl.textContent =
+                    "Use Face ID, Touch ID, your device PIN, or a security key to add a faster sign-in method.";
+                helperEl.textContent =
+                    "Your password remains available as a sign-in method.";
+                actionDefaultLabel = "Create passkey";
+                actionLabel.textContent = actionDefaultLabel;
+                setStatus("Ready to create your passkey.");
+                return;
+            }
+            if (mode === "authenticate-handoff") {
+                document.title = "Sign in with a passkey - Vex";
+                titlebarContext.textContent = "Sign in";
+                eyebrowEl.textContent = "Desktop sign in";
+                titleEl.textContent = "Use your passkey";
+                copyEl.textContent =
+                    "Choose a passkey saved in this browser, on this device, or on a nearby device.";
+                helperEl.textContent =
+                    "Vex will finish signing in automatically after verification.";
+                setStatus("Ready to verify your passkey.");
+                return;
+            }
+            document.title = "Recover a device - Vex";
+            titlebarContext.textContent = "Device recovery";
+            eyebrowEl.textContent = "Trusted device";
+            titleEl.textContent = "Verify your passkey";
+            copyEl.textContent =
+                "Use an account passkey to approve this Vex device.";
+            helperEl.textContent =
+                "Only continue if you started this request from your device.";
+            setStatus("Ready to verify your passkey.");
+        }
+
+        function validateLinkParams() {
+            if (mode === "register") {
+                requiredParam("token");
+                requiredParam("user");
+                requiredParam("username");
+                return;
+            }
+            if (mode === "register-handoff" || mode === "authenticate-handoff") {
+                requiredParam("token");
+                requiredParam("request");
+                return;
+            }
+            requiredParam("username");
+            requiredParam("request");
+        }
+
         function setStatus(message, kind) {
-            statusEl.textContent = message;
-            statusEl.className = "status" + (kind ? " " + kind : "");
+            statusCopy.textContent = message;
+            surface.dataset.state = kind || (busy ? "busy" : "ready");
         }
 
         function setBusy(nextBusy) {
             busy = nextBusy;
             action.disabled = nextBusy || completed;
+            action.dataset.busy = String(nextBusy);
+            surface.setAttribute("aria-busy", String(nextBusy));
+            if (nextBusy) {
+                surface.dataset.state = "busy";
+                actionLabel.textContent = "Waiting for passkey";
+            } else {
+                if (surface.dataset.state === "busy") {
+                    surface.dataset.state = "ready";
+                }
+                actionLabel.textContent = actionDefaultLabel;
+            }
+        }
+
+        function showCompletion(title, copy, status, nextStep) {
+            completed = true;
+            titleEl.textContent = title;
+            copyEl.textContent = copy;
+            completionCopy.textContent = nextStep;
+            completion.hidden = false;
+            action.hidden = true;
+            helperEl.hidden = true;
+            setStatus(status, "success");
+            if (completionCallback) {
+                window.setTimeout(function () {
+                    window.location.assign(completionCallback);
+                }, 350);
+            }
         }
 
         function apiUrl(path) {
@@ -232,6 +561,26 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             throw new Error("Passkey link API origin is not trusted.");
         }
 
+        function resolveCompletionCallback(rawCallback) {
+            if (!rawCallback) return null;
+            var callback;
+            try {
+                callback = new URL(rawCallback);
+            } catch (_err) {
+                throw new Error("Passkey completion callback is invalid.");
+            }
+            if (
+                callback.protocol !== "vex:" ||
+                callback.hostname !== "passkey" ||
+                callback.pathname !== "/complete" ||
+                callback.search ||
+                callback.hash
+            ) {
+                throw new Error("Passkey completion callback is not trusted.");
+            }
+            return callback.toString();
+        }
+
         function isLocalOrigin(url) {
             return (
                 (url.protocol === "http:" || url.protocol === "https:") &&
@@ -258,21 +607,37 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             });
             var text = await response.text();
             var payload = null;
-            if (text.length > 0) {
+            var contentType = response.headers.get("content-type") || "";
+            if (text.length > 0 && contentType.includes("json")) {
                 try {
                     payload = JSON.parse(text);
                 } catch (_err) {
-                    payload = { error: text };
+                    payload = null;
                 }
             }
             if (!response.ok) {
-                throw new Error(
-                    payload && payload.error
-                        ? String(payload.error)
-                        : "Request failed with status " + response.status,
-                );
+                throw new Error(apiRequestError(response.status, payload));
             }
             return payload;
+        }
+
+        function apiRequestError(status, payload) {
+            if (payload && typeof payload.error === "string") {
+                return payload.error;
+            }
+            if (status === 401 || status === 403) {
+                return "This passkey request has expired. Return to Vex and start again.";
+            }
+            if (status === 404) {
+                return "This passkey request is no longer available. Return to Vex and start again.";
+            }
+            if (status === 429) {
+                return "Too many attempts. Wait a moment, then try again.";
+            }
+            if (status >= 500) {
+                return "Vex could not complete the passkey request. Try again.";
+            }
+            return "The passkey request could not be completed. Try again.";
         }
 
         async function run() {
@@ -292,17 +657,39 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                     await recoverWithPasskey();
                 }
             } catch (err) {
-                setStatus(errorMessage(err), "error");
-                action.textContent =
+                actionDefaultLabel =
                     mode === "register" || mode === "register-handoff"
                         ? "Try again"
                         : "Retry passkey";
+                setStatus(errorMessage(err), "error");
             } finally {
                 setBusy(false);
             }
         }
 
         function errorMessage(err) {
+            if (err && err.name === "NotAllowedError") {
+                return mode === "register" || mode === "register-handoff"
+                    ? "Passkey creation was canceled or blocked by this browser. Check the browser prompt, then try again."
+                    : "Passkey verification was canceled or timed out. Try again when you are ready.";
+            }
+            if (err && err.name === "InvalidStateError") {
+                return "This passkey is already registered with Vex. Try a different passkey.";
+            }
+            if (err && err.name === "SecurityError") {
+                return "This browser cannot use passkeys from the current Vex address.";
+            }
+            if (err && err.name === "AbortError") {
+                return "The passkey request was canceled. Try again when you are ready.";
+            }
+            if (
+                err &&
+                (err.name === "NetworkError" ||
+                    (err.name === "TypeError" &&
+                        /fetch|network|load failed/i.test(err.message || "")))
+            ) {
+                return "Vex could not reach the server. Check your connection and try again.";
+            }
             return err instanceof Error ? err.message : String(err);
         }
 
@@ -329,11 +716,12 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                 },
                 token: token,
             });
-            setStatus("Passkey saved. Return to the Vex CLI.", "success");
-            titleEl.textContent = "Passkey saved.";
-            copyEl.textContent = "The CLI can finish connecting now.";
-            completed = true;
-            action.textContent = "Done";
+            showCompletion(
+                "Passkey saved",
+                "Your new passkey is ready to use with Vex.",
+                "Passkey added to your account.",
+                "Return to the Vex CLI. It will finish connecting automatically.",
+            );
         }
 
         async function registerPasskeyWithHandoff() {
@@ -363,11 +751,12 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                     },
                 },
             );
-            setStatus("Passkey saved. You can close this page.", "success");
-            titleEl.textContent = "Passkey saved.";
-            copyEl.textContent = "Vex has updated your account.";
-            completed = true;
-            action.textContent = "Done";
+            showCompletion(
+                "Passkey saved",
+                "Your new passkey is ready to use with Vex.",
+                "Passkey added to your account.",
+                "You can close this page and return to Vex.",
+            );
         }
 
         async function createPasskeyCredential(options) {
@@ -412,11 +801,12 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                     },
                 },
             );
-            setStatus("Passkey verified. You can close this page.", "success");
-            titleEl.textContent = "Passkey verified.";
-            copyEl.textContent = "Return to Vex to finish signing in.";
-            completed = true;
-            action.textContent = "Done";
+            showCompletion(
+                "You are verified",
+                "Vex can finish signing you in on the desktop.",
+                "Passkey verified successfully.",
+                "You can close this page and return to Vex.",
+            );
         }
 
         async function recoverWithPasskey() {
@@ -465,11 +855,12 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                     token: token,
                 },
             );
-            setStatus("CLI device recovered. Return to the Vex CLI.", "success");
-            titleEl.textContent = "Device signed in.";
-            copyEl.textContent = "The CLI can finish connecting now.";
-            completed = true;
-            action.textContent = "Done";
+            showCompletion(
+                "Device approved",
+                "Your Vex device can finish connecting now.",
+                "Device approved with your passkey.",
+                "Return to the Vex CLI. It will finish connecting automatically.",
+            );
         }
 
         function requiredParam(name) {

@@ -3806,7 +3806,16 @@ export class Client {
     }
 
     private getServerIconURL(iconID: string): string {
-        return this.getHost() + "/server-icon/" + encodeURIComponent(iconID);
+        const normalizedIconID = iconID.trim();
+        if (!normalizedIconID) {
+            throw new Error("Server icon ID cannot be empty.");
+        }
+
+        return (
+            this.getHost() +
+            "/server-icon/" +
+            encodeURIComponent(normalizedIconID)
+        );
     }
 
     private async getServerList(): Promise<Server[]> {
