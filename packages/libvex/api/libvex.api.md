@@ -87,6 +87,7 @@ export interface Channels {
     delete: (channelID: string) => Promise<void>;
     retrieve: (serverID: string) => Promise<Channel[]>;
     retrieveByID: (channelID: string) => Promise<Channel | null>;
+    update: (channelID: string, name: string) => Promise<Channel>;
     userList: (channelID: string) => Promise<User[]>;
 }
 
@@ -175,6 +176,7 @@ export interface ClientEvents {
     ready: () => void;
     // Warning: (ae-forgotten-export) The symbol "RetryRequest" needs to be exported by the entry point index.d.ts
     retryRequest: (retry: RetryRequest) => void;
+    serverChange: (serverID: string) => void;
     session: (session: Session, user: User) => void;
 }
 
@@ -690,6 +692,7 @@ export interface MessageUpdatePatch {
 export interface Moderation {
     fetchPermissionList: (serverID: string) => Promise<Permission[]>;
     kick: (userID: string, serverID: string) => Promise<void>;
+    setRole: (permissionID: string, powerLevel: 0 | 50 | 100) => Promise<Permission>;
 }
 
 // @public
@@ -835,10 +838,14 @@ export { ServerChannelBootstrap }
 export interface Servers {
     create: (name: string) => Promise<Server>;
     delete: (serverID: string) => Promise<void>;
+    iconURL: (iconID: string) => string;
     leave: (serverID: string) => Promise<void>;
+    removeIcon: (serverID: string) => Promise<Server>;
     retrieve: () => Promise<Server[]>;
     retrieveByID: (serverID: string) => Promise<null | Server>;
     retrieveWithChannels: () => Promise<ServerChannelBootstrap>;
+    setIcon: (serverID: string, icon: Uint8Array) => Promise<Server>;
+    update: (serverID: string, name: string) => Promise<Server>;
 }
 
 // @public

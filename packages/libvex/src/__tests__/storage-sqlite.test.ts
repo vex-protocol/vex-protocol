@@ -138,6 +138,33 @@ describe("SqliteStorage message at-rest encryption", () => {
             await storage.close();
         }
     });
+
+    it("atomically updates an existing Double Ratchet session", async () => {
+        const { storage } = makeStorage();
+        try {
+            await storage.init();
+            const session = makeSession({ Ns: 1 });
+            await storage.saveSession(session);
+
+            await storage.saveSession({
+                ...session,
+                CKs: "77".repeat(32),
+                lastUsed: "2026-06-02T00:00:00.000Z",
+                Ns: 2,
+            });
+
+            const rows = await storage.getAllSessions();
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                CKs: "77".repeat(32),
+                lastUsed: "2026-06-02T00:00:00.000Z",
+                Ns: 2,
+                sessionID: session.sessionID,
+            });
+        } finally {
+            await storage.close();
+        }
+    });
 });
 
 function makeMessage(overrides: Partial<Message>): Message {

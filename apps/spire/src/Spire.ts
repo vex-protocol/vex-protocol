@@ -188,7 +188,7 @@ const notificationSubscribePayload = z.object({
     token: z.string().min(1).max(4096),
 });
 
-const directories = ["files", "avatars", "emoji"];
+const directories = ["files", "avatars", "emoji", "server-icons"];
 for (const dir of directories) {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir);
