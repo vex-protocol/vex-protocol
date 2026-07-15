@@ -49,6 +49,17 @@ afterAll(() => {
     }
 });
 
+describe("verifyPassword", () => {
+    it.each(["not-an-argon2-hash", "pbkdf2$100000$salt$hash"])(
+        "fails closed for an unsupported stored hash: %s",
+        async (passwordHash) => {
+            await expect(
+                verifyPassword(initialPassword, { passwordHash }),
+            ).resolves.toEqual({ needsRehash: false, valid: false });
+        },
+    );
+});
+
 describe("PATCH /user/:id/password", () => {
     it("changes a password after approved-device and current-password proof", async () => {
         const harness = await mountPasswordRouter("device");

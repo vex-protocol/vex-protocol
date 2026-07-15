@@ -8,6 +8,17 @@ import { z } from "zod/v4";
 
 import { uint8 } from "./common.js";
 
+/** Maximum decoded encrypted-file size accepted by either upload transport. */
+export const MAX_FILE_UPLOAD_BYTES: number = 25 * 1024 * 1024;
+
+/** Maximum base64 length for an encrypted file at the decoded upload limit. */
+export const MAX_FILE_UPLOAD_BASE64_LENGTH: number =
+    4 * Math.ceil(MAX_FILE_UPLOAD_BYTES / 3);
+
+/** Maximum encoded fallback request size, including JSON or msgpack metadata. */
+export const MAX_FILE_UPLOAD_ENCODED_BODY_BYTES: number =
+    MAX_FILE_UPLOAD_BASE64_LENGTH + 4 * 1024;
+
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
 /** Custom server emoji. */
@@ -44,7 +55,7 @@ export const FilePayloadSchema: z.ZodType<FilePayload> = z
     .object({
         file: z
             .string()
-            .max(27_000_000)
+            .max(MAX_FILE_UPLOAD_BASE64_LENGTH)
             .optional()
             .describe("Optional base64-encoded encrypted file"),
         nonce: z

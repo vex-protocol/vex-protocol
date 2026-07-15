@@ -13,7 +13,12 @@ import * as fsp from "node:fs/promises";
 import express from "express";
 
 import { type KeyPair, XUtils } from "@vex-chat/crypto";
-import { PreKeysWSSchema, TokenScopes, UserSchema } from "@vex-chat/types";
+import {
+    MAX_FILE_UPLOAD_ENCODED_BODY_BYTES,
+    PreKeysWSSchema,
+    TokenScopes,
+    UserSchema,
+} from "@vex-chat/types";
 
 import cors from "cors";
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
@@ -333,6 +338,17 @@ export const initApp = (
     // spends any cycles on body parsing, helmet, or auth. See
     // src/server/rateLimit.ts.
     api.use(globalLimiter);
+    // Base64 expands a 25 MiB encrypted upload to about 33.4 MiB. Give only
+    // the JSON fallback route enough room for that encoded payload and its
+    // JSON/msgpack envelope; unrelated routes keep the tighter global cap.
+    api.use(
+        "/file/json",
+        express.json({ limit: MAX_FILE_UPLOAD_ENCODED_BODY_BYTES }),
+        express.raw({
+            limit: MAX_FILE_UPLOAD_ENCODED_BODY_BYTES,
+            type: "application/msgpack",
+        }),
+    );
     api.use(express.json({ limit: "20mb" }));
     api.use(
         express.raw({

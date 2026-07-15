@@ -1972,12 +1972,19 @@ export async function verifyPassword(
         await argon2.verify(DUMMY_PASSWORD_HASH, password);
         return { needsRehash: false, valid: false };
     }
-    const valid = await argon2.verify(stored.passwordHash, password);
-    return {
-        needsRehash:
-            valid && argon2.needsRehash(stored.passwordHash, ARGON2_OPTIONS),
-        valid,
-    };
+    try {
+        const valid = await argon2.verify(stored.passwordHash, password);
+        return {
+            needsRehash:
+                valid &&
+                argon2.needsRehash(stored.passwordHash, ARGON2_OPTIONS),
+            valid,
+        };
+    } catch {
+        // Keep malformed rows on the same expensive path as a missing user.
+        await argon2.verify(DUMMY_PASSWORD_HASH, password).catch(() => false);
+        return { needsRehash: false, valid: false };
+    }
 }
 
 function accountTierRank(tier: AccountTier): number {

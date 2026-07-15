@@ -14,7 +14,7 @@ import * as path from "node:path";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { FilePayloadSchema } from "@vex-chat/types";
+import { FilePayloadSchema, MAX_FILE_UPLOAD_BYTES } from "@vex-chat/types";
 
 import multer from "multer";
 import { z } from "zod/v4";
@@ -27,7 +27,6 @@ import { getParam } from "./utils.ts";
 import { protect } from "./index.ts";
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
-const MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024;
 const fileUpload = multer({
     limits: {
         fields: 4,

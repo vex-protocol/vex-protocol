@@ -625,6 +625,15 @@ export interface MailWS {
 export const MailWSSchema: z.ZodType<MailWS>;
 
 // @public
+export const MAX_FILE_UPLOAD_BASE64_LENGTH: number;
+
+// @public
+export const MAX_FILE_UPLOAD_BYTES: number;
+
+// @public
+export const MAX_FILE_UPLOAD_ENCODED_BODY_BYTES: number;
+
+// @public
 export interface NotifyMsg extends BaseMsg {
     // (undocumented)
     data?: unknown;

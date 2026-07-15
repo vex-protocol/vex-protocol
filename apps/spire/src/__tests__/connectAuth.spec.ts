@@ -11,7 +11,12 @@ import type { Server } from "node:http";
 import express from "express";
 
 import { xSignAsync, xSignKeyPair, XUtils } from "@vex-chat/crypto";
-import { TokenScopes } from "@vex-chat/types";
+import {
+    MAX_FILE_UPLOAD_BASE64_LENGTH,
+    MAX_FILE_UPLOAD_BYTES,
+    MAX_FILE_UPLOAD_ENCODED_BODY_BYTES,
+    TokenScopes,
+} from "@vex-chat/types";
 
 import { parse as uuidParse } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
@@ -189,6 +194,51 @@ describe("device connect auth", () => {
             await close(server);
         }
     });
+
+    it("accepts a fallback upload body above the default parser limit", async () => {
+        expect(MAX_FILE_UPLOAD_BASE64_LENGTH).toBe(
+            4 * Math.ceil(MAX_FILE_UPLOAD_BYTES / 3),
+        );
+        expect(MAX_FILE_UPLOAD_ENCODED_BODY_BYTES).toBeGreaterThan(
+            MAX_FILE_UPLOAD_BASE64_LENGTH,
+        );
+
+        const encodedFileLength = 20 * 1024 * 1024 + 1;
+        expect(encodedFileLength).toBeLessThan(MAX_FILE_UPLOAD_BASE64_LENGTH);
+        const app = express();
+        initApp(
+            app,
+            {} as Database,
+            () => false,
+            xSignKeyPair(),
+            () => {},
+        );
+        const server = await listen(app);
+
+        try {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+                throw new Error("Expected TCP listener.");
+            }
+            const response = await fetch(
+                `http://127.0.0.1:${String(address.port)}/file/json`,
+                {
+                    body: msgpack.encode({
+                        file: "A".repeat(encodedFileLength),
+                        nonce: "a".repeat(48),
+                        owner: "device-a",
+                    }),
+                    headers: { "Content-Type": "application/msgpack" },
+                    method: "POST",
+                },
+            );
+
+            // Parsing succeeded; authentication is the next middleware.
+            expect(response.status).toBe(401);
+        } finally {
+            await close(server);
+        }
+    }, 15_000);
 });
 
 function close(server: Server): Promise<void> {
