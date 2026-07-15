@@ -24,7 +24,9 @@ import {
 import { stringify } from "uuid";
 import { z } from "zod/v4";
 
+import { MAX_ACTIVE_DEVICES_PER_USER } from "../Database.ts";
 import { msgpack } from "../utils/msgpack.ts";
+import { verifyDevicePayloadPreKeySignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
 
 import { AppError } from "./errors.ts";
@@ -491,6 +493,7 @@ export const getUserRouter = (
         data?: unknown,
         deviceID?: string,
     ) => void,
+    disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
     const router = express.Router();
 
@@ -581,7 +584,7 @@ export const getUserRouter = (
                 authenticatorSelection: {
                     requireResidentKey: false,
                     residentKey: "preferred",
-                    userVerification: "preferred",
+                    userVerification: "required",
                 },
                 excludeCredentials: [],
                 rpID,
@@ -675,16 +678,20 @@ export const getUserRouter = (
                     expectedChallenge: passkeyRegistration.challenge,
                     expectedOrigin,
                     expectedRPID: rpID,
-                    requireUserVerification: false,
+                    requireUserVerification: true,
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- structurally validated by simplewebauthn below
                     response: parsed.data
                         .response as unknown as RegistrationResponseJSON,
                 });
             } catch (err: unknown) {
+                const requestId = crypto.randomUUID();
                 const message =
                     err instanceof Error ? err.message : String(err);
+                console.warn(
+                    `[spire] pending-device WebAuthn registration failed requestId=${requestId} message=${message}`,
+                );
                 res.status(400).send({
-                    error: "Passkey attestation invalid: " + message,
+                    error: "Passkey attestation could not be verified.",
                 });
                 return;
             }
@@ -811,6 +818,10 @@ export const getUserRouter = (
 
     router.get("/:id/permissions", protect, async (req, res) => {
         const userDetails = getUser(req);
+        if (getParam(req, "id") !== userDetails.userID) {
+            res.sendStatus(403);
+            return;
+        }
         const permissions = await db.retrievePermissions(
             userDetails.userID,
             "all",
@@ -820,12 +831,20 @@ export const getUserRouter = (
 
     router.get("/:id/servers", protect, async (req, res) => {
         const userDetails = getUser(req);
+        if (getParam(req, "id") !== userDetails.userID) {
+            res.sendStatus(403);
+            return;
+        }
         const servers = await db.retrieveServers(userDetails.userID);
         res.send(msgpack.encode(servers));
     });
 
     router.get("/:id/servers/bootstrap", protect, async (req, res) => {
         const userDetails = getUser(req);
+        if (getParam(req, "id") !== userDetails.userID) {
+            res.sendStatus(403);
+            return;
+        }
         const payload = await db.retrieveServerChannelBootstrap(
             userDetails.userID,
         );
@@ -840,8 +859,14 @@ export const getUserRouter = (
             return;
         }
         const userDetails = getUser(req);
-        if (userDetails.userID !== device.owner) {
-            res.sendStatus(401);
+        const currentDevice = req.device;
+        if (
+            getParam(req, "userID") !== userDetails.userID ||
+            userDetails.userID !== device.owner ||
+            !currentDevice ||
+            currentDevice.owner !== userDetails.userID
+        ) {
+            res.sendStatus(403);
             return;
         }
         const deviceList = await db.retrieveUserDeviceList([
@@ -855,6 +880,7 @@ export const getUserRouter = (
         }
 
         await db.deleteDevice(device.deviceID);
+        disconnectDevices?.([device.deviceID]);
         res.sendStatus(200);
     });
 
@@ -893,9 +919,21 @@ export const getUserRouter = (
         }
 
         if (tokenValidator(stringify(token), TokenScopes.Device)) {
+            if (!(await verifyDevicePayloadPreKeySignature(deviceData))) {
+                res.status(400).send({
+                    error: "Signed prekey signature is invalid.",
+                });
+                return;
+            }
             const userDevices = await db.retrieveUserDeviceList([
                 userDetails.userID,
             ]);
+            if (userDevices.length >= MAX_ACTIVE_DEVICES_PER_USER) {
+                res.status(409).send({
+                    error: `Each account is limited to ${String(MAX_ACTIVE_DEVICES_PER_USER)} active devices. Remove an old device before adding another.`,
+                });
+                return;
+            }
             if (userDevices.length === 0) {
                 try {
                     const device = await db.createDevice(
@@ -1026,10 +1064,7 @@ export const getUserRouter = (
                 return;
             }
 
-            // New clients put the passkey proof on the requesting device.
-            // Older clients may still satisfy this with an approval-side passkey.
-            const approvedByPasskeyID =
-                pending.requesterPasskeyID ?? req.passkey?.passkeyID;
+            const approvedByPasskeyID = pending.requesterPasskeyID;
             if (approvedByPasskeyID) {
                 const passkey =
                     await db.retrievePasskeyInternal(approvedByPasskeyID);

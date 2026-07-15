@@ -22,8 +22,6 @@ export interface FilePayload {
     file?: string | undefined;
     nonce: string;
     owner: string;
-    /** Legacy field from an older signed-upload shape. Not required by Spire. */
-    signed?: string | undefined;
 }
 
 /** File response with metadata and data. */
@@ -44,11 +42,18 @@ export interface FileSQL {
 /** File upload payload (HTTP). */
 export const FilePayloadSchema: z.ZodType<FilePayload> = z
     .object({
-        file: z.string().optional().describe("Optional file ID for updates"),
-        nonce: z.string().describe("Encryption nonce (hex)"),
-        owner: z.string().describe("File owner user ID"),
-        signed: z.string().optional().describe("Legacy signed file data"),
+        file: z
+            .string()
+            .max(27_000_000)
+            .optional()
+            .describe("Optional base64-encoded encrypted file"),
+        nonce: z
+            .string()
+            .regex(/^[0-9a-fA-F]{48}$/)
+            .describe("Encryption nonce (hex)"),
+        owner: z.string().min(1).max(128).describe("Owning device ID"),
     })
+    .strict()
     .describe("File upload payload");
 
 const _fileSQLSchema = z.object({

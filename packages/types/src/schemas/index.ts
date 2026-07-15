@@ -170,10 +170,14 @@ export {
 } from "./servers.js";
 
 export {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
+    ACCOUNT_PASSWORD_MIN_LENGTH,
     type Device,
     type DevicePayload,
     DevicePayloadSchema,
     DeviceSchema,
+    type PasswordUpdatePayload,
+    PasswordUpdatePayloadSchema,
     type RegistrationPayload,
     RegistrationPayloadSchema,
     type User,

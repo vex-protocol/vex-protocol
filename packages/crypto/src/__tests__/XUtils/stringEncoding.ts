@@ -33,6 +33,12 @@ test("Encodes and decodes hex", () => {
     }
 });
 
+test("Rejects malformed hex instead of silently changing bytes", () => {
+    expect(() => decodeHex("abc")).toThrow(/even-length hexadecimal/);
+    expect(() => decodeHex("gg")).toThrow(/even-length hexadecimal/);
+    expect(decodeHex("")).toEqual(new Uint8Array());
+});
+
 test("Encodes and decodes utf8", () => {
     const data = [
         "L-dr`?%z5%?R8rT:Lwvk",

@@ -29,6 +29,12 @@ import { Packr } from "msgpackr";
 import nacl from "tweetnacl";
 import { z } from "zod/v4";
 
+const KEY_DATA_HEADER_BYTES = 54;
+const KEY_DATA_MAC_BYTES = 16;
+const KEY_DATA_PBKDF2_ITERATIONS = 220_000;
+const KEY_DATA_PBKDF2_MIN_ITERATIONS = 1_000;
+const KEY_DATA_PBKDF2_MAX_ITERATIONS = 2_000_000;
+
 /** Runtime crypto profile selector. */
 export type CryptoProfile = "fips" | "tweetnacl";
 
@@ -93,6 +99,39 @@ function isWebCryptoLike(value: unknown): value is WebCryptoLike {
         typeof value.subtle === "object" &&
         value.subtle !== null
     );
+}
+
+async function pbkdf2Sha512Async(
+    password: string,
+    salt: Uint8Array,
+    iterations: number,
+): Promise<Uint8Array> {
+    const cryptoCandidate: unknown = globalThis.crypto;
+    if (!isWebCryptoLike(cryptoCandidate)) {
+        return noblePbkdf2(sha512, password, salt, {
+            c: iterations,
+            dkLen: 32,
+        });
+    }
+
+    const passwordKey = await cryptoCandidate.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(password),
+        "PBKDF2",
+        false,
+        ["deriveBits"],
+    );
+    const bits = await cryptoCandidate.subtle.deriveBits(
+        {
+            hash: "SHA-512",
+            iterations,
+            name: "PBKDF2",
+            salt: new Uint8Array(salt),
+        },
+        passwordKey,
+        256,
+    );
+    return new Uint8Array(bits);
 }
 
 function randomBytesWebCrypto(length: number): Uint8Array {
@@ -411,8 +450,8 @@ export class XUtils {
      * Checks if two buffer-like objects are equal.
      * When lengths match, comparison is constant-time in the inputs (no early exit on first differing byte).
      *
-     * @param buf1
-     * @param buf2
+     * @param buf1 - First buffer to compare.
+     * @param buf2 - Second buffer to compare.
      *
      * @returns True if equal, else false.
      */
@@ -446,24 +485,30 @@ export class XUtils {
         if (hexString.length === 0) {
             return new Uint8Array();
         }
+        if (hexString.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hexString)) {
+            throw new Error("Expected an even-length hexadecimal string.");
+        }
 
-        const matches = hexString.match(/.{1,2}/g) ?? [];
-        return new Uint8Array(matches.map((byte) => parseInt(byte, 16)));
+        const bytes = new Uint8Array(hexString.length / 2);
+        for (let i = 0; i < bytes.length; i += 1) {
+            bytes[i] = Number.parseInt(hexString.slice(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
     }
 
     /**
      * Decrypts a secret key from the binary format produced by encryptKeyData().
      * No I/O — the caller handles reading the data.
      *
-     * @param keyData The encrypted key data as a Uint8Array.
-     * @param password The password used to encrypt.
+     * @param keyData - The encrypted key data as a Uint8Array.
+     * @param password - The password used to encrypt.
      * @returns The hex-encoded secret key.
      */
     public static decryptKeyData = (
         keyData: Uint8Array,
         password: string,
     ): string => {
-        const ITERATIONS = XUtils.uint8ArrToNumber(keyData.slice(0, 6));
+        const ITERATIONS = XUtils.readKeyDataIterations(keyData);
         const PKBDF_SALT = keyData.slice(6, 30);
         const ENCRYPTION_NONCE = keyData.slice(30, 54);
         const ENCRYPTED_KEY = keyData.slice(54);
@@ -471,16 +516,22 @@ export class XUtils {
             c: ITERATIONS,
             dkLen: 32,
         });
-        const DECRYPTED_SIGNKEY = provider().secretboxOpen(
-            ENCRYPTED_KEY,
-            ENCRYPTION_NONCE,
-            DERIVED_KEY,
-        );
+        try {
+            const DECRYPTED_SIGNKEY = provider().secretboxOpen(
+                ENCRYPTED_KEY,
+                ENCRYPTION_NONCE,
+                DERIVED_KEY,
+            );
 
-        if (DECRYPTED_SIGNKEY === null) {
-            throw new Error("Decryption failed. Wrong password?");
+            if (DECRYPTED_SIGNKEY === null) {
+                throw new Error("Decryption failed. Wrong password?");
+            }
+            const decryptedHex = XUtils.encodeHex(DECRYPTED_SIGNKEY);
+            DECRYPTED_SIGNKEY.fill(0);
+            return decryptedHex;
+        } finally {
+            DERIVED_KEY.fill(0);
         }
-        return XUtils.encodeHex(DECRYPTED_SIGNKEY);
     };
 
     /**
@@ -491,53 +542,57 @@ export class XUtils {
         keyData: Uint8Array,
         password: string,
     ): Promise<string> => {
-        const ITERATIONS = XUtils.uint8ArrToNumber(keyData.slice(0, 6));
+        const ITERATIONS = XUtils.readKeyDataIterations(keyData);
         const PKBDF_SALT = keyData.slice(6, 30);
         const ENCRYPTION_NONCE = keyData.slice(30, 54);
         const ENCRYPTED_KEY = keyData.slice(54);
-        const DERIVED_KEY = noblePbkdf2(sha512, password, PKBDF_SALT, {
-            c: ITERATIONS,
-            dkLen: 32,
-        });
-        const decrypted =
-            activeCryptoProfile === "fips"
-                ? await xSecretboxOpenAsync(
-                      ENCRYPTED_KEY,
-                      ENCRYPTION_NONCE,
-                      DERIVED_KEY,
-                  )
-                : xSecretboxOpen(ENCRYPTED_KEY, ENCRYPTION_NONCE, DERIVED_KEY);
+        const DERIVED_KEY = await pbkdf2Sha512Async(
+            password,
+            PKBDF_SALT,
+            ITERATIONS,
+        );
+        try {
+            const decrypted =
+                activeCryptoProfile === "fips"
+                    ? await xSecretboxOpenAsync(
+                          ENCRYPTED_KEY,
+                          ENCRYPTION_NONCE,
+                          DERIVED_KEY,
+                      )
+                    : xSecretboxOpen(
+                          ENCRYPTED_KEY,
+                          ENCRYPTION_NONCE,
+                          DERIVED_KEY,
+                      );
 
-        if (decrypted === null) {
-            throw new Error("Decryption failed. Wrong password?");
+            if (decrypted === null) {
+                throw new Error("Decryption failed. Wrong password?");
+            }
+            const decryptedHex = XUtils.encodeHex(decrypted);
+            decrypted.fill(0);
+            return decryptedHex;
+        } finally {
+            DERIVED_KEY.fill(0);
         }
-        return XUtils.encodeHex(decrypted);
     };
 
     /**
-     * 32-byte AES-256 key for local at-rest encryption (e.g. sqlite) derived from
-     * identity `secretKey`. For `tweetnacl` this is the 32-byte X25519 private key.
-     * For `fips` the identity secret is PKCS#8; HKDF is applied so AES keys never
-     * equal the raw private key material.
+     * Derive a purpose-separated 32-byte key for local at-rest encryption.
+     * The result never aliases raw identity-key bytes in either crypto profile.
      */
     public static deriveLocalAtRestAesKey(
         identitySk: Uint8Array,
         profile: CryptoProfile,
     ): Uint8Array {
-        if (profile === "tweetnacl") {
-            if (identitySk.length < 32) {
-                throw new Error(
-                    "Expected at least 32 bytes of identity secret in tweetnacl mode.",
-                );
-            }
-            return identitySk.subarray(0, 32);
+        if (identitySk.length < 32) {
+            throw new Error("Expected at least 32 bytes of identity secret.");
         }
         return new Uint8Array(
             hkdf(
                 sha256,
                 identitySk,
                 new Uint8Array(0),
-                new TextEncoder().encode("vex:at-rest:2.1.0-fips"),
+                new TextEncoder().encode(`vex:at-rest:3:${profile}`),
                 32,
             ),
         );
@@ -571,9 +626,9 @@ export class XUtils {
      *
      * Format: [iterations(6)|salt(24)|nonce(24)|ciphertext(N)]
      *
-     * @param password The password to derive the encryption key from.
-     * @param keyToSave The hex-encoded secret key to encrypt.
-     * @param iterationOverride Optional PBKDF2 iteration count (random if omitted).
+     * @param password - The password to derive the encryption key from.
+     * @param keyToSave - The hex-encoded secret key to encrypt.
+     * @param iterationOverride - Optional PBKDF2 iteration count (220,000 if omitted).
      * @returns The encrypted key data as a Uint8Array.
      */
     public static encryptKeyData = (
@@ -582,13 +637,9 @@ export class XUtils {
         iterationOverride?: number,
     ): Uint8Array => {
         const UNENCRYPTED_SIGNKEY = XUtils.decodeHex(keyToSave);
-        const OFFSET = 1000;
-        const rand = provider().randomBytes(2);
-        const [N1 = 0, N2 = 0] = rand;
-        const iterations =
-            iterationOverride !== undefined && iterationOverride !== 0
-                ? iterationOverride
-                : N1 * N2 + OFFSET;
+        const iterations = XUtils.validateKeyDataIterations(
+            iterationOverride ?? KEY_DATA_PBKDF2_ITERATIONS,
+        );
         const ITERATIONS = XUtils.numberToUint8Arr(iterations);
         const PKBDF_SALT = xMakeNonce();
         const ENCRYPTION_KEY = noblePbkdf2(sha512, password, PKBDF_SALT, {
@@ -596,11 +647,17 @@ export class XUtils {
             dkLen: 32,
         });
         const NONCE = xMakeNonce();
-        const ENCRYPTED_SIGNKEY = provider().secretbox(
-            UNENCRYPTED_SIGNKEY,
-            NONCE,
-            ENCRYPTION_KEY,
-        );
+        let ENCRYPTED_SIGNKEY: Uint8Array;
+        try {
+            ENCRYPTED_SIGNKEY = provider().secretbox(
+                UNENCRYPTED_SIGNKEY,
+                NONCE,
+                ENCRYPTION_KEY,
+            );
+        } finally {
+            ENCRYPTION_KEY.fill(0);
+            UNENCRYPTED_SIGNKEY.fill(0);
+        }
 
         const result = new Uint8Array(
             ITERATIONS.length +
@@ -629,28 +686,31 @@ export class XUtils {
         iterationOverride?: number,
     ): Promise<Uint8Array> => {
         const UNENCRYPTED_SIGNKEY = XUtils.decodeHex(keyToSave);
-        const OFFSET = 1000;
-        const rand = xRandomBytes(2);
-        const [N1 = 0, N2 = 0] = rand;
-        const iterations =
-            iterationOverride !== undefined && iterationOverride !== 0
-                ? iterationOverride
-                : N1 * N2 + OFFSET;
+        const iterations = XUtils.validateKeyDataIterations(
+            iterationOverride ?? KEY_DATA_PBKDF2_ITERATIONS,
+        );
         const ITERATIONS = XUtils.numberToUint8Arr(iterations);
         const PKBDF_SALT = xMakeNonce();
-        const ENCRYPTION_KEY = noblePbkdf2(sha512, password, PKBDF_SALT, {
-            c: iterations,
-            dkLen: 32,
-        });
+        const ENCRYPTION_KEY = await pbkdf2Sha512Async(
+            password,
+            PKBDF_SALT,
+            iterations,
+        );
         const NONCE = xMakeNonce();
-        const ENCRYPTED_SIGNKEY =
-            activeCryptoProfile === "fips"
-                ? await xSecretboxAsync(
-                      UNENCRYPTED_SIGNKEY,
-                      NONCE,
-                      ENCRYPTION_KEY,
-                  )
-                : xSecretbox(UNENCRYPTED_SIGNKEY, NONCE, ENCRYPTION_KEY);
+        let ENCRYPTED_SIGNKEY: Uint8Array;
+        try {
+            ENCRYPTED_SIGNKEY =
+                activeCryptoProfile === "fips"
+                    ? await xSecretboxAsync(
+                          UNENCRYPTED_SIGNKEY,
+                          NONCE,
+                          ENCRYPTION_KEY,
+                      )
+                    : xSecretbox(UNENCRYPTED_SIGNKEY, NONCE, ENCRYPTION_KEY);
+        } finally {
+            ENCRYPTION_KEY.fill(0);
+            UNENCRYPTED_SIGNKEY.fill(0);
+        }
 
         const result = new Uint8Array(
             ITERATIONS.length +
@@ -674,7 +734,7 @@ export class XUtils {
      * The integer must be positive, and it must be able to be stored
      * in six bytes.
      *
-     * @param n The number to convert.
+     * @param n - The number to convert.
      * @returns The Uint8Array representation of n.
      */
     public static numberToUint8Arr(n: number): Uint8Array {
@@ -695,8 +755,8 @@ export class XUtils {
     /**
      * Packs a javascript object and a 32 byte header into a vex message.
      *
-     * @param msg Message body (msgpack-serialized).
-     * @param header Optional 32-byte header; defaults to an empty header.
+     * @param msg - Message body (msgpack-serialized).
+     * @param header - Optional 32-byte header; defaults to an empty header.
      * @returns the packed message.
      */
     public static packMessage(msg: unknown, header?: Uint8Array) {
@@ -708,7 +768,7 @@ export class XUtils {
     /**
      * Converts a Uint8Array representation of an integer back into a number.
      *
-     * @param arr The array to convert.
+     * @param arr - The array to convert.
      * @returns the number representation of arr.
      */
     public static uint8ArrToNumber(arr: Uint8Array) {
@@ -723,7 +783,7 @@ export class XUtils {
      * Takes a vex message and unpacks it into its header and a javascript object
      * representation of its body.
      *
-     * @param msg Full wire message (32-byte header + msgpack body).
+     * @param msg - Full wire message (32-byte header + msgpack body).
      * @returns [32 byte header, message body]
      */
     public static unpackMessage(
@@ -743,27 +803,92 @@ export class XUtils {
 
         return [msgh, msgb];
     }
+
+    private static readKeyDataIterations(keyData: Uint8Array): number {
+        if (keyData.length < KEY_DATA_HEADER_BYTES + KEY_DATA_MAC_BYTES) {
+            throw new Error("Encrypted key data is truncated.");
+        }
+        return XUtils.validateKeyDataIterations(
+            XUtils.uint8ArrToNumber(keyData.slice(0, 6)),
+        );
+    }
+
+    private static validateKeyDataIterations(iterations: number): number {
+        if (
+            !Number.isSafeInteger(iterations) ||
+            iterations < KEY_DATA_PBKDF2_MIN_ITERATIONS ||
+            iterations > KEY_DATA_PBKDF2_MAX_ITERATIONS
+        ) {
+            throw new Error(
+                `PBKDF2 iterations must be between ${String(KEY_DATA_PBKDF2_MIN_ITERATIONS)} and ${String(KEY_DATA_PBKDF2_MAX_ITERATIONS)}.`,
+            );
+        }
+        return iterations;
+    }
 }
 
 /**
  * Returns a 32 byte HMAC of a javscript object.
  *
- * @param msg the message to create the HMAC of
- * @param SK the secret key to create the HMAC with
+ * @param msg - The message to create the HMAC of.
+ * @param SK - The secret key to create the HMAC with.
  */
 export function xHMAC(msg: unknown, SK: Uint8Array) {
     const packedMsg = msgpackEncode(msg);
     return hmac(sha256, SK, packedMsg);
 }
 
+/** Derive independent payload-encryption and envelope-authentication keys. */
+export function xMessageKeySubkeys(messageKey: Uint8Array): {
+    authenticationKey: Uint8Array;
+    encryptionKey: Uint8Array;
+} {
+    if (messageKey.length < 32) {
+        throw new Error("Message keys must contain at least 32 bytes.");
+    }
+    return {
+        authenticationKey: hmac(
+            sha256,
+            messageKey,
+            XUtils.decodeUTF8("vex:message:auth:v1"),
+        ),
+        encryptionKey: hmac(
+            sha256,
+            messageKey,
+            XUtils.decodeUTF8("vex:message:encryption:v1"),
+        ),
+    };
+}
+
 /**
  * Gets a word list representation of a byte sequence.
  *
- * @param entropy The bytes to derive the wordlist from.
- * @param wordList Optional, override the wordlist. See bip39 docs for details.
+ * @param entropy - The bytes to derive the wordlist from.
+ * @param wordList - Optional override for the wordlist. See bip39 docs for details.
  */
 export function xMnemonic(entropy: Uint8Array, wordList?: string[]) {
     return bip39.entropyToMnemonic(XUtils.encodeHex(entropy), wordList);
+}
+
+/** Domain-separated payload signed for X3DH signed and one-time prekeys. */
+export function xPreKeySignaturePayload(
+    publicKey: Uint8Array,
+    kind: "one-time" | "signed",
+    profile: CryptoProfile = getCryptoProfile(),
+): Uint8Array {
+    if (publicKey.length === 0) {
+        throw new Error("Prekey public key cannot be empty.");
+    }
+    const separator = new Uint8Array([0]);
+    return xConcat(
+        XUtils.decodeUTF8("vex:x3dh:prekey:v2"),
+        separator,
+        XUtils.decodeUTF8(profile),
+        separator,
+        XUtils.decodeUTF8(kind),
+        separator,
+        publicKey,
+    );
 }
 
 /**
@@ -898,7 +1023,7 @@ export async function xBoxKeyPairFromSecretAsync(
 /**
  * Concatanates multiple Uint8Arrays.
  *
- * @param arrays As many Uint8Arrays as you would like to concatanate.
+ * @param arrays - The Uint8Arrays to concatenate.
  */
 export function xConcat(...arrays: Uint8Array[]): Uint8Array {
     const totalLength = arrays.reduce((acc, value) => acc + value.length, 0);
@@ -924,8 +1049,8 @@ export function xConcat(...arrays: Uint8Array[]): Uint8Array {
  * Derives a shared Secret Key from a known private key and
  * a peer's known public key.
  *
- * @param myPrivateKey Your own private key
- * @param theirPublicKey Their public key
+ * @param myPrivateKey - Your own private key.
+ * @param theirPublicKey - Their public key.
  * @returns The derived shared secret, SK.
  */
 export function xDH(
@@ -1050,7 +1175,7 @@ export function xEncode(
 /**
  * Hashes some data.
  *
- * @param data the data to hash.
+ * @param data - The data to hash.
  * @returns The hash of the data.
  */
 export function xHash(data: Uint8Array) {

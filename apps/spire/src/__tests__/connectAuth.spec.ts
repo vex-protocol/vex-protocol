@@ -13,12 +13,11 @@ import express from "express";
 import { xSignAsync, xSignKeyPair, XUtils } from "@vex-chat/crypto";
 import { TokenScopes } from "@vex-chat/types";
 
-import jwt from "jsonwebtoken";
 import { parse as uuidParse } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { initApp } from "../server/index.ts";
-import { getJwtSecret } from "../utils/jwtSecret.ts";
+import { signAuthJwt } from "../utils/authJwt.ts";
 import { msgpack } from "../utils/msgpack.ts";
 
 const originalJwtSecret = process.env["JWT_SECRET"];
@@ -74,7 +73,7 @@ describe("device connect auth", () => {
                 Uint8Array.from(uuidParse(connectToken)),
                 signKeys.secretKey,
             );
-            const token = jwt.sign({ user }, getJwtSecret());
+            const token = signAuthJwt({ scope: "user", user }, "5m");
 
             const res = await fetch(
                 `http://127.0.0.1:${String(address.port)}/device/${device.deviceID}/connect`,
@@ -94,6 +93,99 @@ describe("device connect auth", () => {
             ) as { deviceToken?: unknown };
             expect(typeof body.deviceToken).toBe("string");
         } finally {
+            await close(server);
+        }
+    });
+
+    it("does not let a passkey-scoped token enter regular account routes", async () => {
+        process.env["JWT_SECRET"] = "test-jwt-secret";
+        const db = {
+            retrievePasskeyInternal: () => Promise.resolve(null),
+        } as unknown as Database;
+        const app = express();
+        initApp(
+            app,
+            db,
+            () => false,
+            xSignKeyPair(),
+            () => {},
+        );
+        const server = await listen(app);
+
+        try {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+                throw new Error("Expected TCP listener.");
+            }
+            const token = signAuthJwt(
+                {
+                    passkey: { passkeyID: "passkey-a" },
+                    scope: "passkey",
+                    user,
+                },
+                "5m",
+            );
+
+            const res = await fetch(
+                `http://127.0.0.1:${String(address.port)}/server/server-a`,
+                { headers: { Authorization: `Bearer ${token}` } },
+            );
+
+            expect(res.status).toBe(401);
+        } finally {
+            await close(server);
+        }
+    });
+
+    it("limits the default development CORS policy to local app origins", async () => {
+        const originalCorsOrigins = process.env["CORS_ORIGINS"];
+        delete process.env["CORS_ORIGINS"];
+        const app = express();
+        initApp(
+            app,
+            {} as Database,
+            () => false,
+            xSignKeyPair(),
+            () => {},
+        );
+        const server = await listen(app);
+
+        try {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+                throw new Error("Expected TCP listener.");
+            }
+            const url = `http://127.0.0.1:${String(address.port)}/server/server-a`;
+            const preflightHeaders = {
+                "Access-Control-Request-Method": "GET",
+            };
+            const blocked = await fetch(url, {
+                headers: {
+                    ...preflightHeaders,
+                    Origin: "https://attacker.example",
+                },
+                method: "OPTIONS",
+            });
+            const allowed = await fetch(url, {
+                headers: {
+                    ...preflightHeaders,
+                    Origin: "http://localhost:5180",
+                },
+                method: "OPTIONS",
+            });
+
+            expect(
+                blocked.headers.get("access-control-allow-origin"),
+            ).toBeNull();
+            expect(allowed.headers.get("access-control-allow-origin")).toBe(
+                "http://localhost:5180",
+            );
+        } finally {
+            if (originalCorsOrigins === undefined) {
+                delete process.env["CORS_ORIGINS"];
+            } else {
+                process.env["CORS_ORIGINS"] = originalCorsOrigins;
+            }
             await close(server);
         }
     });

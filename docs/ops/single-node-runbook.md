@@ -43,6 +43,7 @@ DB_TYPE=sqlite3
 NODE_ENV=production
 SPIRE_FIPS=false
 CORS_ORIGINS=
+SPIRE_TRUST_PROXY_HOPS=1
 SPIRE_MAIL_RETENTION_TTL=30d
 # Optional passkey support when this host is the RP host:
 # SPIRE_PASSKEY_RP_ID=api.vex.wtf

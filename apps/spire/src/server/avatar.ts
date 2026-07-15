@@ -21,13 +21,20 @@ import { getParam, getUser } from "./utils.ts";
 import { ALLOWED_IMAGE_TYPES, protect } from "./index.ts";
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+const avatarUpload = multer({
+    limits: { fields: 1, files: 1, fileSize: MAX_AVATAR_BYTES, parts: 2 },
+});
 
 // Avatars are public, unencrypted images. The body for the JSON path is just a
 // base64-encoded image; nothing else. Do NOT reuse FilePayloadSchema here —
 // that schema is for encrypted user-file uploads and requires nonce/owner/signed,
 // which the avatar client never sends (and shouldn't).
 const avatarJsonPayload = z.object({
-    file: z.string().min(1),
+    file: z
+        .string()
+        .min(1)
+        .max(Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 4),
 });
 
 export const getAvatarRouter = () => {
@@ -56,7 +63,7 @@ export const getAvatarRouter = () => {
         stream.pipe(res);
     });
 
-    router.post("/:userID/json", protect, async (req, res) => {
+    router.post("/:userID/json", uploadLimiter, protect, async (req, res) => {
         const parsed = avatarJsonPayload.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
@@ -73,8 +80,22 @@ export const getAvatarRouter = () => {
             res.sendStatus(401);
             return;
         }
+        if (getParam(req, "userID") !== userDetails.userID) {
+            res.sendStatus(403);
+            return;
+        }
 
-        const buf = Buffer.from(XUtils.decodeBase64(payload.file));
+        let buf: Buffer;
+        try {
+            buf = Buffer.from(XUtils.decodeBase64(payload.file));
+        } catch {
+            res.status(400).send({ error: "Avatar must be valid base64." });
+            return;
+        }
+        if (buf.byteLength > MAX_AVATAR_BYTES) {
+            res.sendStatus(413);
+            return;
+        }
         const mimeType = await fileTypeFromBuffer(buf);
         if (!ALLOWED_IMAGE_TYPES.includes(mimeType?.mime || "no/type")) {
             res.status(400).send({
@@ -99,13 +120,17 @@ export const getAvatarRouter = () => {
         "/:userID",
         uploadLimiter,
         protect,
-        multer().single("avatar"),
+        avatarUpload.single("avatar"),
         async (req, res) => {
             const userDetails = getUser(req);
             const deviceDetails = req.device;
 
             if (!deviceDetails) {
                 res.sendStatus(401);
+                return;
+            }
+            if (getParam(req, "userID") !== userDetails.userID) {
+                res.sendStatus(403);
                 return;
             }
 

@@ -180,7 +180,7 @@ describe("Database passkeys", () => {
 
     describe("markPasskeyUsed", () => {
         it("bumps the signature counter and lastUsedAt timestamp", async () => {
-            expect.assertions(3);
+            expect.assertions(5);
             await withDb(async (db) => {
                 const created = await db.createPasskey(
                     userID,
@@ -191,13 +191,18 @@ describe("Database passkeys", () => {
                     samplePasskey.transports,
                 );
 
-                await db.markPasskeyUsed(created.passkeyID, 42);
+                await expect(
+                    db.markPasskeyUsed(created.passkeyID, 0, 42),
+                ).resolves.toBe(true);
                 const row = await db.retrievePasskeyInternal(created.passkeyID);
 
                 expect(row).not.toBeNull();
                 if (row === null) return;
                 expect(row.signCount).toBe(42);
                 expect(row.lastUsedAt).not.toBeNull();
+                await expect(
+                    db.markPasskeyUsed(created.passkeyID, 0, 43),
+                ).resolves.toBe(false);
             });
         });
     });

@@ -18,7 +18,6 @@ import { PreKeysWSSchema, TokenScopes, UserSchema } from "@vex-chat/types";
 import cors from "cors";
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
 import helmet from "helmet";
-import jwt from "jsonwebtoken";
 import multer from "multer";
 import parseDuration from "parse-duration";
 import { stringify as uuidStringify } from "uuid";
@@ -26,7 +25,7 @@ import { z } from "zod/v4";
 
 import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
-import { getJwtSecret } from "../utils/jwtSecret.ts";
+import { signAuthJwt, verifyAuthJwt } from "../utils/authJwt.ts";
 import { msgpack } from "../utils/msgpack.ts";
 import { verifyPreKeyWsSignature } from "../utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "../utils/spireXSignOpenAsync.ts";
@@ -41,12 +40,14 @@ import { getInviteRouter } from "./invite.ts";
 import { setupDocs } from "./openapi.ts";
 import { getPasskeyRouter } from "./passkey.ts";
 import { getPasskeyDeviceRouter } from "./passkeyDevices.ts";
+import { getPasswordRouter } from "./password.ts";
 import {
+    canDeletePermission,
     hasAnyPermission,
     hasPermission,
     userHasPermission,
 } from "./permissions.ts";
-import { globalLimiter, keyBundleLimiter } from "./rateLimit.ts";
+import { globalLimiter, keyBundleLimiter, uploadLimiter } from "./rateLimit.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -64,30 +65,46 @@ export const ALLOWED_IMAGE_TYPES = [
 
 // ── Zod schemas for trust-boundary validation ──────────────────────────
 const invitePayload = z.object({
-    duration: z.string().min(1),
-    serverID: z.string().min(1),
+    duration: z.string().min(1).max(32),
+    serverID: z.string().min(1).max(128),
 });
 
 const channelPayload = z.object({
     name: z.string().min(1).max(255),
 });
 
-const deviceListPayload = z.array(z.string());
+const deviceListPayload = z.array(z.string().min(1).max(128)).max(256);
 
 const connectPayload = z.object({
-    signed: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
+    signed: z.custom<Uint8Array>(
+        (val) => val instanceof Uint8Array && val.byteLength <= 16_384,
+    ),
 });
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
 
 const emojiPayload = z.object({
-    file: z.string().optional(),
-    name: z.string().min(1),
-    signed: z.string().optional(),
+    file: z.string().max(350_000).optional(),
+    name: z.string().trim().min(1).max(64),
+    signed: z.string().max(8192).optional(),
 });
+const emojiUpload = multer({
+    limits: { fields: 3, files: 1, fileSize: 256_000, parts: 4 },
+});
+
+const DEVELOPMENT_CORS_ORIGINS: Array<RegExp | string> = [
+    /^https?:\/\/localhost(?::\d{1,5})?$/,
+    /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
+    /^https?:\/\/\[::1\](?::\d{1,5})?$/,
+    "capacitor://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+];
 
 const jwtUserPayload = z.object({
     exp: z.number().optional(),
+    scope: z.literal("user"),
     user: UserSchema,
 });
 
@@ -100,6 +117,7 @@ const jwtDevicePayload = z.object({
         owner: z.string(),
         signKey: z.string(),
     }),
+    scope: z.literal("device"),
 });
 
 const jwtPasskeyPayload = z.object({
@@ -121,7 +139,7 @@ const checkAuth: express.RequestHandler = (req, _res, next) => {
     const token = extractBearer(req);
     if (token) {
         try {
-            const result = jwt.verify(token, getJwtSecret());
+            const result = verifyAuthJwt(token);
             // Passkey-scoped JWTs share the bearer slot with regular
             // user JWTs but carry a `scope: "passkey"` discriminator
             // and a `passkey` claim. Populate `req.passkey` and the
@@ -158,7 +176,7 @@ export function createCheckDevice(
         const token = req.headers["x-device-token"];
         if (typeof token === "string" && token) {
             try {
-                const result = jwt.verify(token, getJwtSecret());
+                const result = verifyAuthJwt(token);
                 const parsed = jwtDevicePayload.safeParse(result);
                 if (parsed.success) {
                     const device = await currentTokenDevice(
@@ -180,6 +198,29 @@ export function createCheckDevice(
     };
 }
 
+/**
+ * Revalidate the credential behind a passkey-scoped bearer on every request.
+ * Passkey JWTs are short-lived, but removing a credential must revoke its
+ * recovery and account-administration access immediately.
+ */
+export function createCheckPasskey(
+    db: Pick<Database, "retrievePasskeyInternal">,
+): express.RequestHandler {
+    return async (req, _res, next) => {
+        if (req.passkey) {
+            const passkey = await db.retrievePasskeyInternal(
+                req.passkey.passkeyID,
+            );
+            if (!passkey || !req.user || passkey.userID !== req.user.userID) {
+                delete req.bearerToken;
+                delete req.passkey;
+                delete req.user;
+            }
+        }
+        next();
+    };
+}
+
 async function currentTokenDevice(
     db: Pick<Database, "retrieveDevice">,
     tokenDevice: Device,
@@ -192,11 +233,20 @@ async function currentTokenDevice(
 }
 
 export const protect: express.RequestHandler = (req, res, next) => {
-    if (!req.user) {
+    if (!req.user || req.passkey) {
         res.sendStatus(401);
         return;
     }
 
+    next();
+};
+
+/** Require either an approved device or a fresh passkey session. */
+export const protectAnyAuth: express.RequestHandler = (req, res, next) => {
+    if (!req.user || (!req.device && !req.passkey)) {
+        res.sendStatus(401);
+        return;
+    }
     next();
 };
 
@@ -250,13 +300,19 @@ export const initApp = (
     disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
     // INIT ROUTERS
-    const userRouter = getUserRouter(db, tokenValidator, notify);
+    const userRouter = getUserRouter(
+        db,
+        tokenValidator,
+        notify,
+        disconnectDevices,
+    );
     const fileRouter = getFileRouter(db);
     const avatarRouter = getAvatarRouter();
     const billingRouter = getBillingRouter(db, notify);
     const entitlementRouter = getEntitlementRouter(db, notify);
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
     const passkeyRouter = getPasskeyRouter(db);
+    const passwordRouter = getPasswordRouter(db);
     const passkeyDeviceRouter = getPasskeyDeviceRouter(
         db,
         notify,
@@ -310,7 +366,9 @@ export const initApp = (
             origin:
                 corsOrigins.length > 0
                     ? corsOrigins
-                    : true /* reflect request Origin */,
+                    : process.env["NODE_ENV"] === "production"
+                      ? false
+                      : DEVELOPMENT_CORS_ORIGINS,
         }),
     );
 
@@ -323,10 +381,20 @@ export const initApp = (
 
     api.use(msgpackParser);
     api.use(checkAuth);
+    api.use(createCheckPasskey(db));
     api.use(createCheckDevice(db));
 
     api.get("/server/:id", protect, async (req, res) => {
-        const server = await db.retrieveServer(getParam(req, "id"));
+        const serverID = getParam(req, "id");
+        const userDetails = getUser(req);
+        const permissions = await db.retrievePermissions(
+            userDetails.userID,
+            "server",
+        );
+        if (!hasAnyPermission(permissions, serverID)) {
+            return res.sendStatus(403);
+        }
+        const server = await db.retrieveServer(serverID);
 
         if (server) {
             return res.send(msgpack.encode(server));
@@ -337,9 +405,33 @@ export const initApp = (
 
     api.post("/server/:name", protect, async (req, res) => {
         const userDetails = getUser(req);
-        const serverName = atob(getParam(req, "name"));
+        const encodedName = getParam(req, "name");
+        if (encodedName.length > 256) {
+            res.sendStatus(400);
+            return;
+        }
+        let decodedName: string;
+        try {
+            decodedName = atob(encodedName);
+        } catch {
+            res.sendStatus(400);
+            return;
+        }
+        const parsedName = z
+            .string()
+            .trim()
+            .min(1)
+            .max(100)
+            .safeParse(decodedName);
+        if (!parsedName.success) {
+            res.sendStatus(400);
+            return;
+        }
 
-        const server = await db.createServer(serverName, userDetails.userID);
+        const server = await db.createServer(
+            parsedName.data,
+            userDetails.userID,
+        );
         res.send(msgpack.encode(server));
     });
 
@@ -488,7 +580,16 @@ export const initApp = (
     });
 
     api.get("/server/:serverID/emoji", protect, async (req, res) => {
-        const rows = await db.retrieveEmojiList(getParam(req, "serverID"));
+        const serverID = getParam(req, "serverID");
+        const permissions = await db.retrievePermissions(
+            getUser(req).userID,
+            "server",
+        );
+        if (!hasAnyPermission(permissions, serverID)) {
+            res.sendStatus(403);
+            return;
+        }
+        const rows = await db.retrieveEmojiList(serverID);
         res.send(msgpack.encode(rows));
     });
 
@@ -524,7 +625,7 @@ export const initApp = (
         for (const permission of permissions) {
             if (
                 permission.resourceID === channel.serverID &&
-                permission.powerLevel > 50
+                permission.powerLevel >= POWER_LEVELS.DELETE
             ) {
                 await db.deleteChannel(channelID);
 
@@ -552,6 +653,13 @@ export const initApp = (
         const channel = await db.retrieveChannel(getParam(req, "id"));
 
         if (channel) {
+            const permissions = await db.retrievePermissions(
+                getUser(req).userID,
+                "server",
+            );
+            if (!hasAnyPermission(permissions, channel.serverID)) {
+                return res.sendStatus(403);
+            }
             return res.send(msgpack.encode(channel));
         } else {
             return res.sendStatus(404);
@@ -572,19 +680,19 @@ export const initApp = (
             permToDelete.resourceType,
         );
 
-        for (const perm of permissions) {
-            if (
-                perm.resourceID === permToDelete.resourceID &&
-                (perm.userID === userDetails.userID ||
-                    (perm.powerLevel > POWER_LEVELS.DELETE &&
-                        perm.powerLevel > permToDelete.powerLevel))
-            ) {
-                await db.deletePermission(permToDelete.permissionID);
-                res.sendStatus(200);
-                return;
-            }
+        if (
+            canDeletePermission(
+                permissions,
+                userDetails.userID,
+                permToDelete,
+                POWER_LEVELS.DELETE,
+            )
+        ) {
+            await db.deletePermission(permToDelete.permissionID);
+            res.sendStatus(200);
+            return;
         }
-        res.sendStatus(401);
+        res.sendStatus(403);
     });
 
     api.post("/userList/:channelID", protect, async (req, res) => {
@@ -661,6 +769,10 @@ export const initApp = (
             res.sendStatus(401);
             return;
         }
+        if (deviceDetails.deviceID !== getParam(req, "id")) {
+            res.sendStatus(403);
+            return;
+        }
         const inbox = await db.retrieveMail(deviceDetails.deviceID);
         res.send(msgpack.encode(inbox));
     });
@@ -692,10 +804,7 @@ export const initApp = (
             regKey &&
             tokenValidator(uuidStringify(regKey), TokenScopes.Connect)
         ) {
-            const token = jwt.sign({ device }, getJwtSecret(), {
-                expiresIn: JWT_EXPIRY,
-            });
-            jwt.verify(token, getJwtSecret());
+            const token = signAuthJwt({ device, scope: "device" }, JWT_EXPIRY);
 
             res.send(msgpack.encode({ deviceToken: token }));
         } else {
@@ -707,6 +816,10 @@ export const initApp = (
         const deviceDetails = req.device;
         if (!deviceDetails) {
             res.sendStatus(401);
+            return;
+        }
+        if (deviceDetails.deviceID !== getParam(req, "id")) {
+            res.sendStatus(403);
             return;
         }
         const count = await db.getOTKCount(deviceDetails.deviceID);
@@ -747,7 +860,9 @@ export const initApp = (
             res.status(400).send({ error: "Prekey deviceID mismatch." });
             return;
         }
-        if (!(await verifyPreKeyWsSignature(preKey, device.signKey))) {
+        if (
+            !(await verifyPreKeyWsSignature(preKey, device.signKey, "signed"))
+        ) {
             res.status(401).send({ error: "Prekey signature invalid." });
             return;
         }
@@ -796,7 +911,11 @@ export const initApp = (
                 return;
             }
             if (
-                !(await verifyPreKeyWsSignature(submittedOTK, device.signKey))
+                !(await verifyPreKeyWsSignature(
+                    submittedOTK,
+                    device.signKey,
+                    "one-time",
+                ))
             ) {
                 res.status(401).send({ error: "OTK signature invalid." });
                 return;
@@ -809,6 +928,18 @@ export const initApp = (
 
     api.get("/emoji/:emojiID/details", protect, async (req, res) => {
         const emoji = await db.retrieveEmoji(getParam(req, "emojiID"));
+        if (!emoji) {
+            res.sendStatus(404);
+            return;
+        }
+        const permissions = await db.retrievePermissions(
+            getUser(req).userID,
+            "server",
+        );
+        if (!hasAnyPermission(permissions, emoji.owner)) {
+            res.sendStatus(403);
+            return;
+        }
         res.send(msgpack.encode(emoji));
     });
 
@@ -816,6 +947,19 @@ export const initApp = (
         const safeId = safePathParam.safeParse(getParam(req, "emojiID"));
         if (!safeId.success) {
             res.sendStatus(400);
+            return;
+        }
+        const emoji = await db.retrieveEmoji(safeId.data);
+        if (!emoji) {
+            res.sendStatus(404);
+            return;
+        }
+        const permissions = await db.retrievePermissions(
+            getUser(req).userID,
+            "server",
+        );
+        if (!hasAnyPermission(permissions, emoji.owner)) {
+            res.sendStatus(403);
             return;
         }
         const filePath = "./emoji/" + safeId.data;
@@ -835,92 +979,106 @@ export const initApp = (
         stream.pipe(res);
     });
 
-    api.post("/emoji/:serverID/json", protect, async (req, res) => {
-        const parsedPayload = emojiPayload.safeParse(req.body);
-        if (!parsedPayload.success) {
-            res.status(400).json({
-                error: "Invalid emoji payload",
-                issues: parsedPayload.error.issues,
-            });
-            return;
-        }
-        const payload = parsedPayload.data;
+    api.post(
+        "/emoji/:serverID/json",
+        uploadLimiter,
+        protect,
+        async (req, res) => {
+            const parsedPayload = emojiPayload.safeParse(req.body);
+            if (!parsedPayload.success) {
+                res.status(400).json({
+                    error: "Invalid emoji payload",
+                    issues: parsedPayload.error.issues,
+                });
+                return;
+            }
+            const payload = parsedPayload.data;
 
-        const userDetails = getUser(req);
-        const device = req.device;
+            const userDetails = getUser(req);
+            const device = req.device;
 
-        if (!device) {
-            res.sendStatus(401);
-            return;
-        }
+            if (!device) {
+                res.sendStatus(401);
+                return;
+            }
 
-        if (!payload.file) {
-            res.sendStatus(400);
-            return;
-        }
+            if (!payload.file) {
+                res.sendStatus(400);
+                return;
+            }
 
-        const buf = Buffer.from(XUtils.decodeBase64(payload.file));
-        const serverEntry = await db.retrieveServer(getParam(req, "serverID"));
+            let buf: Buffer;
+            try {
+                buf = Buffer.from(XUtils.decodeBase64(payload.file));
+            } catch {
+                res.status(400).send({ error: "Emoji must be valid base64." });
+                return;
+            }
+            const serverEntry = await db.retrieveServer(
+                getParam(req, "serverID"),
+            );
 
-        const permissionList = await db.retrievePermissionsByResourceID(
-            getParam(req, "serverID"),
-        );
+            const permissionList = await db.retrievePermissionsByResourceID(
+                getParam(req, "serverID"),
+            );
 
-        if (
-            !userHasPermission(
-                permissionList,
-                userDetails.userID,
-                POWER_LEVELS.EMOJI,
-            )
-        ) {
-            res.sendStatus(401);
-            return;
-        }
-        if (!serverEntry) {
-            res.sendStatus(404);
-            return;
-        }
-        if (!payload.name) {
-            res.sendStatus(400);
-            return;
-        }
-        if (Buffer.byteLength(buf) > 256000) {
-            res.sendStatus(413);
-            return;
-        }
+            if (
+                !userHasPermission(
+                    permissionList,
+                    userDetails.userID,
+                    POWER_LEVELS.EMOJI,
+                )
+            ) {
+                res.sendStatus(401);
+                return;
+            }
+            if (!serverEntry) {
+                res.sendStatus(404);
+                return;
+            }
+            if (!payload.name) {
+                res.sendStatus(400);
+                return;
+            }
+            if (Buffer.byteLength(buf) > 256000) {
+                res.sendStatus(413);
+                return;
+            }
 
-        const mimeType = await fileTypeFromBuffer(buf);
-        if (!ALLOWED_IMAGE_TYPES.includes(mimeType?.mime || "no/type")) {
-            res.status(400).send({
-                error:
-                    "Unsupported file type. Expected jpeg, png, gif, apng, or avif but received " +
-                    String(mimeType?.ext),
-            });
-            return;
-        }
+            const mimeType = await fileTypeFromBuffer(buf);
+            if (!ALLOWED_IMAGE_TYPES.includes(mimeType?.mime || "no/type")) {
+                res.status(400).send({
+                    error:
+                        "Unsupported file type. Expected jpeg, png, gif, apng, or avif but received " +
+                        String(mimeType?.ext),
+                });
+                return;
+            }
 
-        const emoji: Emoji = {
-            emojiID: crypto.randomUUID(),
-            name: payload.name,
-            owner: getParam(req, "serverID"),
-        };
+            const emoji: Emoji = {
+                emojiID: crypto.randomUUID(),
+                name: payload.name,
+                owner: getParam(req, "serverID"),
+            };
 
-        await db.createEmoji(emoji);
+            await db.createEmoji(emoji);
 
-        try {
-            // write the file to disk
-            await fsp.writeFile("emoji/" + emoji.emojiID, buf);
-            res.send(msgpack.encode(emoji));
-        } catch (_err: unknown) {
-            // debugger: emoji write failed
-            res.sendStatus(500);
-        }
-    });
+            try {
+                // write the file to disk
+                await fsp.writeFile("emoji/" + emoji.emojiID, buf);
+                res.send(msgpack.encode(emoji));
+            } catch (_err: unknown) {
+                // debugger: emoji write failed
+                res.sendStatus(500);
+            }
+        },
+    );
 
     api.post(
         "/emoji/:serverID",
+        uploadLimiter,
         protect,
-        multer().single("emoji"),
+        emojiUpload.single("emoji"),
         async (req, res) => {
             const parsedPayload = emojiPayload.safeParse(req.body);
             if (!parsedPayload.success) {
@@ -1017,6 +1175,7 @@ export const initApp = (
     api.use(entitlementRouter);
     api.use(passkeyRouter);
     api.use(passkeyDeviceRouter);
+    api.use(passwordRouter);
 
     api.use("/user", userRouter);
 

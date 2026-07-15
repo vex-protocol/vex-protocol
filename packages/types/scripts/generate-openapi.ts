@@ -28,6 +28,7 @@ const {
     EmojiSchema: emoji,
     FileSQLSchema: fileSQL,
     InviteSchema: invite,
+    PasswordUpdatePayloadSchema: passwordUpdatePayload,
     PermissionSchema: permission,
     RegistrationPayloadSchema: registrationPayload,
     ServerSchema: server,
@@ -49,6 +50,7 @@ registry.register("FileSQL", fileSQL);
 registry.register("ActionToken", actionToken);
 registry.register("DevicePayload", devicePayload);
 registry.register("RegistrationPayload", registrationPayload);
+registry.register("PasswordUpdatePayload", passwordUpdatePayload);
 
 // ── Common parameters ───────────────────────────────────────────────────────
 
@@ -72,9 +74,9 @@ registry.registerPath({
     method: "post",
     path: "/auth",
     operationId: "login",
-    summary: "Login with username, password, and passkey when enrolled",
+    summary: "Sign in with username and password",
     description:
-        "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys can connect devices and may enroll passkeys later.",
+        "Verify username and password credentials and return a bounded user bearer. Passkeys are optional and use the separate passkey authentication flow.",
     tags: ["auth"],
     request: {
         body: {
@@ -145,7 +147,7 @@ registry.registerPath({
     operationId: "verifyDeviceChallenge",
     summary: "Verify device auth challenge",
     description:
-        "Submit the signed challenge. Accounts with enrolled passkeys require a matching fresh passkey-scoped bearer token; accounts with no passkeys can use the resulting device-key session to connect.",
+        "Submit a challenge signed by a previously approved device key and return a bounded user bearer. This powers trusted-device session restoration and does not bypass initial account or device enrollment.",
     tags: ["auth"],
     request: {
         body: {
@@ -234,11 +236,12 @@ registry.registerPath({
     method: "post",
     path: "/goodbye",
     operationId: "logout",
-    summary: "Logout (invalidate token)",
-    description: "Invalidate the current JWT token, ending the session.",
+    summary: "End the local session",
+    description:
+        "Provide a clean authenticated session boundary. Access tokens are stateless and remain expiry-based; clients must discard their local bearer.",
     tags: ["auth"],
     security: [{ [bearerAuth.name]: [] }],
-    responses: { 200: { description: "Logged out" } },
+    responses: { 204: { description: "Session boundary acknowledged" } },
 });
 
 // ── Token ───────────────────────────────────────────────────────────────────
@@ -309,6 +312,34 @@ registry.registerPath({
                 "application/msgpack": { schema: z.array(device) },
             },
         },
+    },
+});
+
+registry.registerPath({
+    method: "patch",
+    path: "/user/{id}/password",
+    operationId: "updateAccountPassword",
+    summary: "Replace the account password",
+    description:
+        "Replace a password after current-password proof from an approved device, or after a fresh user-verified passkey ceremony. The authenticated account must match the path user.",
+    tags: ["users"],
+    security: [{ [bearerAuth.name]: [] }],
+    request: {
+        params: z.object({ id: z.string() }),
+        body: {
+            content: {
+                "application/msgpack": { schema: passwordUpdatePayload },
+            },
+        },
+    },
+    responses: {
+        204: { description: "Password replaced" },
+        400: { description: "Replacement password rejected by policy" },
+        401: {
+            description: "Required current-password or passkey proof failed",
+        },
+        403: { description: "Authenticated account does not match the path" },
+        409: { description: "Replacement matches the current password" },
     },
 });
 

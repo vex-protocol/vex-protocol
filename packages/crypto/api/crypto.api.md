@@ -99,7 +99,16 @@ export const XKeyConvert: typeof ed2curve_2;
 export function xMakeNonce(): Uint8Array;
 
 // @public
+export function xMessageKeySubkeys(messageKey: Uint8Array): {
+    authenticationKey: Uint8Array;
+    encryptionKey: Uint8Array;
+};
+
+// @public
 export function xMnemonic(entropy: Uint8Array, wordList?: string[]): string;
+
+// @public
+export function xPreKeySignaturePayload(publicKey: Uint8Array, kind: "one-time" | "signed", profile?: CryptoProfile): Uint8Array;
 
 // @public
 export function xRandomBytes(length: number): Uint8Array;
