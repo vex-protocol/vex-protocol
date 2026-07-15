@@ -426,6 +426,12 @@ export function platformSuite(
             expect(client.servers.iconURL(withIcon.icon!)).toContain(
                 `/server-icon/${withIcon.icon!}`,
             );
+            expect(client.servers.iconURL(` ${withIcon.icon!} `)).toBe(
+                client.servers.iconURL(withIcon.icon!),
+            );
+            expect(() => client.servers.iconURL("   ")).toThrow(
+                "Server icon ID cannot be empty.",
+            );
             const withoutIcon = await client.servers.removeIcon(
                 server.serverID,
             );
