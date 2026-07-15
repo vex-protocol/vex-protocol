@@ -47,6 +47,12 @@ describe("CLI passkey page", () => {
         expect(html).toContain("Continue with your passkey.");
         expect(html).toContain("resolveTrustedApiBase");
         expect(html).toContain("Passkey link API origin is not trusted.");
+        expect(html).toContain("window.history.replaceState");
+        expect(html).toContain('mode === "register-handoff"');
+        expect(html).toContain('mode === "authenticate-handoff"');
+        expect(html).toContain('"/auth/passkey/browser-registration/"');
+        expect(html).toContain('"/auth/passkey/browser-authentication/"');
+        expect(html).toContain("action.disabled = nextBusy || completed");
         expect(html).toContain("navigator.credentials.create");
         expect(html).toContain("navigator.credentials.get");
     });

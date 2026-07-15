@@ -53,6 +53,7 @@ import {
     userHasPermission,
 } from "./permissions.ts";
 import { globalLimiter, keyBundleLimiter, uploadLimiter } from "./rateLimit.ts";
+import { deleteServerIconFile, getServerIconRouter } from "./serverIcon.ts";
 import { getUserRouter } from "./user.ts";
 import { censorUser, getParam, getUser } from "./utils.ts";
 import { getWellKnownRouter } from "./wellKnown.ts";
@@ -66,6 +67,7 @@ export const ALLOWED_IMAGE_TYPES = [
     "image/gif",
     "image/apng",
     "image/avif",
+    "image/webp",
 ];
 
 // ── Zod schemas for trust-boundary validation ──────────────────────────
@@ -75,7 +77,15 @@ const invitePayload = z.object({
 });
 
 const channelPayload = z.object({
-    name: z.string().min(1).max(255),
+    name: z.string().trim().min(1).max(100),
+});
+
+const serverUpdatePayload = z.object({
+    name: z.string().trim().min(1).max(100),
+});
+
+const permissionRolePayload = z.object({
+    powerLevel: z.union([z.literal(0), z.literal(50), z.literal(100)]),
 });
 
 const deviceListPayload = z.array(z.string().min(1).max(128)).max(256);
@@ -283,7 +293,7 @@ export const msgpackParser: express.RequestHandler = (req, res, next) => {
     next();
 };
 
-const directories = ["files", "avatars"];
+const directories = ["files", "avatars", "server-icons"];
 for (const dir of directories) {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir);
@@ -304,6 +314,20 @@ export const initApp = (
     ) => void,
     disconnectDevices?: (deviceIDs: string[]) => void,
 ) => {
+    const notifyServerChange = async (
+        serverID: string,
+        additionalUserIDs: readonly string[] = [],
+    ): Promise<void> => {
+        const affectedUsers = await db.retrieveAffectedUsers(serverID);
+        const userIDs = new Set([
+            ...affectedUsers.map((user) => user.userID),
+            ...additionalUserIDs,
+        ]);
+        for (const userID of userIDs) {
+            notify(userID, "serverChange", crypto.randomUUID(), serverID);
+        }
+    };
+
     // INIT ROUTERS
     const userRouter = getUserRouter(
         db,
@@ -318,6 +342,7 @@ export const initApp = (
     const inviteRouter = getInviteRouter(db, tokenValidator, notify);
     const passkeyRouter = getPasskeyRouter(db);
     const passwordRouter = getPasswordRouter(db);
+    const serverIconRouter = getServerIconRouter(db, notifyServerChange);
     const passkeyDeviceRouter = getPasskeyDeviceRouter(
         db,
         notify,
@@ -419,6 +444,54 @@ export const initApp = (
         }
     });
 
+    api.patch("/server/:id", protect, async (req, res) => {
+        const parsed = serverUpdatePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid server update",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+
+        const serverID = getParam(req, "id");
+        const permissions = await db.retrievePermissions(
+            getUser(req).userID,
+            "server",
+        );
+        if (!hasPermission(permissions, serverID, POWER_LEVELS.CREATE)) {
+            res.sendStatus(403);
+            return;
+        }
+
+        const server = await db.updateServer(serverID, parsed.data);
+        if (!server) {
+            res.sendStatus(404);
+            return;
+        }
+        await notifyServerChange(serverID);
+        res.send(msgpack.encode(server));
+    });
+
+    api.post("/servers", protect, async (req, res) => {
+        const parsed = serverUpdatePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid server",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+
+        const server = await db.createServer(
+            parsed.data.name,
+            getUser(req).userID,
+        );
+        res.send(msgpack.encode(server));
+    });
+
+    // Compatibility route for clients released before server names moved into
+    // the request body. New clients use POST /servers so Unicode names work.
     api.post("/server/:name", protect, async (req, res) => {
         const userDetails = getUser(req);
         const encodedName = getParam(req, "name");
@@ -537,11 +610,22 @@ export const initApp = (
             "server",
         );
         if (hasPermission(permissions, serverID, POWER_LEVELS.DELETE)) {
+            const server = await db.retrieveServer(serverID);
+            if (!server) {
+                res.sendStatus(404);
+                return;
+            }
+            const affectedUsers = await db.retrieveAffectedUsers(serverID);
             await db.deleteServer(serverID);
+            if (server.icon) await deleteServerIconFile(server.icon);
+            await notifyServerChange(
+                serverID,
+                affectedUsers.map((user) => user.userID),
+            );
             res.sendStatus(200);
             return;
         }
-        res.sendStatus(401);
+        res.sendStatus(403);
     });
 
     api.post("/server/:id/channels", protect, async (req, res) => {
@@ -564,20 +648,10 @@ export const initApp = (
         if (hasPermission(permissions, serverID, POWER_LEVELS.CREATE)) {
             const channel = await db.createChannel(name, serverID);
             res.send(msgpack.encode(channel));
-
-            const affectedUsers = await db.retrieveAffectedUsers(serverID);
-            // tell everyone about server change
-            for (const user of affectedUsers) {
-                notify(
-                    user.userID,
-                    "serverChange",
-                    crypto.randomUUID(),
-                    serverID,
-                );
-            }
+            await notifyServerChange(serverID);
             return;
         }
-        res.sendStatus(401);
+        res.sendStatus(403);
     });
 
     api.get("/server/:id/channels", protect, async (req, res) => {
@@ -623,6 +697,42 @@ export const initApp = (
         res.send(msgpack.encode(permissions));
     });
 
+    api.patch("/channel/:id", protect, async (req, res) => {
+        const parsed = channelPayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid channel update",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+
+        const channelID = getParam(req, "id");
+        const channel = await db.retrieveChannel(channelID);
+        if (!channel) {
+            res.sendStatus(404);
+            return;
+        }
+        const permissions = await db.retrievePermissions(
+            getUser(req).userID,
+            "server",
+        );
+        if (
+            !hasPermission(permissions, channel.serverID, POWER_LEVELS.DELETE)
+        ) {
+            res.sendStatus(403);
+            return;
+        }
+
+        const updated = await db.updateChannel(channelID, parsed.data.name);
+        if (!updated) {
+            res.sendStatus(404);
+            return;
+        }
+        await notifyServerChange(channel.serverID);
+        res.send(msgpack.encode(updated));
+    });
+
     api.delete("/channel/:id", protect, async (req, res) => {
         const channelID = getParam(req, "id");
         const userDetails = getUser(req);
@@ -643,26 +753,19 @@ export const initApp = (
                 permission.resourceID === channel.serverID &&
                 permission.powerLevel >= POWER_LEVELS.DELETE
             ) {
-                await db.deleteChannel(channelID);
-
-                res.sendStatus(200);
-
-                const affectedUsers = await db.retrieveAffectedUsers(
-                    channel.serverID,
-                );
-                // tell everyone about server change
-                for (const user of affectedUsers) {
-                    notify(
-                        user.userID,
-                        "serverChange",
-                        crypto.randomUUID(),
-                        channel.serverID,
-                    );
+                const deleted = await db.deleteChannelIfNotLast(channelID);
+                if (!deleted) {
+                    res.status(409).json({
+                        error: "A server must have at least one channel.",
+                    });
+                    return;
                 }
+                await notifyServerChange(channel.serverID);
+                res.sendStatus(200);
                 return;
             }
         }
-        res.sendStatus(401);
+        res.sendStatus(403);
     });
 
     api.get("/channel/:id", protect, async (req, res) => {
@@ -680,6 +783,56 @@ export const initApp = (
         } else {
             return res.sendStatus(404);
         }
+    });
+
+    api.patch("/permission/:permissionID", protect, async (req, res) => {
+        const parsed = permissionRolePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid role",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+
+        const target = await db.retrievePermission(
+            getParam(req, "permissionID"),
+        );
+        if (!target) {
+            res.sendStatus(404);
+            return;
+        }
+        if (target.resourceType !== "server") {
+            res.sendStatus(400);
+            return;
+        }
+
+        const actor = getUser(req);
+        if (target.userID === actor.userID) {
+            res.status(400).json({
+                error: "Use another owner to change your role.",
+            });
+            return;
+        }
+        const actorPermissions = await db.retrievePermissions(
+            actor.userID,
+            "server",
+        );
+        if (!hasPermission(actorPermissions, target.resourceID, 100)) {
+            res.sendStatus(403);
+            return;
+        }
+
+        const updated = await db.updatePermissionPowerLevel(
+            target.permissionID,
+            parsed.data.powerLevel,
+        );
+        if (!updated) {
+            res.sendStatus(404);
+            return;
+        }
+        await notifyServerChange(target.resourceID);
+        res.send(msgpack.encode(updated));
     });
 
     api.delete("/permission/:permissionID", protect, async (req, res) => {
@@ -704,7 +857,32 @@ export const initApp = (
                 POWER_LEVELS.DELETE,
             )
         ) {
+            if (
+                permToDelete.resourceType === "server" &&
+                permToDelete.powerLevel >= 100
+            ) {
+                const resourcePermissions =
+                    await db.retrievePermissionsByResourceID(
+                        permToDelete.resourceID,
+                    );
+                const hasAnotherOwner = resourcePermissions.some(
+                    (permission) =>
+                        permission.permissionID !== permToDelete.permissionID &&
+                        permission.powerLevel >= 100,
+                );
+                if (!hasAnotherOwner) {
+                    res.status(409).json({
+                        error: "Delete the server instead of leaving it without an owner.",
+                    });
+                    return;
+                }
+            }
             await db.deletePermission(permToDelete.permissionID);
+            if (permToDelete.resourceType === "server") {
+                await notifyServerChange(permToDelete.resourceID, [
+                    permToDelete.userID,
+                ]);
+            }
             res.sendStatus(200);
             return;
         }
@@ -1198,6 +1376,8 @@ export const initApp = (
     api.use("/file", fileRouter);
 
     api.use("/avatar", avatarRouter);
+
+    api.use("/server-icon", serverIconRouter);
 
     api.use("/invite", inviteRouter);
 

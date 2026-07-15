@@ -478,6 +478,44 @@ export class Database extends EventEmitter {
             .execute();
     }
 
+    /** Delete a channel while preserving the invariant that a server has one. */
+    public async deleteChannelIfNotLast(channelID: string): Promise<boolean> {
+        return this.db.transaction().execute(async (trx) => {
+            const channel = await trx
+                .selectFrom("channels")
+                .selectAll()
+                .where("channelID", "=", channelID)
+                .executeTakeFirst();
+            if (!channel) {
+                return false;
+            }
+
+            const siblings = await trx
+                .selectFrom("channels")
+                .select("channelID")
+                .where("serverID", "=", channel.serverID)
+                .limit(2)
+                .execute();
+            if (siblings.length <= 1) {
+                return false;
+            }
+
+            await trx
+                .deleteFrom("permissions")
+                .where("resourceID", "=", channelID)
+                .execute();
+            await trx
+                .deleteFrom("mail")
+                .where("group", "=", channelID)
+                .execute();
+            await trx
+                .deleteFrom("channels")
+                .where("channelID", "=", channelID)
+                .execute();
+            return true;
+        });
+    }
+
     public async deleteDevice(deviceID: string): Promise<void> {
         await this.db.transaction().execute(async (trx) => {
             await trx
@@ -1702,6 +1740,51 @@ export class Database extends EventEmitter {
             tier: parsedTier,
             userID,
         });
+    }
+
+    public async updateChannel(
+        channelID: string,
+        name: string,
+    ): Promise<Channel | null> {
+        const result = await this.db
+            .updateTable("channels")
+            .set({ name })
+            .where("channelID", "=", channelID)
+            .executeTakeFirst();
+        if (Number(result.numUpdatedRows) === 0) {
+            return null;
+        }
+        return this.retrieveChannel(channelID);
+    }
+
+    public async updatePermissionPowerLevel(
+        permissionID: string,
+        powerLevel: number,
+    ): Promise<null | Permission> {
+        const result = await this.db
+            .updateTable("permissions")
+            .set({ powerLevel })
+            .where("permissionID", "=", permissionID)
+            .executeTakeFirst();
+        if (Number(result.numUpdatedRows) === 0) {
+            return null;
+        }
+        return this.retrievePermission(permissionID);
+    }
+
+    public async updateServer(
+        serverID: string,
+        update: { icon?: null | string; name?: string },
+    ): Promise<null | Server> {
+        const result = await this.db
+            .updateTable("servers")
+            .set(update)
+            .where("serverID", "=", serverID)
+            .executeTakeFirst();
+        if (Number(result.numUpdatedRows) === 0) {
+            return null;
+        }
+        return this.retrieveServer(serverID);
     }
 
     public async upsertStoreSubscription(

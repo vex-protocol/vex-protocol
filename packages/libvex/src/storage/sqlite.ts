@@ -661,61 +661,53 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const sealedSkippedKeys = await this.sealSecretText(
             session.skippedKeys,
         );
-        try {
-            await this.db
-                .insertInto("sessions")
-                .values({
-                    CKr: sealedCKr,
-                    CKs: sealedCKs,
-                    deviceID: session.deviceID,
-                    DHr: session.DHr,
-                    DHsPrivate: sealedDHsPrivate,
-                    DHsPublic: session.DHsPublic,
-                    fingerprint: session.fingerprint,
-                    lastUsed: session.lastUsed,
-                    mode: session.mode,
-                    Nr: session.Nr,
-                    Ns: session.Ns,
-                    PN: session.PN,
-                    publicKey: session.publicKey,
-                    RK: sealedRK,
-                    sessionID: session.sessionID,
-                    SK: sealedSK,
-                    skippedKeys: sealedSkippedKeys,
-                    userID: session.userID,
-                    verified: session.verified ? 1 : 0,
-                })
-                .execute();
-        } catch (err: unknown) {
-            if (this.isDuplicateError(err)) {
-                await this.db
-                    .updateTable("sessions")
-                    .set({
-                        CKr: sealedCKr,
-                        CKs: sealedCKs,
-                        deviceID: session.deviceID,
-                        DHr: session.DHr,
-                        DHsPrivate: sealedDHsPrivate,
-                        DHsPublic: session.DHsPublic,
-                        fingerprint: session.fingerprint,
-                        lastUsed: session.lastUsed,
-                        mode: session.mode,
-                        Nr: session.Nr,
-                        Ns: session.Ns,
-                        PN: session.PN,
-                        publicKey: session.publicKey,
-                        RK: sealedRK,
-                        SK: sealedSK,
-                        skippedKeys: sealedSkippedKeys,
-                        userID: session.userID,
-                        verified: session.verified ? 1 : 0,
-                    })
-                    .where("sessionID", "=", session.sessionID)
-                    .execute();
-            } else {
-                throw err;
-            }
-        }
+        const values = {
+            CKr: sealedCKr,
+            CKs: sealedCKs,
+            deviceID: session.deviceID,
+            DHr: session.DHr,
+            DHsPrivate: sealedDHsPrivate,
+            DHsPublic: session.DHsPublic,
+            fingerprint: session.fingerprint,
+            lastUsed: session.lastUsed,
+            mode: session.mode,
+            Nr: session.Nr,
+            Ns: session.Ns,
+            PN: session.PN,
+            publicKey: session.publicKey,
+            RK: sealedRK,
+            sessionID: session.sessionID,
+            SK: sealedSK,
+            skippedKeys: sealedSkippedKeys,
+            userID: session.userID,
+            verified: session.verified ? 1 : 0,
+        };
+        await this.db
+            .insertInto("sessions")
+            .values(values)
+            .onConflict((conflict) =>
+                conflict.column("sessionID").doUpdateSet({
+                    CKr: values.CKr,
+                    CKs: values.CKs,
+                    deviceID: values.deviceID,
+                    DHr: values.DHr,
+                    DHsPrivate: values.DHsPrivate,
+                    DHsPublic: values.DHsPublic,
+                    fingerprint: values.fingerprint,
+                    lastUsed: values.lastUsed,
+                    mode: values.mode,
+                    Nr: values.Nr,
+                    Ns: values.Ns,
+                    PN: values.PN,
+                    publicKey: values.publicKey,
+                    RK: values.RK,
+                    SK: values.SK,
+                    skippedKeys: values.skippedKeys,
+                    userID: values.userID,
+                    verified: values.verified,
+                }),
+            )
+            .execute();
     }
 
     async updateMessage(
@@ -910,8 +902,14 @@ export class SqliteStorage extends EventEmitter implements Storage {
     }
 
     private isDuplicateError(err: unknown): boolean {
-        if (err instanceof Error) {
-            return err.message.includes("UNIQUE");
+        const message =
+            err instanceof Error
+                ? err.message
+                : typeof err === "string"
+                  ? err
+                  : "";
+        if (message.toUpperCase().includes("UNIQUE")) {
+            return true;
         }
         if (typeof err === "object" && err !== null && "errno" in err) {
             return err.errno === 19;

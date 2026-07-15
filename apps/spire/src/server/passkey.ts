@@ -12,6 +12,8 @@ import type {
 } from "@simplewebauthn/server";
 import type { Passkey } from "@vex-chat/types";
 
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
@@ -28,6 +30,7 @@ import {
     verifyAuthenticationResponse,
     verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import { z } from "zod";
 
 import { JWT_EXPIRY_PASSKEY } from "../Spire.ts";
 import { signAuthJwt } from "../utils/authJwt.ts";
@@ -42,17 +45,50 @@ import { protect, protectAnyAuth } from "./index.ts";
 
 const REGISTRATION_TTL_MS = 5 * 60 * 1000; // 5 min
 const AUTHENTICATION_TTL_MS = 5 * 60 * 1000;
+const BROWSER_AUTHENTICATION_TTL_MS = 5 * 60 * 1000;
+const BROWSER_REGISTRATION_TTL_MS = 5 * 60 * 1000;
 // Cap each user's passkey count so a compromised JWT can't fill the
 // table. WebAuthn-style apps typically allow ~20; we go conservative.
 const MAX_PASSKEYS_PER_USER = 10;
 
+type AuthenticationOptions = Awaited<
+    ReturnType<typeof generateAuthenticationOptions>
+>;
+
+type BrowserAuthenticationStatus = "in_progress" | "pending" | "response_ready";
+type BrowserRegistrationStatus = "failed" | "in_progress" | "pending";
+
 interface PendingAuthentication {
+    browserRequestID: string;
     challenge: string;
     createdAt: number;
+    options: AuthenticationOptions;
     userID: string;
 }
 
+interface PendingBrowserAuthentication {
+    authenticationRequestID: string;
+    createdAt: number;
+    response?: Record<string, unknown>;
+    status: BrowserAuthenticationStatus;
+    tokenDigest: Buffer;
+}
+
+interface PendingBrowserRegistration {
+    challenge?: string;
+    createdAt: number;
+    deviceID: string;
+    error?: string;
+    name: string;
+    registrationRequestID: string;
+    status: BrowserRegistrationStatus;
+    tokenDigest: Buffer;
+    userID: string;
+    username: string;
+}
+
 interface PendingRegistration {
+    browserRequestID: string;
     challenge: string;
     createdAt: number;
     deviceID: string;
@@ -62,6 +98,102 @@ interface PendingRegistration {
 
 const pendingRegistrations = new Map<string, PendingRegistration>();
 const pendingAuthentications = new Map<string, PendingAuthentication>();
+const pendingBrowserAuthentications = new Map<
+    string,
+    PendingBrowserAuthentication
+>();
+const pendingBrowserRegistrations = new Map<
+    string,
+    PendingBrowserRegistration
+>();
+
+const BrowserHandoffTokenSchema = z.object({
+    token: z.string().min(32).max(256),
+});
+const BrowserAuthenticationFinishSchema = BrowserHandoffTokenSchema.extend({
+    response: z.record(z.string(), z.unknown()),
+});
+const BrowserRegistrationFinishSchema = BrowserHandoffTokenSchema.extend({
+    response: z.record(z.string(), z.unknown()),
+});
+
+function browserTokenDigest(token: string): Buffer {
+    return createHash("sha256").update(token, "utf8").digest();
+}
+
+function browserTokenMatches(
+    pending: { tokenDigest: Buffer },
+    token: string,
+): boolean {
+    return timingSafeEqual(pending.tokenDigest, browserTokenDigest(token));
+}
+
+function createBrowserAuthentication(authenticationRequestID: string): {
+    browserToken: string;
+    expiresAt: string;
+    requestID: string;
+} {
+    pruneBrowserAuthentications();
+    const requestID = crypto.randomUUID();
+    const browserToken = randomBytes(32).toString("base64url");
+    const createdAt = Date.now();
+    pendingBrowserAuthentications.set(requestID, {
+        authenticationRequestID,
+        createdAt,
+        status: "pending",
+        tokenDigest: browserTokenDigest(browserToken),
+    });
+    return {
+        browserToken,
+        expiresAt: new Date(
+            createdAt + BROWSER_AUTHENTICATION_TTL_MS,
+        ).toISOString(),
+        requestID,
+    };
+}
+
+function createBrowserRegistration(args: {
+    deviceID: string;
+    name: string;
+    registrationRequestID: string;
+    userID: string;
+    username: string;
+}): {
+    browserToken: string;
+    expiresAt: string;
+    requestID: string;
+} {
+    pruneBrowserRegistrations();
+    const requestID = crypto.randomUUID();
+    const browserToken = randomBytes(32).toString("base64url");
+    const createdAt = Date.now();
+    pendingBrowserRegistrations.set(requestID, {
+        createdAt,
+        deviceID: args.deviceID,
+        name: args.name,
+        registrationRequestID: args.registrationRequestID,
+        status: "pending",
+        tokenDigest: browserTokenDigest(browserToken),
+        userID: args.userID,
+        username: args.username,
+    });
+    return {
+        browserToken,
+        expiresAt: new Date(
+            createdAt + BROWSER_REGISTRATION_TTL_MS,
+        ).toISOString(),
+        requestID,
+    };
+}
+
+function failBrowserRegistration(
+    pending: PendingBrowserRegistration,
+    error: string,
+): void {
+    delete pending.challenge;
+    pending.error = error;
+    pending.status = "failed";
+}
 
 /**
  * Returns the WebAuthn relying-party config from the environment.
@@ -71,7 +203,7 @@ const pendingAuthentications = new Map<string, PendingAuthentication>();
  * - `SPIRE_PASSKEY_RP_NAME` — display name for prompts. Defaults to
  *   "Vex".
  * - `SPIRE_PASSKEY_ORIGINS` — comma-separated allowlist of expected
- *   client origins (e.g. `https://app.vex.wtf,tauri://localhost,
+ *   client origins (e.g. `https://app.vex.wtf,
  *   http://localhost:5173`). Required: WebAuthn binds an assertion
  *   to its origin and we must check it explicitly.
  *
@@ -123,6 +255,23 @@ function pruneAuthentications(nowMs = Date.now()): void {
     for (const [id, entry] of pendingAuthentications.entries()) {
         if (nowMs - entry.createdAt > AUTHENTICATION_TTL_MS) {
             pendingAuthentications.delete(id);
+            pendingBrowserAuthentications.delete(entry.browserRequestID);
+        }
+    }
+}
+
+function pruneBrowserAuthentications(nowMs = Date.now()): void {
+    for (const [id, entry] of pendingBrowserAuthentications.entries()) {
+        if (nowMs - entry.createdAt > BROWSER_AUTHENTICATION_TTL_MS) {
+            pendingBrowserAuthentications.delete(id);
+        }
+    }
+}
+
+function pruneBrowserRegistrations(nowMs = Date.now()): void {
+    for (const [id, entry] of pendingBrowserRegistrations.entries()) {
+        if (nowMs - entry.createdAt > BROWSER_REGISTRATION_TTL_MS) {
+            pendingBrowserRegistrations.delete(id);
         }
     }
 }
@@ -240,7 +389,15 @@ export const getPasskeyRouter = (db: Database) => {
 
             pruneRegistrations();
             const requestID = crypto.randomUUID();
+            const browserHandoff = createBrowserRegistration({
+                deviceID: req.device.deviceID,
+                name: parsed.data.name,
+                registrationRequestID: requestID,
+                userID,
+                username: userDetails.username,
+            });
             pendingRegistrations.set(requestID, {
+                browserRequestID: browserHandoff.requestID,
                 challenge: options.challenge,
                 createdAt: Date.now(),
                 deviceID: req.device.deviceID,
@@ -254,7 +411,11 @@ export const getPasskeyRouter = (db: Database) => {
             // SimpleWebAuthn). The wire shape is identical — both
             // sides hand the JSON straight to navigator.credentials.
             sendWireResponse(req, res, {
-                options,
+                // Older libvex releases preserve the opaque options object but
+                // strip unknown top-level fields. Keep the handoff inside that
+                // object so desktop can adopt the HTTPS bridge before its next
+                // package bump; WebAuthn ignores unknown dictionary members.
+                options: { ...options, vexBrowserHandoff: browserHandoff },
                 requestID,
             });
         },
@@ -304,6 +465,7 @@ export const getPasskeyRouter = (db: Database) => {
             // Single-use challenge: clear immediately so a replay can't
             // re-bind the credential to a second name.
             pendingRegistrations.delete(parsed.data.requestID);
+            pendingBrowserRegistrations.delete(pending.browserRequestID);
 
             const { expectedOrigin, rpID } = getRpConfig();
 
@@ -419,6 +581,317 @@ export const getPasskeyRouter = (db: Database) => {
 
     // ── Public passkey login ───────────────────────────────────────────
 
+    router.post(
+        "/auth/passkey/browser-registration/:requestID/begin",
+        authLimiter,
+        async (req, res) => {
+            const parsed = BrowserHandoffTokenSchema.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).send({ error: "Invalid browser handoff." });
+                return;
+            }
+            pruneBrowserRegistrations();
+            const pending = pendingBrowserRegistrations.get(
+                getParam(req, "requestID"),
+            );
+            if (!pending || !browserTokenMatches(pending, parsed.data.token)) {
+                res.status(401).send({
+                    error: "Browser handoff is invalid or expired.",
+                });
+                return;
+            }
+            if (pending.status === "failed") {
+                res.status(409).send({
+                    error:
+                        pending.error ??
+                        "Browser handoff has already completed.",
+                });
+                return;
+            }
+            const device = await db.retrieveDevice(pending.deviceID);
+            if (!device || device.owner !== pending.userID) {
+                failBrowserRegistration(
+                    pending,
+                    "The originating device is no longer approved.",
+                );
+                res.status(401).send({ error: pending.error });
+                return;
+            }
+            const existing = await db.retrievePasskeysByUser(pending.userID);
+            if (existing.length >= MAX_PASSKEYS_PER_USER) {
+                failBrowserRegistration(
+                    pending,
+                    `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
+                );
+                res.status(409).send({ error: pending.error });
+                return;
+            }
+            // The browser and native challenges represent one user action.
+            // Once the HTTPS path starts, the custom-origin path cannot also
+            // finish and create a second credential.
+            pendingRegistrations.delete(pending.registrationRequestID);
+
+            const { rpID, rpName } = getRpConfig();
+            const options = await generateRegistrationOptions({
+                attestationType: "none",
+                authenticatorSelection: {
+                    requireResidentKey: false,
+                    residentKey: "preferred",
+                    userVerification: "required",
+                },
+                excludeCredentials: [],
+                rpID,
+                rpName,
+                userDisplayName: pending.username,
+                userID: new TextEncoder().encode(pending.userID),
+                userName: pending.username,
+            });
+            pending.challenge = options.challenge;
+            delete pending.error;
+            pending.status = "in_progress";
+            sendWireResponse(req, res, { options });
+        },
+    );
+
+    router.post(
+        "/auth/passkey/browser-registration/:requestID/finish",
+        authLimiter,
+        async (req, res) => {
+            const parsed = BrowserRegistrationFinishSchema.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).send({
+                    error: "Invalid browser handoff response.",
+                });
+                return;
+            }
+            pruneBrowserRegistrations();
+            const pending = pendingBrowserRegistrations.get(
+                getParam(req, "requestID"),
+            );
+            if (!pending || !browserTokenMatches(pending, parsed.data.token)) {
+                res.status(401).send({
+                    error: "Browser handoff is invalid or expired.",
+                });
+                return;
+            }
+            if (pending.status !== "in_progress" || !pending.challenge) {
+                res.status(409).send({
+                    error: "Request a fresh passkey challenge and try again.",
+                });
+                return;
+            }
+            const challenge = pending.challenge;
+            delete pending.challenge;
+
+            const device = await db.retrieveDevice(pending.deviceID);
+            if (!device || device.owner !== pending.userID) {
+                failBrowserRegistration(
+                    pending,
+                    "The originating device is no longer approved.",
+                );
+                res.status(401).send({ error: pending.error });
+                return;
+            }
+
+            const { expectedOrigin, rpID } = getRpConfig();
+            let verification;
+            try {
+                verification = await verifyRegistrationResponse({
+                    expectedChallenge: challenge,
+                    expectedOrigin,
+                    expectedRPID: rpID,
+                    requireUserVerification: true,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- structurally validated by simplewebauthn below
+                    response: parsed.data
+                        .response as unknown as RegistrationResponseJSON,
+                });
+            } catch (err: unknown) {
+                logWebAuthnFailure("browser registration", err);
+                failBrowserRegistration(
+                    pending,
+                    "Passkey attestation could not be verified.",
+                );
+                res.status(400).send({ error: pending.error });
+                return;
+            }
+            if (!verification.verified) {
+                failBrowserRegistration(pending, "Passkey attestation failed.");
+                res.status(400).send({ error: pending.error });
+                return;
+            }
+
+            const credential = verification.registrationInfo.credential;
+            const duplicate = await db.retrievePasskeyByCredentialID(
+                credential.id,
+            );
+            if (duplicate) {
+                failBrowserRegistration(
+                    pending,
+                    "This authenticator is already registered.",
+                );
+                res.status(409).send({ error: pending.error });
+                return;
+            }
+            const existing = await db.retrievePasskeysByUser(pending.userID);
+            if (existing.length >= MAX_PASSKEYS_PER_USER) {
+                failBrowserRegistration(
+                    pending,
+                    `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
+                );
+                res.status(409).send({ error: pending.error });
+                return;
+            }
+
+            const created = await db.createPasskey(
+                pending.userID,
+                pending.name,
+                credential.id,
+                XUtils.encodeHex(credential.publicKey),
+                0,
+                sanitizeTransports(credential.transports ?? []),
+            );
+            pendingBrowserRegistrations.delete(getParam(req, "requestID"));
+            sendWireResponse(req, res, created);
+        },
+    );
+
+    router.post(
+        "/auth/passkey/browser-authentication/:requestID/begin",
+        authLimiter,
+        (req, res) => {
+            const parsed = BrowserHandoffTokenSchema.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).send({ error: "Invalid browser handoff." });
+                return;
+            }
+            pruneAuthentications();
+            pruneBrowserAuthentications();
+            const browserRequestID = getParam(req, "requestID");
+            const browserPending =
+                pendingBrowserAuthentications.get(browserRequestID);
+            if (
+                !browserPending ||
+                !browserTokenMatches(browserPending, parsed.data.token)
+            ) {
+                res.status(401).send({
+                    error: "Browser handoff is invalid or expired.",
+                });
+                return;
+            }
+            const authenticationPending = pendingAuthentications.get(
+                browserPending.authenticationRequestID,
+            );
+            if (!authenticationPending) {
+                pendingBrowserAuthentications.delete(browserRequestID);
+                res.status(401).send({
+                    error: "Authentication request is invalid or expired.",
+                });
+                return;
+            }
+            if (browserPending.status === "response_ready") {
+                res.status(409).send({
+                    error: "This browser handoff has already completed.",
+                });
+                return;
+            }
+            browserPending.status = "in_progress";
+            sendWireResponse(req, res, {
+                options: authenticationPending.options,
+            });
+        },
+    );
+
+    router.post(
+        "/auth/passkey/browser-authentication/:requestID/finish",
+        authLimiter,
+        (req, res) => {
+            const parsed = BrowserAuthenticationFinishSchema.safeParse(
+                req.body,
+            );
+            if (!parsed.success) {
+                res.status(400).send({
+                    error: "Invalid browser handoff response.",
+                });
+                return;
+            }
+            pruneAuthentications();
+            pruneBrowserAuthentications();
+            const browserRequestID = getParam(req, "requestID");
+            const browserPending =
+                pendingBrowserAuthentications.get(browserRequestID);
+            if (
+                !browserPending ||
+                !browserTokenMatches(browserPending, parsed.data.token)
+            ) {
+                res.status(401).send({
+                    error: "Browser handoff is invalid or expired.",
+                });
+                return;
+            }
+            if (
+                browserPending.status !== "in_progress" ||
+                !pendingAuthentications.has(
+                    browserPending.authenticationRequestID,
+                )
+            ) {
+                res.status(409).send({
+                    error: "Request a fresh passkey challenge and try again.",
+                });
+                return;
+            }
+            browserPending.response = parsed.data.response;
+            browserPending.status = "response_ready";
+            sendWireResponse(req, res, { ok: true });
+        },
+    );
+
+    router.post(
+        "/auth/passkey/browser-authentication/:requestID/status",
+        authLimiter,
+        (req, res) => {
+            const parsed = BrowserHandoffTokenSchema.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).send({ error: "Invalid browser handoff." });
+                return;
+            }
+            pruneAuthentications();
+            pruneBrowserAuthentications();
+            const browserRequestID = getParam(req, "requestID");
+            const browserPending =
+                pendingBrowserAuthentications.get(browserRequestID);
+            if (
+                !browserPending ||
+                !browserTokenMatches(browserPending, parsed.data.token)
+            ) {
+                res.status(401).send({
+                    error: "Browser handoff is invalid or expired.",
+                });
+                return;
+            }
+            if (
+                !pendingAuthentications.has(
+                    browserPending.authenticationRequestID,
+                )
+            ) {
+                pendingBrowserAuthentications.delete(browserRequestID);
+                res.status(401).send({
+                    error: "Authentication request is invalid or expired.",
+                });
+                return;
+            }
+            if (
+                browserPending.status !== "response_ready" ||
+                !browserPending.response
+            ) {
+                res.status(202).send({ status: browserPending.status });
+                return;
+            }
+            sendWireResponse(req, res, {
+                response: browserPending.response,
+            });
+        },
+    );
+
     router.post("/auth/passkey/begin", authLimiter, async (req, res) => {
         const parsed = PasskeyAuthStartPayloadSchema.safeParse(req.body);
         if (!parsed.success) {
@@ -466,14 +939,17 @@ export const getPasskeyRouter = (db: Database) => {
 
         pruneAuthentications();
         const requestID = crypto.randomUUID();
+        const browserHandoff = createBrowserAuthentication(requestID);
         pendingAuthentications.set(requestID, {
+            browserRequestID: browserHandoff.requestID,
             challenge: options.challenge,
             createdAt: Date.now(),
+            options,
             userID: user.userID,
         });
 
         sendWireResponse(req, res, {
-            options,
+            options: { ...options, vexBrowserHandoff: browserHandoff },
             requestID,
         });
     });
@@ -498,6 +974,7 @@ export const getPasskeyRouter = (db: Database) => {
         }
         // Single-use.
         pendingAuthentications.delete(parsed.data.requestID);
+        pendingBrowserAuthentications.delete(pending.browserRequestID);
 
         // The browser's AuthenticationResponseJSON is opaque to spire
         // — simplewebauthn does the structural decode + signature

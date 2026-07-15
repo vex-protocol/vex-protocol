@@ -412,6 +412,25 @@ export function platformSuite(
             const byID = await client.servers.retrieveByID(server.serverID);
             expect(byID?.serverID).toBe(server.serverID);
 
+            const renamed = await client.servers.update(
+                server.serverID,
+                "Renamed Server",
+            );
+            expect(renamed.name).toBe("Renamed Server");
+
+            const withIcon = await client.servers.setIcon(
+                server.serverID,
+                testImage,
+            );
+            expect(withIcon.icon).toEqual(expect.any(String));
+            expect(client.servers.iconURL(withIcon.icon!)).toContain(
+                `/server-icon/${withIcon.icon!}`,
+            );
+            const withoutIcon = await client.servers.removeIcon(
+                server.serverID,
+            );
+            expect(withoutIcon.icon).toBeUndefined();
+
             await client.servers.delete(server.serverID);
             const afterDelete = await client.servers.retrieve();
             expect(
@@ -429,6 +448,12 @@ export function platformSuite(
             const byID = await client.channels.retrieveByID(channel.channelID);
             expect(byID?.channelID).toBe(channel.channelID);
 
+            const renamed = await client.channels.update(
+                channel.channelID,
+                "Renamed Channel",
+            );
+            expect(renamed.name).toBe("Renamed Channel");
+
             await client.channels.delete(channel.channelID);
             const channels = await client.channels.retrieve(server.serverID);
             expect(
@@ -436,6 +461,9 @@ export function platformSuite(
             ).toBe(false);
             // Default channel still exists
             expect(channels.length).toBe(1);
+            await expect(
+                client.channels.delete(channels[0]!.channelID),
+            ).rejects.toThrow();
 
             await client.servers.delete(server.serverID);
         });

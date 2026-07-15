@@ -455,6 +455,8 @@ export interface Channels {
     retrieve: (serverID: string) => Promise<Channel[]>;
     /** Gets one channel by ID. */
     retrieveByID: (channelID: string) => Promise<Channel | null>;
+    /** Changes a channel's display name. */
+    update: (channelID: string, name: string) => Promise<Channel>;
     /** Lists users currently visible in a channel. */
     userList: (channelID: string) => Promise<User[]>;
 }
@@ -1129,6 +1131,7 @@ const retryRequestNotifyData = z.union([
         mailID: z.string(),
     }),
 ]);
+const serverChangeNotifyData = z.string().min(1).max(128);
 
 /**
  * Event signatures emitted by {@link Client}.
@@ -1165,6 +1168,8 @@ export interface ClientEvents {
     ready: () => void;
     /** Session healing requested a retry for a specific mail ID. */
     retryRequest: (retry: RetryRequest) => void;
+    /** Server metadata, channels, membership, or permissions changed. */
+    serverChange: (serverID: string) => void;
     /** A new encryption session was established with a peer device. */
     session: (session: Session, user: User) => void;
 }
@@ -1210,6 +1215,11 @@ export interface Moderation {
     fetchPermissionList: (serverID: string) => Promise<Permission[]>;
     /** Removes a user from a server by revoking their server permission(s). */
     kick: (userID: string, serverID: string) => Promise<void>;
+    /** Changes a server member's role. */
+    setRole: (
+        permissionID: string,
+        powerLevel: 0 | 50 | 100,
+    ) => Promise<Permission>;
 }
 
 /**
@@ -1230,14 +1240,22 @@ export interface Servers {
     create: (name: string) => Promise<Server>;
     /** Deletes a server. */
     delete: (serverID: string) => Promise<void>;
+    /** Returns the public URL for an immutable server icon ID. */
+    iconURL: (iconID: string) => string;
     /** Leaves a server by removing the user's permission entry. */
     leave: (serverID: string) => Promise<void>;
+    /** Removes a server's icon. */
+    removeIcon: (serverID: string) => Promise<Server>;
     /** Lists servers available to the authenticated user. */
     retrieve: () => Promise<Server[]>;
     /** Gets one server by ID. */
     retrieveByID: (serverID: string) => Promise<null | Server>;
     /** Fetches servers and channels in one request for fast bootstraps. */
     retrieveWithChannels: () => Promise<ServerChannelBootstrap>;
+    /** Uploads and sets a server icon. */
+    setIcon: (serverID: string, icon: Uint8Array) => Promise<Server>;
+    /** Changes a server's display name. */
+    update: (serverID: string, name: string) => Promise<Server>;
 }
 
 /**
@@ -1458,6 +1476,8 @@ export class Client {
          * @returns The Channel object, or null.
          */
         retrieveByID: this.getChannelByID.bind(this),
+        /** Changes a channel's display name. */
+        update: this.updateChannel.bind(this),
         /**
          * Retrieves a channel's userlist.
          * @param channelID - The channel to retrieve the userlist for.
@@ -1613,6 +1633,7 @@ export class Client {
     public moderation: Moderation = {
         fetchPermissionList: this.fetchPermissionList.bind(this),
         kick: this.kickUser.bind(this),
+        setRole: this.setServerMemberRole.bind(this),
     };
 
     /**
@@ -1673,7 +1694,9 @@ export class Client {
          * @param serverID - The server to delete.
          */
         delete: this.deleteServer.bind(this),
+        iconURL: this.getServerIconURL.bind(this),
         leave: this.leaveServer.bind(this),
+        removeIcon: this.removeServerIcon.bind(this),
         /**
          * Retrieves all servers the logged in user has access to.
          *
@@ -1687,6 +1710,8 @@ export class Client {
          */
         retrieveByID: this.getServerByID.bind(this),
         retrieveWithChannels: this.getServerChannelBootstrap.bind(this),
+        setIcon: this.uploadServerIcon.bind(this),
+        update: this.updateServer.bind(this),
     };
 
     /**
@@ -2855,7 +2880,9 @@ export class Client {
 
     private async createServer(name: string): Promise<Server> {
         const res = await this.http.post(
-            this.getHost() + "/server/" + globalThis.btoa(name),
+            this.getHost() + "/servers",
+            msgpack.encode({ name }),
+            { headers: { "Content-Type": "application/msgpack" } },
         );
         return decodeHttpResponse(ServerCodec, res.data);
     }
@@ -3255,6 +3282,7 @@ export class Client {
             return [null, isHttpError(err) ? err : null];
         }
     }
+
     private async fetchUserDeviceListOnce(userID: string): Promise<Device[]> {
         if (this.isManualCloseInFlight()) {
             return [];
@@ -3334,7 +3362,6 @@ export class Client {
         this.http.defaults.headers.common.Authorization = `Bearer ${decoded.token}`;
         return decoded;
     }
-
     private async finishPasskeyRegistration(args: {
         name: string;
         requestID: string;
@@ -3778,6 +3805,10 @@ export class Client {
         return decodeHttpResponse(ServerChannelBootstrapCodec, res.data);
     }
 
+    private getServerIconURL(iconID: string): string {
+        return this.getHost() + "/server-icon/" + encodeURIComponent(iconID);
+    }
+
     private async getServerList(): Promise<Server[]> {
         const res = await this.http.get(
             this.getHost() + "/user/" + this.getUser().userID + "/servers",
@@ -3894,6 +3925,13 @@ export class Client {
                     }
                 }
                 break;
+            case "serverChange": {
+                const parsed = serverChangeNotifyData.safeParse(msg.data);
+                if (parsed.success) {
+                    this.emitter.emit("serverChange", parsed.data);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -5314,6 +5352,13 @@ export class Client {
         );
     }
 
+    private async removeServerIcon(serverID: string): Promise<Server> {
+        const res = await this.http.delete(
+            this.getHost() + "/server-icon/" + serverID,
+        );
+        return decodeHttpResponse(ServerCodec, res.data);
+    }
+
     private async replaceAccountPassword(payload: {
         currentPassword?: string;
         newPassword: string;
@@ -5720,8 +5765,8 @@ export class Client {
             a.deviceID.localeCompare(b.deviceID, "en"),
         );
 
-        let failCount = 0;
-        let lastErr: unknown;
+        const successfulOwnerIDs = new Set<string>();
+        const lastErrorByOwnerID = new Map<string, unknown>();
         for (
             let index = 0;
             index < stableDevices.length;
@@ -5732,15 +5777,19 @@ export class Client {
                 index + MAIL_FANOUT_CONCURRENCY,
             );
             const results = await Promise.all(
-                batch.map(async (device): Promise<undefined | unknown> => {
+                batch.map(async (device) => {
                     const ownerRecord =
                         device.owner === myUserID
                             ? this.getUser()
                             : this.userRecords[device.owner];
                     if (!ownerRecord) {
-                        return new Error(
-                            `Missing owner record for device ${device.deviceID}.`,
-                        );
+                        return {
+                            device,
+                            error: new Error(
+                                `Missing owner record for device ${device.deviceID}.`,
+                            ),
+                            ok: false as const,
+                        };
                     }
                     try {
                         await this.sendMailWithRecovery(
@@ -5751,35 +5800,41 @@ export class Client {
                             mailID,
                             false,
                         );
-                        return undefined;
-                    } catch (e) {
-                        return e;
+                        return { device, ok: true as const };
+                    } catch (error: unknown) {
+                        return { device, error, ok: false as const };
                     }
                 }),
             );
             for (const result of results) {
-                if (result !== undefined) {
-                    lastErr = result;
-                    failCount += 1;
+                if (result.ok) {
+                    successfulOwnerIDs.add(result.device.owner);
+                } else {
+                    lastErrorByOwnerID.set(result.device.owner, result.error);
                 }
-            }
-            if (failCount === stableDevices.length) {
-                break;
             }
         }
 
-        if (failCount === stableDevices.length) {
-            throw lastErr instanceof Error
-                ? lastErr
-                : new Error(String(lastErr));
-        }
-        if (failCount > 0) {
-            const partial = new Error(
-                `Group message failed to reach ${String(failCount)} of ` +
-                    `${String(stableDevices.length)} peer device(s).`,
+        const requiredOwnerIDs =
+            peerUserIDs.length > 0 ? peerUserIDs : [myUserID];
+        const unreachableOwnerIDs = requiredOwnerIDs.filter(
+            (ownerID) => !successfulOwnerIDs.has(ownerID),
+        );
+        if (unreachableOwnerIDs.length > 0) {
+            const lastError = lastErrorByOwnerID.get(
+                unreachableOwnerIDs.at(-1) ?? "",
             );
-            partial.cause = lastErr;
-            throw partial;
+            if (
+                unreachableOwnerIDs.length === requiredOwnerIDs.length &&
+                lastError instanceof Error
+            ) {
+                throw lastError;
+            }
+            const deliveryError = new Error(
+                `Message could not be delivered to ${String(unreachableOwnerIDs.length)} channel member(s).`,
+            );
+            deliveryError.cause = lastError;
+            throw deliveryError;
         }
     }
 
@@ -6030,6 +6085,7 @@ export class Client {
             }
             let lastErr: unknown;
             let failCount = 0;
+            let successCount = 0;
             // One logical DM fan-outs to multiple recipient devices. Reuse a
             // single mailID so local/UI dedupe treats it as one message.
             const messageMailID = uuid.v4();
@@ -6093,28 +6149,20 @@ export class Client {
                     if (result !== undefined) {
                         lastErr = result;
                         failCount += 1;
+                    } else {
+                        successCount += 1;
                     }
                 }
                 if (failCount === deviceList.length) {
                     break;
                 }
             }
-            if (failCount > 0) {
+            if (successCount === 0) {
                 const base =
                     lastErr instanceof Error
                         ? lastErr
                         : new Error(String(lastErr));
-                if (failCount === deviceList.length) {
-                    throw base;
-                }
-                // Multi-device: do not “succeed” when only one device of several got mail —
-                // callers and tests have no per-device result and the other copy times out.
-                const partial = new Error(
-                    `Direct message failed to reach ${String(failCount)} of ` +
-                        `${String(deviceList.length)} peer device(s) (X3DH/post).`,
-                );
-                partial.cause = base;
-                throw partial;
+                throw base;
             }
             if (
                 userID !== this.getUser().userID &&
@@ -6158,6 +6206,18 @@ export class Client {
             },
         );
         return decodeHttpResponse(AccountEntitlementsCodec, res.data);
+    }
+
+    private async setServerMemberRole(
+        permissionID: string,
+        powerLevel: 0 | 50 | 100,
+    ): Promise<Permission> {
+        const res = await this.http.patch(
+            this.getHost() + "/permission/" + permissionID,
+            msgpack.encode({ powerLevel }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(PermissionCodec, res.data);
     }
 
     private setUser(user: User): void {
@@ -6238,6 +6298,30 @@ export class Client {
                 headers: { "Content-Type": "application/msgpack" },
             },
         );
+    }
+
+    private async updateChannel(
+        channelID: string,
+        name: string,
+    ): Promise<Channel> {
+        const res = await this.http.patch(
+            this.getHost() + "/channel/" + channelID,
+            msgpack.encode({ name }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(ChannelCodec, res.data);
+    }
+
+    private async updateServer(
+        serverID: string,
+        name: string,
+    ): Promise<Server> {
+        const res = await this.http.patch(
+            this.getHost() + "/server/" + serverID,
+            msgpack.encode({ name }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(ServerCodec, res.data);
     }
 
     private async uploadAvatar(avatar: Uint8Array): Promise<void> {
@@ -6354,5 +6438,53 @@ export class Client {
         } catch (_err: unknown) {
             return null;
         }
+    }
+
+    private async uploadServerIcon(
+        serverID: string,
+        icon: Uint8Array,
+    ): Promise<Server> {
+        const canUseMultipart =
+            typeof FormData !== "undefined" &&
+            (() => {
+                try {
+                    void new Blob([new Uint8Array([1, 2, 3])]);
+                    return true;
+                } catch {
+                    return false;
+                }
+            })();
+
+        if (canUseMultipart) {
+            const payload = new FormData();
+            payload.set("icon", new Blob([new Uint8Array(icon)]));
+            const res = await this.http.post(
+                this.getHost() + "/server-icon/" + serverID,
+                payload,
+                {
+                    headers: { "Content-Type": "multipart/form-data" },
+                    onUploadProgress: (progressEvent) => {
+                        const { loaded, total = 0 } = progressEvent;
+                        this.emitter.emit("fileProgress", {
+                            direction: "upload",
+                            loaded,
+                            progress: Math.round(
+                                (loaded * 100) / (progressEvent.total ?? 1),
+                            ),
+                            token: serverID,
+                            total,
+                        });
+                    },
+                },
+            );
+            return decodeHttpResponse(ServerCodec, res.data);
+        }
+
+        const res = await this.http.post(
+            this.getHost() + "/server-icon/" + serverID + "/json",
+            msgpack.encode({ file: XUtils.encodeBase64(icon) }),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+        return decodeHttpResponse(ServerCodec, res.data);
     }
 }

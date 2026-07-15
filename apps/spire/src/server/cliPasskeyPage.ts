@@ -150,6 +150,13 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
         "use strict";
 
         var params = new URLSearchParams(window.location.hash.slice(1));
+        if (window.location.hash) {
+            window.history.replaceState(
+                null,
+                "",
+                window.location.pathname + window.location.search,
+            );
+        }
         var action = document.getElementById("action");
         var statusEl = document.getElementById("status");
         var titleEl = document.getElementById("title");
@@ -158,6 +165,7 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
         var startupError = null;
         var apiBase = window.location.origin;
         var busy = false;
+        var completed = false;
 
         try {
             apiBase = resolveTrustedApiBase(params.get("api"));
@@ -165,11 +173,16 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             startupError = err;
         }
 
-        if (mode === "register") {
+        if (mode === "register" || mode === "register-handoff") {
             titleEl.textContent = "Create a passkey for Vex.";
             copyEl.textContent = "This adds a passkey to your Vex account.";
             action.textContent = "Create passkey";
             setStatus("Ready to create passkey.");
+        } else if (mode === "authenticate-handoff") {
+            titleEl.textContent = "Continue signing in to Vex.";
+            copyEl.textContent =
+                "Use your passkey here, then return to the Vex desktop app.";
+            setStatus("Ready to verify passkey.");
         } else {
             setStatus("Ready to verify passkey.");
         }
@@ -190,7 +203,7 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
 
         function setBusy(nextBusy) {
             busy = nextBusy;
-            action.disabled = nextBusy;
+            action.disabled = nextBusy || completed;
         }
 
         function apiUrl(path) {
@@ -271,12 +284,19 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                 }
                 if (mode === "register") {
                     await registerPasskey();
+                } else if (mode === "register-handoff") {
+                    await registerPasskeyWithHandoff();
+                } else if (mode === "authenticate-handoff") {
+                    await authenticatePasskeyWithHandoff();
                 } else {
                     await recoverWithPasskey();
                 }
             } catch (err) {
                 setStatus(errorMessage(err), "error");
-                action.textContent = mode === "register" ? "Try again" : "Retry passkey";
+                action.textContent =
+                    mode === "register" || mode === "register-handoff"
+                        ? "Try again"
+                        : "Retry passkey";
             } finally {
                 setBusy(false);
             }
@@ -297,15 +317,8 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
                 body: { name: name },
                 token: token,
             });
-            var credentialOptions = makeCreationOptions(begin.options);
-
             setStatus("Waiting for browser passkey prompt...");
-            var credential = await navigator.credentials.create({
-                publicKey: credentialOptions,
-            });
-            if (!credential) {
-                throw new Error("No passkey was created.");
-            }
+            var credential = await createPasskeyCredential(begin.options);
 
             setStatus("Saving passkey...");
             await apiRequest("/user/" + encodeURIComponent(userID) + "/passkeys/register/finish", {
@@ -319,6 +332,90 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             setStatus("Passkey saved. Return to the Vex CLI.", "success");
             titleEl.textContent = "Passkey saved.";
             copyEl.textContent = "The CLI can finish connecting now.";
+            completed = true;
+            action.textContent = "Done";
+        }
+
+        async function registerPasskeyWithHandoff() {
+            var token = requiredParam("token");
+            var requestID = requiredParam("request");
+
+            setStatus("Requesting a one-time passkey challenge...");
+            var begin = await apiRequest(
+                "/auth/passkey/browser-registration/" +
+                    encodeURIComponent(requestID) +
+                    "/begin",
+                { body: { token: token } },
+            );
+
+            setStatus("Waiting for browser passkey prompt...");
+            var credential = await createPasskeyCredential(begin.options);
+
+            setStatus("Saving passkey...");
+            await apiRequest(
+                "/auth/passkey/browser-registration/" +
+                    encodeURIComponent(requestID) +
+                    "/finish",
+                {
+                    body: {
+                        response: registrationResponseJSON(credential),
+                        token: token,
+                    },
+                },
+            );
+            setStatus("Passkey saved. You can close this page.", "success");
+            titleEl.textContent = "Passkey saved.";
+            copyEl.textContent = "Vex has updated your account.";
+            completed = true;
+            action.textContent = "Done";
+        }
+
+        async function createPasskeyCredential(options) {
+            var credential = await navigator.credentials.create({
+                publicKey: makeCreationOptions(options),
+            });
+            if (!credential) {
+                throw new Error("No passkey was created.");
+            }
+            return credential;
+        }
+
+        async function authenticatePasskeyWithHandoff() {
+            var token = requiredParam("token");
+            var requestID = requiredParam("request");
+
+            setStatus("Requesting a one-time passkey challenge...");
+            var begin = await apiRequest(
+                "/auth/passkey/browser-authentication/" +
+                    encodeURIComponent(requestID) +
+                    "/begin",
+                { body: { token: token } },
+            );
+
+            setStatus("Waiting for browser passkey prompt...");
+            var credential = await navigator.credentials.get({
+                publicKey: makeRequestOptions(begin.options),
+            });
+            if (!credential) {
+                throw new Error("No passkey was returned.");
+            }
+
+            setStatus("Returning verification to Vex...");
+            await apiRequest(
+                "/auth/passkey/browser-authentication/" +
+                    encodeURIComponent(requestID) +
+                    "/finish",
+                {
+                    body: {
+                        response: authenticationResponseJSON(credential),
+                        token: token,
+                    },
+                },
+            );
+            setStatus("Passkey verified. You can close this page.", "success");
+            titleEl.textContent = "Passkey verified.";
+            copyEl.textContent = "Return to Vex to finish signing in.";
+            completed = true;
             action.textContent = "Done";
         }
 
@@ -371,6 +468,7 @@ const CLI_PASSKEY_PAGE = `<!doctype html>
             setStatus("CLI device recovered. Return to the Vex CLI.", "success");
             titleEl.textContent = "Device signed in.";
             copyEl.textContent = "The CLI can finish connecting now.";
+            completed = true;
             action.textContent = "Done";
         }
 
