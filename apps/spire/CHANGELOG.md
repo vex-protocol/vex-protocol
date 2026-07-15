@@ -1,5 +1,18 @@
 # @vex-chat/spire
 
+## 4.0.0
+
+### Major Changes
+
+- [#272](https://github.com/vex-protocol/vex-protocol/pull/272) [`09d23d4`](https://github.com/vex-protocol/vex-protocol/commit/09d23d4b3dab801b324780a30c2080eddbd4fcf4) Thanks [@yuki111888](https://github.com/yuki111888)! - Harden authentication, key handling, and server authorization for the greenfield protocol. Passwords use Argon2id server-side with a modern length and blocklist policy, current-password changes and fresh-passkey resets have explicit proof requirements, bearer sessions are scope-bound and shorter lived, passkeys require user verification, device clusters are bounded and revalidated, and legacy credential and wire fallbacks are removed. The CLI now requests explicit password-backed enrollment for new devices and redacts unexpected command failures.
+
+    Domain-separate X3DH prekey signatures, derive independent message encryption and authentication subkeys, use fresh local-storage nonces with purpose-separated at-rest keys, validate encrypted key envelopes before PBKDF2, run async key wrapping through native Web Crypto where available, redact credentials from HTTP errors, and update vulnerable production dependencies.
+
+### Patch Changes
+
+- Updated dependencies [[`09d23d4`](https://github.com/vex-protocol/vex-protocol/commit/09d23d4b3dab801b324780a30c2080eddbd4fcf4)]:
+    - @vex-chat/crypto@11.0.0
+
 ## 3.0.1
 
 ### Patch Changes
