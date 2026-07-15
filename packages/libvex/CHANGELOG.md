@@ -1,5 +1,15 @@
 # @vex-chat/libvex
 
+## 9.1.0
+
+### Minor Changes
+
+- [#276](https://github.com/vex-protocol/vex-protocol/pull/276) [`66bd0f7`](https://github.com/vex-protocol/vex-protocol/commit/66bd0f7f40aff5ea14c88115eb7c42837b218634) Thanks [@yuki111888](https://github.com/yuki111888)! - Add live group and channel management, immutable group icons, Unicode-safe group creation, protected role changes, and last-owner and last-channel safeguards.
+
+### Patch Changes
+
+- [#276](https://github.com/vex-protocol/vex-protocol/pull/276) [`66bd0f7`](https://github.com/vex-protocol/vex-protocol/commit/66bd0f7f40aff5ea14c88115eb7c42837b218634) Thanks [@yuki111888](https://github.com/yuki111888)! - Persist ratchet session updates with an atomic SQLite upsert and treat delivery to any active device for a recipient as a successful multi-device send.
+
 ## 9.0.0
 
 ### Major Changes

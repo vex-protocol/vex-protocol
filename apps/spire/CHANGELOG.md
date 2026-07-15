@@ -1,5 +1,15 @@
 # @vex-chat/spire
 
+## 4.1.0
+
+### Minor Changes
+
+- [#276](https://github.com/vex-protocol/vex-protocol/pull/276) [`66bd0f7`](https://github.com/vex-protocol/vex-protocol/commit/66bd0f7f40aff5ea14c88115eb7c42837b218634) Thanks [@yuki111888](https://github.com/yuki111888)! - Add live group and channel management, immutable group icons, Unicode-safe group creation, protected role changes, and last-owner and last-channel safeguards.
+
+### Patch Changes
+
+- [#276](https://github.com/vex-protocol/vex-protocol/pull/276) [`66bd0f7`](https://github.com/vex-protocol/vex-protocol/commit/66bd0f7f40aff5ea14c88115eb7c42837b218634) Thanks [@yuki111888](https://github.com/yuki111888)! - Allow desktop clients with custom WebView origins to register and authenticate with passkeys through short-lived, single-purpose handoffs to Spire's first-party HTTPS WebAuthn page.
+
 ## 4.0.0
 
 ### Major Changes
