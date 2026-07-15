@@ -535,9 +535,9 @@ HTTP hardening in code:
 
 Current caveats:
 
-- CORS reflects any origin by default outside production when `CORS_ORIGINS` is
-  unset. In `NODE_ENV=production`, browser CORS is disabled unless an explicit
-  `CORS_ORIGINS` allowlist is configured.
+- Outside production, an unset `CORS_ORIGINS` permits only localhost, loopback,
+  Tauri, and Capacitor origins. In `NODE_ENV=production`, browser CORS is
+  disabled unless an explicit `CORS_ORIGINS` allowlist is configured.
 - Spire accepts websocket upgrades and authenticates after connection.
 - TLS is not enforced inside Spire.
 - JWT revocation is expiry-based; there is no token revocation list.

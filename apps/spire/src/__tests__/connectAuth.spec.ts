@@ -136,6 +136,59 @@ describe("device connect auth", () => {
             await close(server);
         }
     });
+
+    it("limits the default development CORS policy to local app origins", async () => {
+        const originalCorsOrigins = process.env["CORS_ORIGINS"];
+        delete process.env["CORS_ORIGINS"];
+        const app = express();
+        initApp(
+            app,
+            {} as Database,
+            () => false,
+            xSignKeyPair(),
+            () => {},
+        );
+        const server = await listen(app);
+
+        try {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+                throw new Error("Expected TCP listener.");
+            }
+            const url = `http://127.0.0.1:${String(address.port)}/server/server-a`;
+            const preflightHeaders = {
+                "Access-Control-Request-Method": "GET",
+            };
+            const blocked = await fetch(url, {
+                headers: {
+                    ...preflightHeaders,
+                    Origin: "https://attacker.example",
+                },
+                method: "OPTIONS",
+            });
+            const allowed = await fetch(url, {
+                headers: {
+                    ...preflightHeaders,
+                    Origin: "http://localhost:5180",
+                },
+                method: "OPTIONS",
+            });
+
+            expect(
+                blocked.headers.get("access-control-allow-origin"),
+            ).toBeNull();
+            expect(allowed.headers.get("access-control-allow-origin")).toBe(
+                "http://localhost:5180",
+            );
+        } finally {
+            if (originalCorsOrigins === undefined) {
+                delete process.env["CORS_ORIGINS"];
+            } else {
+                process.env["CORS_ORIGINS"] = originalCorsOrigins;
+            }
+            await close(server);
+        }
+    });
 });
 
 function close(server: Server): Promise<void> {

@@ -968,9 +968,7 @@ async function waitForDeviceApproval(
     }
 
     const code = matchingCodeStringForSignKey(client.getKeys().public);
-    console.log(
-        `${color(ROOT_ACCENT, "device approval required")} ${color("dim", `request=${pending.requestID}`)}`,
-    );
+    console.log(color(ROOT_ACCENT, "device approval required"));
     console.log(
         `${color("dim", "matching code")} ${formatDeviceApprovalCode(code)}`,
     );
@@ -4603,12 +4601,7 @@ main()
     .then(() => {
         process.exit(0);
     })
-    .catch((err) => {
-        console.error(
-            color(
-                ROOT_ACCENT,
-                err instanceof Error ? err.message : String(err),
-            ),
-        );
+    .catch(() => {
+        console.error(color(ROOT_ACCENT, "Vex command failed."));
         process.exit(1);
     });

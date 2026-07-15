@@ -92,6 +92,16 @@ const emojiUpload = multer({
     limits: { fields: 3, files: 1, fileSize: 256_000, parts: 4 },
 });
 
+const DEVELOPMENT_CORS_ORIGINS: Array<RegExp | string> = [
+    /^https?:\/\/localhost(?::\d{1,5})?$/,
+    /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
+    /^https?:\/\/\[::1\](?::\d{1,5})?$/,
+    "capacitor://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+];
+
 const jwtUserPayload = z.object({
     exp: z.number().optional(),
     scope: z.literal("user"),
@@ -358,7 +368,7 @@ export const initApp = (
                     ? corsOrigins
                     : process.env["NODE_ENV"] === "production"
                       ? false
-                      : true,
+                      : DEVELOPMENT_CORS_ORIGINS,
         }),
     );
 
