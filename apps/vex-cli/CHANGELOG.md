@@ -1,5 +1,12 @@
 # @vex-chat/cli
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [[`fa3fab0`](https://github.com/vex-protocol/vex-protocol/commit/fa3fab0a60d91996994cd9785a1faa0c8392947c)]:
+    - @vex-chat/libvex@10.0.0
+
 ## 0.6.0
 
 ### Minor Changes
