@@ -8,6 +8,17 @@ import { z } from "zod/v4";
 
 import { uint8 } from "./common.js";
 
+/** Maximum decoded encrypted-file size accepted by either upload transport. */
+export const MAX_FILE_UPLOAD_BYTES: number = 25 * 1024 * 1024;
+
+/** Maximum base64 length for an encrypted file at the decoded upload limit. */
+export const MAX_FILE_UPLOAD_BASE64_LENGTH: number =
+    4 * Math.ceil(MAX_FILE_UPLOAD_BYTES / 3);
+
+/** Maximum encoded fallback request size, including JSON or msgpack metadata. */
+export const MAX_FILE_UPLOAD_ENCODED_BODY_BYTES: number =
+    MAX_FILE_UPLOAD_BASE64_LENGTH + 4 * 1024;
+
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
 /** Custom server emoji. */
@@ -22,8 +33,6 @@ export interface FilePayload {
     file?: string | undefined;
     nonce: string;
     owner: string;
-    /** Legacy field from an older signed-upload shape. Not required by Spire. */
-    signed?: string | undefined;
 }
 
 /** File response with metadata and data. */
@@ -44,11 +53,18 @@ export interface FileSQL {
 /** File upload payload (HTTP). */
 export const FilePayloadSchema: z.ZodType<FilePayload> = z
     .object({
-        file: z.string().optional().describe("Optional file ID for updates"),
-        nonce: z.string().describe("Encryption nonce (hex)"),
-        owner: z.string().describe("File owner user ID"),
-        signed: z.string().optional().describe("Legacy signed file data"),
+        file: z
+            .string()
+            .max(MAX_FILE_UPLOAD_BASE64_LENGTH)
+            .optional()
+            .describe("Optional base64-encoded encrypted file"),
+        nonce: z
+            .string()
+            .regex(/^[0-9a-fA-F]{48}$/)
+            .describe("Encryption nonce (hex)"),
+        owner: z.string().min(1).max(128).describe("Owning device ID"),
     })
+    .strict()
     .describe("File upload payload");
 
 const _fileSQLSchema = z.object({

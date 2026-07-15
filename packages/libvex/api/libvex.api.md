@@ -4,12 +4,26 @@
 
 ```ts
 
+import { AccountEntitlements } from '@vex-chat/types';
+import { AccountTier } from '@vex-chat/types';
+import { AppleTransactionVerificationRequest } from '@vex-chat/types';
+import { BillingAccountState } from '@vex-chat/types';
+import { BillingProduct } from '@vex-chat/types';
+import { BillingSubscription } from '@vex-chat/types';
+import { BillingSubscriptionStatus } from '@vex-chat/types';
+import { CallAction } from '@vex-chat/types';
+import { CallEvent } from '@vex-chat/types';
+import { CallParticipant } from '@vex-chat/types';
+import { CallSession } from '@vex-chat/types';
+import { CallSignalPayload } from '@vex-chat/types';
 import { Channel } from '@vex-chat/types';
 import { Device } from '@vex-chat/types';
 import type { Emoji } from '@vex-chat/types';
 import type { EventEmitter } from 'eventemitter3';
 import type { FileResponse } from '@vex-chat/types';
 import type { FileSQL } from '@vex-chat/types';
+import { GooglePurchaseVerificationRequest } from '@vex-chat/types';
+import { IceServerConfig } from '@vex-chat/types';
 import { Invite } from '@vex-chat/types';
 import { Passkey } from '@vex-chat/types';
 import { Permission } from '@vex-chat/types';
@@ -18,6 +32,52 @@ import { Server } from '@vex-chat/types';
 import { ServerChannelBootstrap } from '@vex-chat/types';
 import type { SessionSQL } from '@vex-chat/types';
 import type { z } from 'zod/v4';
+
+export { AccountEntitlements }
+
+export { AccountTier }
+
+export { AppleTransactionVerificationRequest }
+
+export { BillingAccountState }
+
+export { BillingProduct }
+
+export { BillingSubscription }
+
+export { BillingSubscriptionStatus }
+
+export { CallAction }
+
+export { CallEvent }
+
+export { CallParticipant }
+
+// @public
+export interface Calls {
+    // (undocumented)
+    accept: (callID: string, signal?: CallSignalPayload) => Promise<CallEvent>;
+    // (undocumented)
+    active: () => Promise<CallSession[]>;
+    // (undocumented)
+    cancel: (callID: string) => Promise<CallEvent>;
+    // (undocumented)
+    hangup: (callID: string) => Promise<CallEvent>;
+    // (undocumented)
+    ice: (callID: string, signal: CallSignalPayload) => Promise<CallEvent>;
+    // (undocumented)
+    iceServers: () => Promise<IceServerConfig[]>;
+    // (undocumented)
+    reject: (callID: string) => Promise<CallEvent>;
+    // (undocumented)
+    signal: (callID: string, signal: CallSignalPayload) => Promise<CallEvent>;
+    // (undocumented)
+    startDM: (recipientUserID: string, signal?: CallSignalPayload) => Promise<CallEvent>;
+}
+
+export { CallSession }
+
+export { CallSignalPayload }
 
 export { Channel }
 
@@ -35,6 +95,9 @@ export function clampLocalMessageRetentionDays(days: null | number | undefined):
 
 // @public (undocumented)
 export class Client {
+    // Warning: (ae-forgotten-export) The symbol "Billing" needs to be exported by the entry point index.d.ts
+    billing: Billing;
+    calls: Calls;
     channels: Channels;
     close(muteEvent?: boolean): Promise<void>;
     connect(): Promise<void>;
@@ -48,6 +111,7 @@ export class Client {
     static encryptKeyData: (password: string, keyToSave: string, iterationOverride?: number) => Uint8Array;
     // (undocumented)
     static encryptKeyDataAsync: (password: string, keyToSave: string, iterationOverride?: number) => Promise<Uint8Array>;
+    entitlements: Entitlements;
     files: Files;
     static generateSecretKey(): string;
     static generateSecretKeyAsync(): Promise<string>;
@@ -73,9 +137,11 @@ export class Client {
     permissions: Permissions_2;
     static randomUsername(): string;
     reconnectWebsocket(): Promise<void>;
-    register(username?: string, password?: string): Promise<[null | User, Error | null]>;
+    register(username: string, password: string): Promise<[null | User, Error | null]>;
     // (undocumented)
     removeAllListeners(event?: keyof ClientEvents): this;
+    requestDeviceEnrollment(username: string, password: string): Promise<[null | User, Error | null]>;
+    requestDeviceEnrollmentWithPasskey(username: string): Promise<[null | User, Error | null]>;
     // (undocumented)
     sending: Map<string, Device>;
     servers: Servers;
@@ -94,6 +160,7 @@ export class Client {
 
 // @public
 export interface ClientEvents {
+    call: (event: CallEvent) => void;
     closed: () => void;
     connected: () => void;
     decryptingMail: () => void;
@@ -228,6 +295,14 @@ export interface EncryptedFileAttachmentReference {
     key: string;
 }
 
+// @public (undocumented)
+export interface Entitlements {
+    retrieve: () => Promise<AccountEntitlements>;
+    setDevTier: (tier: AccountTier, options?: {
+        expiresAt?: null | string;
+    }) => Promise<AccountEntitlements>;
+}
+
 // @public
 export interface FileProgress {
     direction: "download" | "upload";
@@ -245,6 +320,8 @@ export interface Files {
     create: (file: Uint8Array) => Promise<[FileSQL, string]>;
     retrieve: (fileID: string, key: string) => Promise<FileResponse | null>;
 }
+
+export { GooglePurchaseVerificationRequest }
 
 // @public (undocumented)
 export class HttpError extends Error {
@@ -295,6 +372,8 @@ export interface HttpResponse<T = ArrayBuffer> {
     readonly statusText: string;
 }
 
+export { IceServerConfig }
+
 export { Invite }
 
 // @public (undocumented)
@@ -336,6 +415,7 @@ export const MAX_LOCAL_MESSAGE_RETENTION_DAYS = 30;
 
 // @public (undocumented)
 export interface Me {
+    changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
     device: () => Device;
     setAvatar: (avatar: Uint8Array) => Promise<void>;
     user: () => User;
@@ -688,6 +768,7 @@ export interface Passkeys {
     listDevices: () => Promise<Device[]>;
     recoverDeviceRequest: (requestID: string) => Promise<Device>;
     rejectDeviceRequest: (requestID: string) => Promise<void>;
+    resetPassword: (newPassword: string) => Promise<void>;
 }
 
 // @public (undocumented)
@@ -703,7 +784,7 @@ export interface PendingDeviceRegistration {
     requestID: string;
     // (undocumented)
     status: "pending_approval";
-    userID?: string | undefined;
+    userID: string;
 }
 
 // @public (undocumented)

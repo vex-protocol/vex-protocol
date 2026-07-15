@@ -68,7 +68,9 @@ import {
     xKDF,
     XKeyConvert,
     xMakeNonce,
+    xMessageKeySubkeys,
     xMnemonic,
+    xPreKeySignaturePayload,
     xRandomBytes,
     xSecretboxAsync,
     xSecretboxOpenAsync,
@@ -81,6 +83,8 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
+    ACCOUNT_PASSWORD_MIN_LENGTH,
     CallEventSchema,
     CallSessionSchema,
     IceServerConfigSchema,
@@ -113,7 +117,6 @@ import {
     decodeFipsInitialExtraV1,
     encodeFipsInitialExtraV1,
     fipsP256AdFromIdentityPubs,
-    fipsP256PreKeySignPayload,
     isFipsInitialExtraV1,
 } from "./utils/fipsMailExtra.js";
 import {
@@ -281,6 +284,23 @@ function libvexDebugLevel(): "debug" | "trace" {
     } catch {
         return "debug";
     }
+}
+
+function registrationPasswordError(password: string): Error | null {
+    if (
+        password.trim().length === 0 ||
+        password.length < ACCOUNT_PASSWORD_MIN_LENGTH
+    ) {
+        return new Error(
+            `Password must be at least ${String(ACCOUNT_PASSWORD_MIN_LENGTH)} characters.`,
+        );
+    }
+    if (password.length > ACCOUNT_PASSWORD_MAX_LENGTH) {
+        return new Error(
+            `Password must be at most ${String(ACCOUNT_PASSWORD_MAX_LENGTH)} characters.`,
+        );
+    }
+    return null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -504,9 +524,8 @@ export interface Devices {
     }) => Promise<void>;
     /**
      * Approves a pending device registration request as the current device.
-     * Servers with required passkeys expect the current bearer token to be a
-     * fresh passkey session while the current device token identifies the
-     * approving device.
+     * The server verifies a signature from this approved device before
+     * admitting the pending device into the account cluster.
      */
     approveRequest: (requestID: string) => Promise<Device>;
     /**
@@ -547,10 +566,8 @@ export interface Devices {
      * the request's private signing key by signing the challenge issued by
      * the server in the original 202 response.
      *
-     * @param args.requestID - The requestID returned by `/register` (or thrown
-     *   inside {@link DeviceApprovalRequiredError}).
-     * @param args.challenge - The hex challenge issued in the same 202
-     *   response (or {@link DeviceApprovalRequiredError.challenge}).
+     * @param args - The request ID and hex challenge returned by `/register`
+     *   (or carried by {@link DeviceApprovalRequiredError}).
      * @returns The current {@link PendingDeviceRequest} or `null` if the
      *   server no longer has a record of it.
      */
@@ -702,6 +719,11 @@ export interface Keys {
  * @ignore
  */
 export interface Me {
+    /** Replace the account password after proving the current password. */
+    changePassword: (
+        currentPassword: string,
+        newPassword: string,
+    ) => Promise<void>;
     /** Returns metadata for the currently authenticated device. */
     device: () => Device;
     /** Uploads and sets a new avatar image for the current user. */
@@ -831,7 +853,7 @@ export interface Passkeys {
         options: any;
         requestID: string;
     }>;
-    /** Remove a passkey from the account. */
+    /** Remove a passkey using the account's approved-device session. */
     delete: (passkeyID: string) => Promise<void>;
     /** Delete one of the account's devices using the passkey session. */
     deleteDevice: (deviceID: string) => Promise<void>;
@@ -868,6 +890,8 @@ export interface Passkeys {
     recoverDeviceRequest: (requestID: string) => Promise<Device>;
     /** Reject a pending device-enrollment request using the passkey session. */
     rejectDeviceRequest: (requestID: string) => Promise<void>;
+    /** Replace a forgotten password using this fresh passkey session. */
+    resetPassword: (newPassword: string) => Promise<void>;
 }
 
 export type PendingDeviceApprovalStatus =
@@ -881,13 +905,8 @@ export interface PendingDeviceRegistration {
     expiresAt: string;
     requestID: string;
     status: "pending_approval";
-    /**
-     * Existing user's ID. Optional for backward compat with older
-     * servers that don't include it; when present, the new device can
-     * fetch the public avatar from `/avatar/:userID` (no auth required)
-     * to power an "is this you?" confirmation.
-     */
-    userID?: string | undefined;
+    /** Existing user's ID used to render the account confirmation step. */
+    userID: string;
 }
 
 export interface PendingDeviceRequest {
@@ -1526,6 +1545,7 @@ export class Client {
      * Helpers for information/actions related to the currently authenticated account.
      */
     public me: Me = {
+        changePassword: this.changePassword.bind(this),
         /**
          * Retrieves current device details.
          *
@@ -1618,6 +1638,7 @@ export class Client {
         listDevices: this.passkeyListDevices.bind(this),
         recoverDeviceRequest: this.passkeyRecoverDeviceRequest.bind(this),
         rejectDeviceRequest: this.passkeyRejectDeviceRequest.bind(this),
+        resetPassword: this.resetPasswordWithPasskey.bind(this),
     };
 
     /**
@@ -1730,7 +1751,7 @@ export class Client {
 
     private readonly decryptFailureCounts = new Map<string, number>();
 
-    private device?: Device;
+    private device: Device | undefined;
 
     private deviceRecords: Record<string, Device> = {};
     // ── Event subscription (composition over inheritance) ───────────────
@@ -1787,7 +1808,7 @@ export class Client {
     private socket: WebSocketLike;
     private token: null | string = null;
 
-    private user?: User;
+    private user: undefined | User;
 
     private userRecords: Record<string, User> = {};
     private xKeyRing?: XKeyRing;
@@ -1914,14 +1935,32 @@ export class Client {
 
         let resolvedStorage = storage;
         if (!resolvedStorage) {
-            const { createNodeStorage } = await import("./storage/node.js");
+            const nodeStorageModule = "./storage/node.js";
+            const isNodeStorageModule = (
+                value: unknown,
+            ): value is {
+                createNodeStorage: (
+                    dbPath: string,
+                    atRestAesKey: Uint8Array,
+                ) => Storage;
+            } =>
+                typeof value === "object" &&
+                value !== null &&
+                "createNodeStorage" in value &&
+                typeof value.createNodeStorage === "function";
+            const nodeStorage: unknown = await import(
+                /* @vite-ignore */ nodeStorageModule
+            );
+            if (!isNodeStorageModule(nodeStorage)) {
+                throw new Error("Node storage adapter is unavailable.");
+            }
             const dbFileName = options?.inMemoryDb
                 ? ":memory:"
                 : XUtils.encodeHex(signKeys.publicKey) + ".sqlite";
             const dbPath = options?.dbFolder
                 ? options.dbFolder + "/" + dbFileName
                 : dbFileName;
-            resolvedStorage = createNodeStorage(dbPath, atRestAes);
+            resolvedStorage = nodeStorage.createNodeStorage(dbPath, atRestAes);
         }
 
         await resolvedStorage.init();
@@ -2292,10 +2331,35 @@ export class Client {
     }
 
     /**
-     * Logs out the current authenticated session from the server.
+     * Ends the local authenticated session and disconnects realtime transport.
+     * Spire access tokens are stateless, so local credential removal is the
+     * authoritative logout boundary.
      */
     public async logout(): Promise<void> {
-        await this.http.post(this.getHost() + "/goodbye");
+        try {
+            if (this.token) {
+                await this.http.post(this.getHost() + "/goodbye");
+            }
+        } catch {
+            // Logout must still complete locally when the server is unreachable.
+        } finally {
+            this.token = null;
+            this.user = undefined;
+            this.device = undefined;
+            delete this.http.defaults.headers.common.Authorization;
+            delete this.http.defaults.headers.common["X-Device-Token"];
+            this.autoReconnectEnabled = false;
+            this.postAuthVersion++;
+            if (this.reconnectTimer) {
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = null;
+            }
+            if (this.pingInterval) {
+                clearInterval(this.pingInterval);
+                this.pingInterval = null;
+            }
+            this.socket.close();
+        }
     }
 
     /** Removes an event listener. See {@link ClientEvents} for available events. */
@@ -2367,8 +2431,8 @@ export class Client {
     /**
      * Registers a new account on the server.
      *
-     * @param username - Optional username to register (must be unique when provided).
-     * @param password - Password for new accounts and existing-account device approval requests.
+     * @param username - Username to register.
+     * @param password - Password for the account and device approval request.
      * @returns `[user, null]` on success, `[null, error]` on failure.
      *
      * @example
@@ -2377,144 +2441,53 @@ export class Client {
      * ```
      */
     public async register(
-        username?: string,
-        password?: string,
+        username: string,
+        password: string,
     ): Promise<[null | User, Error | null]> {
-        while (!this.xKeyRing) {
-            await sleep(100);
+        const passwordError = registrationPasswordError(password);
+        if (passwordError) {
+            return [null, passwordError];
         }
-        const regKey = await this.getToken("register");
-        if (regKey) {
-            // Usernames are case-insensitive at the protocol level;
-            // lowercase before sending so the local SDK view matches
-            // what the server canonicalizes and persists.
-            const resolvedUsername =
-                username?.trim().length !== 0 && username !== undefined
-                    ? username.trim().toLowerCase()
-                    : Client.randomUsername();
-            const resolvedPassword =
-                password?.trim().length !== 0 && password !== undefined
-                    ? password
-                    : undefined;
-            const signKey = XUtils.encodeHex(this.signKeys.publicKey);
-            const signed = XUtils.encodeHex(
-                await xSignAsync(
-                    Uint8Array.from(uuid.parse(regKey.key)),
-                    this.signKeys.secretKey,
-                ),
-            );
-            const preKeyIndex = this.xKeyRing.preKeys.index;
-            const regMsg: RegistrationPayload = {
-                deviceName: this.options?.deviceName ?? "unknown",
-                preKey: XUtils.encodeHex(
-                    this.xKeyRing.preKeys.keyPair.publicKey,
-                ),
-                preKeyIndex,
-                preKeySignature: XUtils.encodeHex(
-                    this.xKeyRing.preKeys.signature,
-                ),
-                signed,
-                signKey,
-                username: resolvedUsername,
-            };
-            if (resolvedPassword !== undefined) {
-                regMsg.password = resolvedPassword;
-            }
-            try {
-                const res = await this.http.post(
-                    this.getHost() + "/register",
-                    msgpack.encode(regMsg),
-                    { headers: { "Content-Type": "application/msgpack" } },
-                );
-
-                // New key-cluster server response: { device, token, user }.
-                // Legacy response (still deployed in some environments): user only.
-                let didDecodeRegisterResponse = false;
-                let pendingApproval: null | PendingDeviceRegistration = null;
-                try {
-                    const { device, token, user } = decodeHttpResponse(
-                        RegisterResponseCodec,
-                        res.data,
-                    );
-                    this.device = device;
-                    this.setUser(user);
-                    this.token = token;
-                    this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
-                    didDecodeRegisterResponse = true;
-                } catch {
-                    // fall through to legacy decode path
-                }
-
-                if (!didDecodeRegisterResponse) {
-                    try {
-                        pendingApproval = decodeHttpResponse(
-                            RegisterPendingApprovalCodec,
-                            res.data,
-                        );
-                    } catch {
-                        // fall through to legacy decode path
-                    }
-                }
-
-                if (!didDecodeRegisterResponse) {
-                    if (pendingApproval !== null) {
-                        return [
-                            null,
-                            new DeviceApprovalRequiredError({
-                                challenge: pendingApproval.challenge,
-                                expiresAt: pendingApproval.expiresAt,
-                                requestID: pendingApproval.requestID,
-                                userID: pendingApproval.userID ?? null,
-                            }),
-                        ];
-                    }
-                    const legacyUser = decodeHttpResponse(UserCodec, res.data);
-                    this.setUser(legacyUser);
-
-                    // Legacy servers require /auth after /register to get a JWT.
-                    if (resolvedPassword === undefined) {
-                        return [
-                            null,
-                            new Error(
-                                "Legacy register succeeded without a password, so the SDK could not complete login.",
-                            ),
-                        ];
-                    }
-                    const loginResult = await this.login(
-                        resolvedUsername,
-                        resolvedPassword,
-                    );
-                    if (!loginResult.ok) {
-                        return [
-                            null,
-                            new Error(
-                                loginResult.error ??
-                                    "Legacy register succeeded but login failed.",
-                            ),
-                        ];
-                    }
-                }
-                return [this.getUser(), null];
-            } catch (err: unknown) {
-                if (isHttpError(err) && err.response) {
-                    return [
-                        null,
-                        new Error(spireErrorBodyMessage(err.response.data)),
-                    ];
-                }
-                return [
-                    null,
-                    err instanceof Error ? err : new Error(String(err)),
-                ];
-            }
-        } else {
-            return [null, new Error("Couldn't get regkey from server.")];
-        }
+        return this.registerAccountOrEnrollment(
+            username,
+            "create-account",
+            password,
+        );
     }
 
     removeAllListeners(event?: keyof ClientEvents): this {
         this.emitter.removeAllListeners(event);
         return this;
+    }
+
+    /**
+     * Requests approval for a new device using the account password. This
+     * enrollment flow never creates an account when the username is unknown.
+     */
+    public async requestDeviceEnrollment(
+        username: string,
+        password: string,
+    ): Promise<[null | User, Error | null]> {
+        const passwordError = registrationPasswordError(password);
+        if (passwordError) {
+            return [null, passwordError];
+        }
+        return this.registerAccountOrEnrollment(
+            username,
+            "enroll-device",
+            password,
+        );
+    }
+
+    /**
+     * Requests enrollment for this device after a successful passkey ceremony.
+     * This is not account registration: the passkey bearer must identify an
+     * existing account, and the server returns a pending device request.
+     */
+    public async requestDeviceEnrollmentWithPasskey(
+        username: string,
+    ): Promise<[null | User, Error | null]> {
+        return this.registerAccountOrEnrollment(username, "enroll-device");
     }
 
     /**
@@ -2737,6 +2710,21 @@ export class Client {
         };
     }
 
+    private async changePassword(
+        currentPassword: string,
+        newPassword: string,
+    ): Promise<void> {
+        const passwordError = registrationPasswordError(newPassword);
+        if (passwordError) throw passwordError;
+        if (
+            currentPassword.length === 0 ||
+            currentPassword.length > ACCOUNT_PASSWORD_MAX_LENGTH
+        ) {
+            throw new Error("Current password is invalid.");
+        }
+        await this.replaceAccountPassword({ currentPassword, newPassword });
+    }
+
     private async createChannel(
         name: string,
         serverID: string,
@@ -2848,13 +2836,16 @@ export class Client {
         return decodeHttpResponse(InviteCodec, res.data);
     }
 
-    private async createPreKey(): Promise<UnsavedPreKey> {
+    private async createPreKey(
+        kind: "one-time" | "signed",
+    ): Promise<UnsavedPreKey> {
         return this.runWithThisCryptoProfile(async () => {
             const preKeyPair = await xBoxKeyPairAsync();
-            const toSign =
-                this.cryptoProfile === "fips"
-                    ? fipsP256PreKeySignPayload(preKeyPair.publicKey)
-                    : xEncode(xConstants.CURVE, preKeyPair.publicKey);
+            const toSign = xPreKeySignaturePayload(
+                preKeyPair.publicKey,
+                kind,
+                this.cryptoProfile,
+            );
             return {
                 keyPair: preKeyPair,
                 signature: await xSignAsync(toSign, this.signKeys.secretKey),
@@ -2959,6 +2950,7 @@ export class Client {
 
             // shared secret key
             const SK = xKDF(IKM);
+            const initialSubkeys = xMessageKeySubkeys(SK);
             const PK = (await xBoxKeyPairFromSecretAsync(SK)).publicKey;
 
             const AD = fips
@@ -2972,7 +2964,11 @@ export class Client {
                   );
 
             const nonce = xMakeNonce();
-            const cipher = await xSecretboxAsync(message, nonce, SK);
+            const cipher = await xSecretboxAsync(
+                message,
+                nonce,
+                initialSubkeys.encryptionKey,
+            );
 
             const signKeyWire = fips ? IK_AP : this.signKeys.publicKey;
             const ephKeyWire = ephemeralKeys.publicKey;
@@ -3001,7 +2997,7 @@ export class Client {
                 sender: this.getDevice().deviceID,
             };
 
-            const hmac = xHMAC(mail, SK);
+            const hmac = xHMAC(mail, initialSubkeys.authenticationKey);
 
             const msg: ResourceMsg = {
                 action: "CREATE",
@@ -3190,6 +3186,7 @@ export class Client {
         return z.object({ calls: z.array(CallSessionSchema) }).parse(res.data)
             .calls;
     }
+
     private async fetchIceServers(): Promise<IceServerConfig[]> {
         const res = await this.http.get(this.getHost() + "/calls/ice-servers", {
             responseType: "json",
@@ -3258,7 +3255,6 @@ export class Client {
             return [null, isHttpError(err) ? err : null];
         }
     }
-
     private async fetchUserDeviceListOnce(userID: string): Promise<Device[]> {
         if (this.isManualCloseInFlight()) {
             return [];
@@ -3657,6 +3653,9 @@ export class Client {
                     this.getDevice().deviceID +
                     "/mail",
             );
+            if (!this.token || this.isManualCloseInFlight()) {
+                return;
+            }
             const mailBuffer = new Uint8Array(res.data);
             const rawInbox = z
                 .array(mailInboxEntry)
@@ -4055,10 +4054,11 @@ export class Client {
         preKey: PreKeysCrypto,
     ): Promise<boolean> {
         return this.runWithThisCryptoProfile(async () => {
-            const payload =
-                this.cryptoProfile === "fips"
-                    ? fipsP256PreKeySignPayload(preKey.keyPair.publicKey)
-                    : xEncode(xConstants.CURVE, preKey.keyPair.publicKey);
+            const payload = xPreKeySignaturePayload(
+                preKey.keyPair.publicKey,
+                "signed",
+                this.cryptoProfile,
+            );
             const opened = await xSignOpenAsync(
                 preKey.signature,
                 this.signKeys.publicKey,
@@ -4286,7 +4286,7 @@ export class Client {
                 !preKeys ||
                 !(await this.isPreKeySignedByCurrentDevice(preKeys))
             ) {
-                const unsaved = await this.createPreKey();
+                const unsaved = await this.createPreKey("signed");
                 const [saved] = await this.database.savePreKeys(
                     [unsaved],
                     false,
@@ -4648,10 +4648,14 @@ export class Client {
 
                         // shared secret key
                         const SK = xKDF(IKM);
+                        const initialSubkeys = xMessageKeySubkeys(SK);
                         const PK = (await xBoxKeyPairFromSecretAsync(SK))
                             .publicKey;
 
-                        const hmac = xHMAC(mail, SK);
+                        const hmac = xHMAC(
+                            mail,
+                            initialSubkeys.authenticationKey,
+                        );
 
                         // associated data
                         const AD = fipsRead
@@ -4701,7 +4705,7 @@ export class Client {
                         const unsealed = await xSecretboxOpenAsync(
                             new Uint8Array(mail.cipher),
                             new Uint8Array(mail.nonce),
-                            SK,
+                            initialSubkeys.encryptionKey,
                         );
                         if (unsealed) {
                             let plaintext = "";
@@ -4918,12 +4922,16 @@ export class Client {
                             );
                         }
 
-                        let messageKey = takeReceiveMessageKey(
+                        const messageKey = takeReceiveMessageKey(
                             candidateSession,
                             ratchetHeader.dhPub,
                             ratchetHeader.n,
                         );
-                        let HMAC = xHMAC(mail, messageKey);
+                        let messageSubkeys = xMessageKeySubkeys(messageKey);
+                        let HMAC = xHMAC(
+                            mail,
+                            messageSubkeys.authenticationKey,
+                        );
 
                         if (
                             !XUtils.bytesEqual(HMAC, header) &&
@@ -4942,9 +4950,11 @@ export class Client {
                                 ratchetHeader.dhPub,
                                 ratchetHeader.n,
                             );
+                            const ratchetedSubkeys =
+                                xMessageKeySubkeys(ratchetedMessageKey);
                             const ratchetedHMAC = xHMAC(
                                 mail,
-                                ratchetedMessageKey,
+                                ratchetedSubkeys.authenticationKey,
                             );
                             if (XUtils.bytesEqual(ratchetedHMAC, header)) {
                                 if (libvexDebugDmEnabled()) {
@@ -4958,7 +4968,7 @@ export class Client {
                                     );
                                 }
                                 candidateSession = ratchetedCandidate;
-                                messageKey = ratchetedMessageKey;
+                                messageSubkeys = ratchetedSubkeys;
                                 HMAC = ratchetedHMAC;
                             }
                         }
@@ -4999,7 +5009,7 @@ export class Client {
                         const decrypted = await xSecretboxOpenAsync(
                             new Uint8Array(mail.cipher),
                             new Uint8Array(mail.nonce),
-                            messageKey,
+                            messageSubkeys.encryptionKey,
                         );
 
                         if (decrypted) {
@@ -5144,6 +5154,99 @@ export class Client {
         return decodeHttpResponse(PermissionCodec, res.data);
     }
 
+    private async registerAccountOrEnrollment(
+        username: string,
+        intent: RegistrationPayload["intent"],
+        password?: string,
+    ): Promise<[null | User, Error | null]> {
+        const resolvedUsername = username.trim().toLowerCase();
+        if (!/^\w{3,19}$/.test(resolvedUsername)) {
+            return [
+                null,
+                new Error(
+                    "Username must be between three and nineteen letters, digits, or underscores.",
+                ),
+            ];
+        }
+        while (!this.xKeyRing) {
+            await sleep(100);
+        }
+        const regKey = await this.getToken("register");
+        if (regKey) {
+            const signKey = XUtils.encodeHex(this.signKeys.publicKey);
+            const signed = XUtils.encodeHex(
+                await xSignAsync(
+                    Uint8Array.from(uuid.parse(regKey.key)),
+                    this.signKeys.secretKey,
+                ),
+            );
+            const preKeyIndex = this.xKeyRing.preKeys.index;
+            const regMsg: RegistrationPayload = {
+                deviceName: this.options?.deviceName ?? "unknown",
+                intent,
+                preKey: XUtils.encodeHex(
+                    this.xKeyRing.preKeys.keyPair.publicKey,
+                ),
+                preKeyIndex,
+                preKeySignature: XUtils.encodeHex(
+                    this.xKeyRing.preKeys.signature,
+                ),
+                signed,
+                signKey,
+                username: resolvedUsername,
+            };
+            if (password !== undefined) {
+                regMsg.password = password;
+            }
+            try {
+                const res = await this.http.post(
+                    this.getHost() + "/register",
+                    msgpack.encode(regMsg),
+                    { headers: { "Content-Type": "application/msgpack" } },
+                );
+
+                try {
+                    const { device, token, user } = decodeHttpResponse(
+                        RegisterResponseCodec,
+                        res.data,
+                    );
+                    this.device = device;
+                    this.setUser(user);
+                    this.token = token;
+                    this.http.defaults.headers.common.Authorization = `Bearer ${token}`;
+                } catch {
+                    const pendingApproval = decodeHttpResponse(
+                        RegisterPendingApprovalCodec,
+                        res.data,
+                    );
+                    return [
+                        null,
+                        new DeviceApprovalRequiredError({
+                            challenge: pendingApproval.challenge,
+                            expiresAt: pendingApproval.expiresAt,
+                            requestID: pendingApproval.requestID,
+                            userID: pendingApproval.userID,
+                        }),
+                    ];
+                }
+                return [this.getUser(), null];
+            } catch (err: unknown) {
+                if (isHttpError(err) && err.response) {
+                    return [
+                        null,
+                        new Error(spireErrorBodyMessage(err.response.data)),
+                    ];
+                }
+                return [
+                    null,
+                    err instanceof Error ? err : new Error(String(err)),
+                ];
+            }
+        } else {
+            return [null, new Error("Couldn't get regkey from server.")];
+        }
+    }
+
     private registerDecryptFailure(mail: MailWS): number {
         const count = (this.decryptFailureCounts.get(mail.mailID) ?? 0) + 1;
         this.decryptFailureCounts.set(mail.mailID, count);
@@ -5209,6 +5312,23 @@ export class Client {
                 requestID +
                 "/reject",
         );
+    }
+
+    private async replaceAccountPassword(payload: {
+        currentPassword?: string;
+        newPassword: string;
+    }): Promise<void> {
+        await this.http.patch(
+            this.getHost() + "/user/" + this.getUser().userID + "/password",
+            msgpack.encode(payload),
+            { headers: { "Content-Type": "application/msgpack" } },
+        );
+    }
+
+    private async resetPasswordWithPasskey(newPassword: string): Promise<void> {
+        const passwordError = registrationPasswordError(newPassword);
+        if (passwordError) throw passwordError;
+        await this.replaceAccountPassword({ newPassword });
     }
 
     private async respond(msg: ChallMsg) {
@@ -5322,7 +5442,7 @@ export class Client {
                         challenge: newDevice.challenge,
                         expiresAt: newDevice.expiresAt,
                         requestID: newDevice.requestID,
-                        userID: newDevice.userID ?? null,
+                        userID: newDevice.userID,
                     });
                 } else {
                     throw new Error("Error registering device.");
@@ -5717,6 +5837,7 @@ export class Client {
                 await ratchetStepSend(session);
             }
             const { messageKey, n } = takeSendMessageKey(session);
+            const messageSubkeys = xMessageKeySubkeys(messageKey);
             const ratchetHeader = {
                 dhPub: session.DHsPublic,
                 n,
@@ -5724,7 +5845,11 @@ export class Client {
                 version: 1 as const,
             };
             const nonce = xMakeNonce();
-            const cipher = await xSecretboxAsync(msg, nonce, messageKey);
+            const cipher = await xSecretboxAsync(
+                msg,
+                nonce,
+                messageSubkeys.encryptionKey,
+            );
             const extra = encodeRatchetHeader(ratchetHeader);
 
             const mail: MailWS = {
@@ -5749,7 +5874,7 @@ export class Client {
                 type: "resource",
             };
 
-            const hmac = xHMAC(mail, messageKey);
+            const hmac = xHMAC(mail, messageSubkeys.authenticationKey);
 
             const fwdOut = forward
                 ? messageSchema.parse(msgpack.decode(msg))
@@ -6101,7 +6226,7 @@ export class Client {
         const otks: UnsavedPreKey[] = [];
 
         for (let i = 0; i < amount; i++) {
-            otks.push(await this.createPreKey());
+            otks.push(await this.createPreKey("one-time"));
         }
 
         const savedKeys = await this.database.savePreKeys(otks, true);

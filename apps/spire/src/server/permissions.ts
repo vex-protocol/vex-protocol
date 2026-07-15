@@ -6,6 +6,24 @@
 
 import type { Permission } from "@vex-chat/types";
 
+export function canDeletePermission(
+    permissions: Permission[],
+    actorUserID: string,
+    target: Permission,
+    adminPowerLevel: number,
+): boolean {
+    if (target.userID === actorUserID) {
+        return true;
+    }
+    return permissions.some(
+        (permission) =>
+            permission.userID === actorUserID &&
+            permission.resourceID === target.resourceID &&
+            permission.powerLevel >= adminPowerLevel &&
+            permission.powerLevel > target.powerLevel,
+    );
+}
+
 /**
  * Check whether any permission in the list covers the given resource
  * (any power level).
@@ -27,7 +45,7 @@ export function hasPermission(
     minPowerLevel: number,
 ): boolean {
     return permissions.some(
-        (p) => p.resourceID === resourceID && p.powerLevel > minPowerLevel,
+        (p) => p.resourceID === resourceID && p.powerLevel >= minPowerLevel,
     );
 }
 
@@ -41,6 +59,6 @@ export function userHasPermission(
     minPowerLevel: number,
 ): boolean {
     return permissions.some(
-        (p) => p.userID === userID && p.powerLevel > minPowerLevel,
+        (p) => p.userID === userID && p.powerLevel >= minPowerLevel,
     );
 }

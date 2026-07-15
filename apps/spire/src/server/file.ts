@@ -14,7 +14,7 @@ import * as path from "node:path";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { FilePayloadSchema } from "@vex-chat/types";
+import { FilePayloadSchema, MAX_FILE_UPLOAD_BYTES } from "@vex-chat/types";
 
 import multer from "multer";
 import { z } from "zod/v4";
@@ -27,6 +27,14 @@ import { getParam } from "./utils.ts";
 import { protect } from "./index.ts";
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
+const fileUpload = multer({
+    limits: {
+        fields: 4,
+        files: 1,
+        fileSize: MAX_FILE_UPLOAD_BYTES,
+        parts: 5,
+    },
+});
 
 export const getFileRouter = (db: Database) => {
     const router = express.Router();
@@ -77,7 +85,7 @@ export const getFileRouter = (db: Database) => {
         }
     });
 
-    router.post("/json", protect, async (req, res) => {
+    router.post("/json", uploadLimiter, protect, async (req, res) => {
         const deviceDetails = req.device;
 
         if (!deviceDetails) {
@@ -95,17 +103,28 @@ export const getFileRouter = (db: Database) => {
         }
         const payload = parsed.data;
 
-        if (payload.nonce === "") {
-            res.sendStatus(400);
-            return;
-        }
-
         if (!payload.file) {
             res.sendStatus(400);
             return;
         }
+        if (payload.owner !== deviceDetails.deviceID) {
+            res.status(400).send({
+                error: "File owner must match this device.",
+            });
+            return;
+        }
 
-        const buf = Buffer.from(XUtils.decodeBase64(payload.file));
+        let buf: Buffer;
+        try {
+            buf = Buffer.from(XUtils.decodeBase64(payload.file));
+        } catch {
+            res.status(400).send({ error: "File must be valid base64." });
+            return;
+        }
+        if (buf.byteLength > MAX_FILE_UPLOAD_BYTES) {
+            res.sendStatus(413);
+            return;
+        }
 
         const newFile: FileSQL = {
             fileID: crypto.randomUUID(),
@@ -120,20 +139,20 @@ export const getFileRouter = (db: Database) => {
 
     // Multipart file upload — form fields are strings from multer, not full FilePayload
     const multipartFields = z.object({
-        nonce: z.string().min(1),
-        owner: z.string().min(1),
+        nonce: z.string().regex(/^[0-9a-fA-F]{48}$/),
+        owner: z.string().min(1).max(128),
     });
 
     router.post(
         "/",
         uploadLimiter,
         protect,
-        multer().single("file"),
+        fileUpload.single("file"),
         async (req, res) => {
             const deviceDetails = req.device;
 
             if (!deviceDetails) {
-                res.sendStatus(400);
+                res.sendStatus(401);
                 return;
             }
 
@@ -152,8 +171,10 @@ export const getFileRouter = (db: Database) => {
                 return;
             }
 
-            if (payload.nonce === "") {
-                res.sendStatus(400);
+            if (payload.owner !== deviceDetails.deviceID) {
+                res.status(400).send({
+                    error: "File owner must match this device.",
+                });
                 return;
             }
 

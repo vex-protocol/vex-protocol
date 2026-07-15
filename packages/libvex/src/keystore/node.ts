@@ -15,7 +15,7 @@ import * as path from "node:path";
  * Stores credentials as encrypted files on disk using XUtils.encryptKeyData.
  * Node-only — imports node:fs.
  */
-import { getCryptoProfile, XUtils } from "@vex-chat/crypto";
+import { XUtils } from "@vex-chat/crypto";
 
 export class NodeKeyStore implements KeyStore {
     private readonly dir: string;
@@ -65,16 +65,18 @@ export class NodeKeyStore implements KeyStore {
     }
 
     async save(creds: StoredCredentials): Promise<void> {
-        const data = JSON.stringify(creds);
-        const encrypted =
-            getCryptoProfile() === "fips"
-                ? await XUtils.encryptKeyDataAsync(this.passphrase, data)
-                : XUtils.encryptKeyData(this.passphrase, data);
-        fs.writeFileSync(this.filePath(creds.username), encrypted);
+        const data = XUtils.encodeHex(XUtils.decodeUTF8(JSON.stringify(creds)));
+        const encrypted = await XUtils.encryptKeyDataAsync(
+            this.passphrase,
+            data,
+        );
+        const filePath = this.filePath(creds.username);
+        fs.writeFileSync(filePath, encrypted, { mode: 0o600 });
+        fs.chmodSync(filePath, 0o600);
     }
 
     private filePath(username: string): string {
-        return path.join(this.dir, `${username}.vex`);
+        return path.join(this.dir, `${encodeURIComponent(username)}.vex`);
     }
 
     private async readFile(
@@ -82,17 +84,13 @@ export class NodeKeyStore implements KeyStore {
     ): Promise<null | StoredCredentials> {
         try {
             const data = fs.readFileSync(filePath);
-            const decrypted =
-                getCryptoProfile() === "fips"
-                    ? await XUtils.decryptKeyDataAsync(
-                          new Uint8Array(data),
-                          this.passphrase,
-                      )
-                    : XUtils.decryptKeyData(
-                          new Uint8Array(data),
-                          this.passphrase,
-                      );
-            const parsed: unknown = JSON.parse(decrypted);
+            const decrypted = await XUtils.decryptKeyDataAsync(
+                new Uint8Array(data),
+                this.passphrase,
+            );
+            const parsed: unknown = JSON.parse(
+                XUtils.encodeUTF8(XUtils.decodeHex(decrypted)),
+            );
             if (isStoredCredentials(parsed)) {
                 return parsed;
             }

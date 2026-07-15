@@ -10,6 +10,7 @@ const REQUIRED_ENV_VARS = ["DB_TYPE", "JWT_SECRET", "SPK"] as const;
 const NORMALIZED_ENV_VARS = [
     ...REQUIRED_ENV_VARS,
     "API_PORT",
+    "SPIRE_TRUST_PROXY_HOPS",
     "SPIRE_FIPS",
     "SPIRE_PASSKEY_RP_ID",
     "SPIRE_PASSKEY_RP_NAME",
@@ -81,6 +82,9 @@ export function validateSpireRuntimeEnv(
         throw new Error(
             "JWT_SECRET must be set. Generate one with `pnpm --filter @vex-chat/spire gen-spk` or `gen-spk-fips`.",
         );
+    }
+    if (jwtSecret.length < 32) {
+        throw new Error("JWT_SECRET must contain at least 32 characters.");
     }
     if (jwtSecret === spk) {
         throw new Error("JWT_SECRET must be separate from SPK.");

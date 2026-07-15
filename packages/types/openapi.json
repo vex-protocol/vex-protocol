@@ -413,8 +413,18 @@
                         "type": "string",
                         "description": "Account username"
                     },
+                    "intent": {
+                        "type": "string",
+                        "enum": [
+                            "create-account",
+                            "enroll-device"
+                        ],
+                        "description": "Explicit account creation or device enrollment intent"
+                    },
                     "password": {
                         "type": "string",
+                        "minLength": 15,
+                        "maxLength": 1024,
                         "description": "Account password. Required for new accounts and for existing-account device approval requests unless the request is authorized by passkey."
                     }
                 },
@@ -424,9 +434,31 @@
                     "preKeyIndex",
                     "preKeySignature",
                     "signed",
-                    "signKey"
+                    "signKey",
+                    "username",
+                    "intent"
                 ],
                 "description": "User registration payload"
+            },
+            "PasswordUpdatePayload": {
+                "type": "object",
+                "properties": {
+                    "currentPassword": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                    },
+                    "newPassword": {
+                        "type": "string",
+                        "minLength": 15,
+                        "maxLength": 1024
+                    }
+                },
+                "required": [
+                    "newPassword"
+                ],
+                "additionalProperties": false,
+                "description": "Password replacement payload"
             }
         },
         "parameters": {}
@@ -435,8 +467,8 @@
         "/auth": {
             "post": {
                 "operationId": "login",
-                "summary": "Login with username, password, and passkey when enrolled",
-                "description": "Authenticate with username/password credentials plus a fresh passkey assertion when the account already has passkeys. Accounts with no passkeys can connect devices and may enroll passkeys later.",
+                "summary": "Sign in with username and password",
+                "description": "Verify username and password credentials and return a bounded user bearer. Passkeys are optional and use the separate passkey authentication flow.",
                 "tags": [
                     "auth"
                 ],
@@ -569,7 +601,7 @@
             "post": {
                 "operationId": "verifyDeviceChallenge",
                 "summary": "Verify device auth challenge",
-                "description": "Submit the signed challenge. Accounts with enrolled passkeys require a matching fresh passkey-scoped bearer token; accounts with no passkeys can use the resulting device-key session to connect.",
+                "description": "Submit a challenge signed by a previously approved device key and return a bounded user bearer. This powers trusted-device session restoration and does not bypass initial account or device enrollment.",
                 "tags": [
                     "auth"
                 ],
@@ -682,8 +714,18 @@
                                         "type": "string",
                                         "description": "Account username"
                                     },
+                                    "intent": {
+                                        "type": "string",
+                                        "enum": [
+                                            "create-account",
+                                            "enroll-device"
+                                        ],
+                                        "description": "Explicit account creation or device enrollment intent"
+                                    },
                                     "password": {
                                         "type": "string",
+                                        "minLength": 15,
+                                        "maxLength": 1024,
                                         "description": "Account password. Required for new accounts and for existing-account device approval requests unless the request is authorized by passkey."
                                     }
                                 },
@@ -693,7 +735,9 @@
                                     "preKeyIndex",
                                     "preKeySignature",
                                     "signed",
-                                    "signKey"
+                                    "signKey",
+                                    "username",
+                                    "intent"
                                 ],
                                 "description": "User registration payload"
                             }
@@ -851,8 +895,8 @@
         "/goodbye": {
             "post": {
                 "operationId": "logout",
-                "summary": "Logout (invalidate token)",
-                "description": "Invalidate the current JWT token, ending the session.",
+                "summary": "End the local session",
+                "description": "Provide a clean authenticated session boundary. Access tokens are stateless and remain expiry-based; clients must discard their local bearer.",
                 "tags": [
                     "auth"
                 ],
@@ -862,8 +906,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Logged out"
+                    "204": {
+                        "description": "Session boundary acknowledged"
                     }
                 }
             }
@@ -1103,6 +1147,74 @@
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/user/{id}/password": {
+            "patch": {
+                "operationId": "updateAccountPassword",
+                "summary": "Replace the account password",
+                "description": "Replace a password after current-password proof from an approved device, or after a fresh user-verified passkey ceremony. The authenticated account must match the path user.",
+                "tags": [
+                    "users"
+                ],
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "schema": {
+                            "type": "string"
+                        },
+                        "required": true,
+                        "name": "id",
+                        "in": "path"
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/msgpack": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "currentPassword": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 1024
+                                    },
+                                    "newPassword": {
+                                        "type": "string",
+                                        "minLength": 15,
+                                        "maxLength": 1024
+                                    }
+                                },
+                                "required": [
+                                    "newPassword"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Password replacement payload"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Password replaced"
+                    },
+                    "400": {
+                        "description": "Replacement password rejected by policy"
+                    },
+                    "401": {
+                        "description": "Required current-password or passkey proof failed"
+                    },
+                    "403": {
+                        "description": "Authenticated account does not match the path"
+                    },
+                    "409": {
+                        "description": "Replacement matches the current password"
                     }
                 }
             }

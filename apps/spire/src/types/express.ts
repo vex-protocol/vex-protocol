@@ -22,10 +22,9 @@ declare global {
             device?: Device;
             exp?: number;
             /**
-             * Set by `checkPasskey` middleware when the bearer token is
-             * a passkey-scoped JWT. The presence of `req.passkey`
-             * (without `req.device`) marks an admin-only request that
-             * may list/delete devices and recover/reject enrollments, but
+             * Set for a revalidated passkey-scoped JWT. The presence of
+             * `req.passkey` (without `req.device`) marks an admin-only request
+             * that may list/delete devices and recover/reject enrollments, but
              * cannot send mail or do anything device-specific.
              */
             passkey?: { passkeyID: string };

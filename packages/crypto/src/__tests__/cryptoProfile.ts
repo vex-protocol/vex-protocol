@@ -46,6 +46,16 @@ test("fips profile still supports random bytes", () => {
     expect(nonce.length).toBe(24);
 });
 
+test("local storage keys are purpose-separated from identity keys", () => {
+    const identity = new Uint8Array(64).fill(7);
+    const tweetnacl = XUtils.deriveLocalAtRestAesKey(identity, "tweetnacl");
+    const fips = XUtils.deriveLocalAtRestAesKey(identity, "fips");
+
+    expect(tweetnacl).toHaveLength(32);
+    expect(tweetnacl).not.toEqual(identity.slice(0, 32));
+    expect(fips).not.toEqual(tweetnacl);
+});
+
 test("switching back to tweetnacl restores behavior", () => {
     const myPrivateKey = XUtils.decodeHex(
         "918ed243e2c6c507168b20e8b167cff33a10c30e99e8defe28dc2147f5cce703",

@@ -86,17 +86,24 @@ export function platformSuite(
             const client2 = await Client.create(SK2, opts2, storage2);
 
             try {
+                const [duplicateUser, duplicateErr] = await client2.register(
+                    username,
+                    password,
+                );
+                expect(duplicateUser).toBeNull();
+                expect(duplicateErr?.message).toContain(
+                    "Username is already registered. Sign in instead.",
+                );
+
                 const [missingPasswordUser, missingPasswordErr] =
-                    await client2.register(username);
+                    await client2.requestDeviceEnrollmentWithPasskey(username);
                 expect(missingPasswordUser).toBeNull();
                 expect(missingPasswordErr?.message).toContain(
                     "Password is required to add this device.",
                 );
 
-                const [pendingUser, pendingErr] = await client2.register(
-                    username,
-                    password,
-                );
+                const [pendingUser, pendingErr] =
+                    await client2.requestDeviceEnrollment(username, password);
                 expect(pendingUser).toBeNull();
                 expect(pendingErr?.name).toBe("DeviceApprovalRequiredError");
                 expect(
@@ -107,11 +114,11 @@ export function platformSuite(
             }
         });
 
-        test("send and receive DM (self)", async () => {
+        test("send self-DM without duplicating it as incoming", async () => {
             const me = client.me.user();
             const msgPromise = waitForMessage(
                 client,
-                (m) => m.direction === "incoming" && m.decrypted,
+                (m) => m.direction === "outgoing" && m.decrypted,
                 `[${platformName}] self-DM`,
             );
             await client.messages.send(me.userID, "platform-test");
@@ -119,7 +126,7 @@ export function platformSuite(
             expect(msg.message).toBe("platform-test");
         });
 
-        test("send and receive DM with encrypted extra", async () => {
+        test("send self-DM with encrypted extra", async () => {
             const me = client.me.user();
             const extra = JSON.stringify({
                 reactionEvent: {
@@ -132,7 +139,7 @@ export function platformSuite(
             const msgPromise = waitForMessage(
                 client,
                 (m) =>
-                    m.direction === "incoming" &&
+                    m.direction === "outgoing" &&
                     m.decrypted &&
                     m.extra === extra,
                 `[${platformName}] self-DM extra`,
@@ -155,7 +162,7 @@ export function platformSuite(
             const msgPromise = waitForMessage(
                 client,
                 (m) =>
-                    m.direction === "incoming" &&
+                    m.direction === "outgoing" &&
                     m.decrypted &&
                     m.message === body,
                 "history DM",
@@ -184,11 +191,14 @@ export function platformSuite(
             try {
                 const [user2, regErr] = await client2.register(
                     username2,
-                    "test-pw-2",
+                    "test password two",
                 );
                 expect(regErr).toBeNull();
 
-                const loginErr = await client2.login(username2, "test-pw-2");
+                const loginErr = await client2.login(
+                    username2,
+                    "test password two",
+                );
                 expect(loginErr.ok).toBe(true);
 
                 await connectAndWait(client2, "client2");
@@ -214,14 +224,14 @@ export function platformSuite(
             const storage1 = await makeStorage(SK1, opts1);
             const client1 = await Client.create(SK1, opts1, storage1);
             const username1 = Client.randomUsername();
-            const password1 = "test-pw-1";
+            const password1 = "test password one";
 
             const SK2 = await e2eGenerateSecretKey();
             const opts2: ClientOptions = e2eClientOptionsBase();
             const storage2 = await makeStorage(SK2, opts2);
             const client2 = await Client.create(SK2, opts2, storage2);
             const username2 = Client.randomUsername();
-            const password2 = "test-pw-2";
+            const password2 = "test password two";
 
             try {
                 const [_user1, regErr1] = await client1.register(
@@ -292,8 +302,16 @@ export function platformSuite(
 
             try {
                 // Register + login + connect user2
-                await client2.register(username2, "test-pw-2");
-                await client2.login(username2, "test-pw-2");
+                const [_user2, registrationError] = await client2.register(
+                    username2,
+                    "test password two",
+                );
+                expect(registrationError).toBeNull();
+                const loginResult = await client2.login(
+                    username2,
+                    "test password two",
+                );
+                expect(loginResult.ok).toBe(true);
                 await connectAndWait(client2, "client2");
 
                 // user1 creates server + channel
@@ -531,6 +549,31 @@ export function platformSuite(
                     writable: true,
                 });
             }
+        });
+
+        test("changes the account password with current-password proof", async () => {
+            const replacementPassword = "updated platform test password";
+
+            await expect(
+                client.me.changePassword(
+                    "incorrect platform test password",
+                    replacementPassword,
+                ),
+            ).rejects.toThrow();
+            await client.me.changePassword(password, replacementPassword);
+            await client.logout();
+
+            const oldLogin = await client.login(username, password);
+            expect(oldLogin.ok).toBe(false);
+            const newLogin = await client.login(username, replacementPassword);
+            expect(newLogin.ok).toBe(true);
+        });
+
+        test("logout clears local authentication", async () => {
+            await client.logout();
+            await expect(client.connect()).rejects.toThrow(
+                "No token — call login() or loginWithDeviceKey() first.",
+            );
         });
     });
 }

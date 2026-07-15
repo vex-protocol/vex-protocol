@@ -28,10 +28,9 @@ import {
     verifyAuthenticationResponse,
     verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import jwt from "jsonwebtoken";
 
 import { JWT_EXPIRY_PASSKEY } from "../Spire.ts";
-import { getJwtSecret } from "../utils/jwtSecret.ts";
+import { signAuthJwt } from "../utils/authJwt.ts";
 
 import { AppError } from "./errors.ts";
 import { authLimiter } from "./rateLimit.ts";
@@ -39,7 +38,7 @@ import { censorUser, getParam, getUser } from "./utils.ts";
 import { buildAndroidApkKeyHashOrigins } from "./wellKnown.ts";
 import { sendWireResponse } from "./wireResponse.ts";
 
-import { protect } from "./index.ts";
+import { protect, protectAnyAuth } from "./index.ts";
 
 const REGISTRATION_TTL_MS = 5 * 60 * 1000; // 5 min
 const AUTHENTICATION_TTL_MS = 5 * 60 * 1000;
@@ -56,6 +55,7 @@ interface PendingAuthentication {
 interface PendingRegistration {
     challenge: string;
     createdAt: number;
+    deviceID: string;
     name: string;
     userID: string;
 }
@@ -157,7 +157,7 @@ function sanitizeTransports(input: string[]): AuthenticatorTransportFuture[] {
  * Issues a passkey-scoped JWT.
  *
  * Carries `scope: "passkey"` and the owning userID; deliberately
- * shorter-lived than a device JWT (5 min vs 7 days) because a
+ * shorter-lived than an account or device JWT (5 min vs 1 hour) because a
  * passkey JWT grants destructive admin powers (delete a device,
  * approve an enrollment) without further user verification. Callers
  * re-do the WebAuthn ceremony when this expires.
@@ -166,14 +166,13 @@ function signPasskeyToken(args: {
     passkeyID: string;
     user: ReturnType<typeof censorUser>;
 }): string {
-    return jwt.sign(
+    return signAuthJwt(
         {
             passkey: { passkeyID: args.passkeyID },
             scope: "passkey" as const,
             user: args.user,
         },
-        getJwtSecret(),
-        { expiresIn: JWT_EXPIRY_PASSKEY },
+        JWT_EXPIRY_PASSKEY,
     );
 }
 
@@ -203,16 +202,13 @@ export const getPasskeyRouter = (db: Database) => {
                 return;
             }
 
-            const existing = await db.retrievePasskeysByUser(userID);
-            // A freshly registered account may add its first passkey with
-            // the account bearer before finishing device connect. Every later
-            // passkey addition must come from an authenticated device session.
-            if (!req.device && existing.length > 0) {
+            if (!req.device || req.device.owner !== userID) {
                 res.status(401).send({
-                    error: "Adding another passkey requires an authenticated device.",
+                    error: "Adding a passkey requires an authenticated device.",
                 });
                 return;
             }
+            const existing = await db.retrievePasskeysByUser(userID);
             if (existing.length >= MAX_PASSKEYS_PER_USER) {
                 res.status(409).send({
                     error: `Each account is limited to ${MAX_PASSKEYS_PER_USER} passkeys.`,
@@ -232,7 +228,7 @@ export const getPasskeyRouter = (db: Database) => {
                 authenticatorSelection: {
                     requireResidentKey: false,
                     residentKey: "preferred",
-                    userVerification: "preferred",
+                    userVerification: "required",
                 },
                 excludeCredentials: [],
                 rpID,
@@ -247,6 +243,7 @@ export const getPasskeyRouter = (db: Database) => {
             pendingRegistrations.set(requestID, {
                 challenge: options.challenge,
                 createdAt: Date.now(),
+                deviceID: req.device.deviceID,
                 name: parsed.data.name,
                 userID,
             });
@@ -285,17 +282,20 @@ export const getPasskeyRouter = (db: Database) => {
                 return;
             }
 
-            const existing = await db.retrievePasskeysByUser(userID);
-            if (!req.device && existing.length > 0) {
+            if (!req.device || req.device.owner !== userID) {
                 res.status(401).send({
-                    error: "Adding another passkey requires an authenticated device.",
+                    error: "Adding a passkey requires an authenticated device.",
                 });
                 return;
             }
 
             pruneRegistrations();
             const pending = pendingRegistrations.get(parsed.data.requestID);
-            if (!pending || pending.userID !== userID) {
+            if (
+                !pending ||
+                pending.userID !== userID ||
+                pending.deviceID !== req.device.deviceID
+            ) {
                 res.status(404).send({
                     error: "Registration request not found or expired.",
                 });
@@ -319,15 +319,14 @@ export const getPasskeyRouter = (db: Database) => {
                     expectedChallenge: pending.challenge,
                     expectedOrigin,
                     expectedRPID: rpID,
-                    requireUserVerification: false,
+                    requireUserVerification: true,
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- structurally validated by simplewebauthn below
                     response: rawResponse as RegistrationResponseJSON,
                 });
             } catch (err: unknown) {
-                const message =
-                    err instanceof Error ? err.message : String(err);
+                logWebAuthnFailure("registration", err);
                 res.status(400).send({
-                    error: "Passkey attestation invalid: " + message,
+                    error: "Passkey attestation could not be verified.",
                 });
                 return;
             }
@@ -380,7 +379,7 @@ export const getPasskeyRouter = (db: Database) => {
         },
     );
 
-    router.get("/user/:id/passkeys", protect, async (req, res) => {
+    router.get("/user/:id/passkeys", protectAnyAuth, async (req, res) => {
         const userDetails = getUser(req);
         const userID = getParam(req, "id");
         if (userDetails.userID !== userID) {
@@ -400,6 +399,12 @@ export const getPasskeyRouter = (db: Database) => {
             const passkeyID = getParam(req, "passkeyID");
             if (userDetails.userID !== userID) {
                 res.sendStatus(401);
+                return;
+            }
+            if (!req.device || req.device.owner !== userID) {
+                res.status(401).send({
+                    error: "Removing a passkey requires an authenticated device.",
+                });
                 return;
             }
             const row = await db.retrievePasskeyInternal(passkeyID);
@@ -456,7 +461,7 @@ export const getPasskeyRouter = (db: Database) => {
         const options = await generateAuthenticationOptions({
             allowCredentials: allowCredentials.filter((c) => c.id.length > 0),
             rpID,
-            userVerification: "preferred",
+            userVerification: "required",
         });
 
         pruneAuthentications();
@@ -541,13 +546,13 @@ export const getPasskeyRouter = (db: Database) => {
                 expectedChallenge: pending.challenge,
                 expectedOrigin,
                 expectedRPID: rpID,
-                requireUserVerification: false,
+                requireUserVerification: true,
                 response: assertion,
             });
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
+            logWebAuthnFailure("authentication", err);
             res.status(401).send({
-                error: "Passkey assertion invalid: " + message,
+                error: "Passkey assertion could not be verified.",
             });
             return;
         }
@@ -572,7 +577,17 @@ export const getPasskeyRouter = (db: Database) => {
             return;
         }
 
-        await db.markPasskeyUsed(passkeyRow.passkeyID, newCounter);
+        const counterUpdated = await db.markPasskeyUsed(
+            passkeyRow.passkeyID,
+            passkeyRow.signCount,
+            newCounter,
+        );
+        if (!counterUpdated) {
+            res.status(401).send({
+                error: "Passkey assertion was already used.",
+            });
+            return;
+        }
 
         const user = await db.retrieveUser(pending.userID);
         if (!user) {
@@ -593,3 +608,11 @@ export const getPasskeyRouter = (db: Database) => {
 
     return router;
 };
+
+function logWebAuthnFailure(ceremony: string, err: unknown): void {
+    const requestId = crypto.randomUUID();
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+        `[spire] WebAuthn ${ceremony} verification failed requestId=${requestId} message=${message}`,
+    );
+}

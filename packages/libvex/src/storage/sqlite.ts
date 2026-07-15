@@ -55,6 +55,10 @@ import { effectiveMessageRetentionHintDays } from "../retention.js";
 import { parseSkippedKeysStrict } from "../utils/ratchet.js";
 
 const STORAGE_MESSAGE_BLOB_PREFIX = "vex-storage-message:1\n";
+const STORAGE_CIPHERTEXT_PREFIX = "vex-storage-cipher:2:";
+const STORAGE_SECRET_TEXT_PREFIX = "vex-storage-secret:1:";
+const STORAGE_NONCE_BYTES = 24;
+const STORAGE_MAC_BYTES = 16;
 
 export class SqliteStorage extends EventEmitter implements Storage {
     public ready = false;
@@ -408,10 +412,10 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 this.ready = true;
                 this.emit("ready");
             } catch (err: unknown) {
-                this.emit(
-                    "error",
-                    err instanceof Error ? err : new Error(String(err)),
-                );
+                const error =
+                    err instanceof Error ? err : new Error(String(err));
+                this.emit("error", error);
+                throw error;
             } finally {
                 this.initInFlight = null;
             }
@@ -526,14 +530,25 @@ export class SqliteStorage extends EventEmitter implements Storage {
             return;
         }
         await this.untilReady();
+        if (this.isClosingNow()) {
+            return;
+        }
 
         // Fan-out to multiple devices reuses one `mailID` but each encrypt path
         // uses a fresh nonce (table PK). Keep a single local row per logical mail.
-        const dupe = await this.db
-            .selectFrom("messages")
-            .select("nonce")
-            .where("mailID", "=", message.mailID)
-            .executeTakeFirst();
+        let dupe: undefined | { nonce: string };
+        try {
+            dupe = await this.db
+                .selectFrom("messages")
+                .select("nonce")
+                .where("mailID", "=", message.mailID)
+                .executeTakeFirst();
+        } catch (err: unknown) {
+            if (this.isClosingNow() || this.isTornDownError(err)) {
+                return;
+            }
+            throw err;
+        }
         if (dupe !== undefined) {
             return;
         }
@@ -543,22 +558,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
             !message.decrypted &&
             message.message === "" &&
             message.extra === undefined;
-        const fips = getCryptoProfile() === "fips";
         const encryptedMessage = isPlaintextFailurePlaceholder
             ? storedPlaintext
-            : XUtils.encodeHex(
-                  fips
-                      ? await xSecretboxAsync(
-                            XUtils.decodeUTF8(storedPlaintext),
-                            XUtils.decodeHex(message.nonce),
-                            this.atRestAesKey,
-                        )
-                      : xSecretbox(
-                            XUtils.decodeUTF8(storedPlaintext),
-                            XUtils.decodeHex(message.nonce),
-                            this.atRestAesKey,
-                        ),
-              );
+            : await this.sealMessagePlaintext(storedPlaintext);
         if (this.isClosingNow()) {
             return;
         }
@@ -656,6 +658,9 @@ export class SqliteStorage extends EventEmitter implements Storage {
         const sealedDHsPrivate = await this.sealHex(session.DHsPrivate);
         const sealedRK = await this.sealHex(session.RK);
         const sealedSK = await this.sealHex(session.SK);
+        const sealedSkippedKeys = await this.sealSecretText(
+            session.skippedKeys,
+        );
         try {
             await this.db
                 .insertInto("sessions")
@@ -676,7 +681,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                     RK: sealedRK,
                     sessionID: session.sessionID,
                     SK: sealedSK,
-                    skippedKeys: session.skippedKeys,
+                    skippedKeys: sealedSkippedKeys,
                     userID: session.userID,
                     verified: session.verified ? 1 : 0,
                 })
@@ -701,7 +706,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                         publicKey: session.publicKey,
                         RK: sealedRK,
                         SK: sealedSK,
-                        skippedKeys: session.skippedKeys,
+                        skippedKeys: sealedSkippedKeys,
                         userID: session.userID,
                         verified: session.verified ? 1 : 0,
                     })
@@ -749,18 +754,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
                 : {}),
         };
         const storedPlaintext = encodeStoredMessagePlaintext(next);
-        const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(row.nonce),
-                  this.atRestAesKey,
-              )
-            : xSecretbox(
-                  XUtils.decodeUTF8(storedPlaintext),
-                  XUtils.decodeHex(row.nonce),
-                  this.atRestAesKey,
-              );
+        const sealedMessage = await this.sealMessagePlaintext(storedPlaintext);
         if (this.isClosingNow()) {
             return false;
         }
@@ -768,7 +762,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             .updateTable("messages")
             .set({
                 extra: null,
-                message: XUtils.encodeHex(ct),
+                message: sealedMessage,
             })
             .where("mailID", "=", mailID)
             .executeTakeFirst();
@@ -780,7 +774,6 @@ export class SqliteStorage extends EventEmitter implements Storage {
     private async decryptMessagesAsync(
         messages: MessageRow[],
     ): Promise<Message[]> {
-        const fips = getCryptoProfile() === "fips";
         const out: Message[] = [];
         let processed = 0;
         /** Yield so RN / web UIs can paint between at-rest decrypt blocks. */
@@ -796,20 +789,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             const isPlaintextFailurePlaceholder =
                 !decryptedFlag && msg.message === "" && msg.extra === null;
             if (!isPlaintextFailurePlaceholder) {
-                const cipher = XUtils.decodeHex(msg.message);
-                const nonce = XUtils.decodeHex(msg.nonce);
-                const decrypted = fips
-                    ? await xSecretboxOpenAsync(
-                          cipher,
-                          nonce,
-                          this.atRestAesKey,
-                      )
-                    : xSecretboxOpen(cipher, nonce, this.atRestAesKey);
-                if (decrypted) {
-                    plaintext = XUtils.encodeUTF8(decrypted);
-                } else {
-                    throw new Error("Couldn't decrypt messages on disk!");
-                }
+                plaintext = await this.openMessagePlaintext(msg.message);
             }
             const direction =
                 msg.direction === "incoming" ? "incoming" : "outgoing";
@@ -955,24 +935,50 @@ export class SqliteStorage extends EventEmitter implements Storage {
         return false;
     }
 
+    private async openMessagePlaintext(stored: string): Promise<string> {
+        if (!stored.startsWith(STORAGE_CIPHERTEXT_PREFIX)) {
+            throw new Error(
+                "Stored message is missing its encryption envelope.",
+            );
+        }
+        const plain = await this.unsealBytes(
+            stored.slice(STORAGE_CIPHERTEXT_PREFIX.length),
+        );
+        return XUtils.encodeUTF8(plain);
+    }
+
+    private async sealBytes(plaintext: Uint8Array): Promise<string> {
+        const nonce = xMakeNonce();
+        const fips = getCryptoProfile() === "fips";
+        const ct = fips
+            ? await xSecretboxAsync(plaintext, nonce, this.atRestAesKey)
+            : xSecretbox(plaintext, nonce, this.atRestAesKey);
+        const sealed = new Uint8Array(nonce.length + ct.length);
+        sealed.set(nonce);
+        sealed.set(ct, nonce.length);
+        return XUtils.encodeHex(sealed);
+    }
+
     /**
      * Encrypt a hex-encoded secret for at-rest storage.
      * Returns hex(nonce || ciphertext) where nonce is 24 random bytes.
      */
     private async sealHex(plainHex: string): Promise<string> {
-        const nonce = xMakeNonce();
-        const fips = getCryptoProfile() === "fips";
-        const ct = fips
-            ? await xSecretboxAsync(
-                  XUtils.decodeHex(plainHex),
-                  nonce,
-                  this.atRestAesKey,
-              )
-            : xSecretbox(XUtils.decodeHex(plainHex), nonce, this.atRestAesKey);
-        const sealed = new Uint8Array(nonce.length + ct.length);
-        sealed.set(nonce);
-        sealed.set(ct, nonce.length);
-        return XUtils.encodeHex(sealed);
+        return this.sealBytes(XUtils.decodeHex(plainHex));
+    }
+
+    private async sealMessagePlaintext(plaintext: string): Promise<string> {
+        return (
+            STORAGE_CIPHERTEXT_PREFIX +
+            (await this.sealBytes(XUtils.decodeUTF8(plaintext)))
+        );
+    }
+
+    private async sealSecretText(plaintext: string): Promise<string> {
+        return (
+            STORAGE_SECRET_TEXT_PREFIX +
+            (await this.sealBytes(XUtils.decodeUTF8(plaintext)))
+        );
     }
 
     private async sessionRowToSQLAsync(row: SessionRow): Promise<SessionSQL> {
@@ -997,7 +1003,7 @@ export class SqliteStorage extends EventEmitter implements Storage {
             RK: rawRK,
             sessionID: row.sessionID,
             SK: rawSK,
-            skippedKeys: row.skippedKeys,
+            skippedKeys: await this.unsealSecretText(row.skippedKeys),
             userID: row.userID,
             verified: row.verified !== 0,
         };
@@ -1027,14 +1033,13 @@ export class SqliteStorage extends EventEmitter implements Storage {
         };
     }
 
-    /**
-     * Decrypt a value produced by sealHex().
-     * Expects hex(nonce || ciphertext), returns the original hex string.
-     */
-    private async unsealHex(sealed: string): Promise<string> {
+    private async unsealBytes(sealed: string): Promise<Uint8Array> {
         const bytes = XUtils.decodeHex(sealed);
-        const nonce = bytes.slice(0, 24);
-        const ct = bytes.slice(24);
+        if (bytes.length < STORAGE_NONCE_BYTES + STORAGE_MAC_BYTES) {
+            throw new Error("Sealed column value is truncated.");
+        }
+        const nonce = bytes.slice(0, STORAGE_NONCE_BYTES);
+        const ct = bytes.slice(STORAGE_NONCE_BYTES);
         const fips = getCryptoProfile() === "fips";
         const plain = fips
             ? await xSecretboxOpenAsync(ct, nonce, this.atRestAesKey)
@@ -1042,21 +1047,41 @@ export class SqliteStorage extends EventEmitter implements Storage {
         if (!plain) {
             throw new Error("Failed to decrypt sealed column value.");
         }
-        return XUtils.encodeHex(plain);
+        return plain;
+    }
+
+    /**
+     * Decrypt a value produced by sealHex().
+     * Expects hex(nonce || ciphertext), returns the original hex string.
+     */
+    private async unsealHex(sealed: string): Promise<string> {
+        return XUtils.encodeHex(await this.unsealBytes(sealed));
+    }
+
+    private async unsealSecretText(stored: string): Promise<string> {
+        if (!stored.startsWith(STORAGE_SECRET_TEXT_PREFIX)) {
+            throw new Error(
+                "Stored secret is missing its encryption envelope.",
+            );
+        }
+        const plain = await this.unsealBytes(
+            stored.slice(STORAGE_SECRET_TEXT_PREFIX.length),
+        );
+        return XUtils.encodeUTF8(plain);
     }
 
     private async untilReady(): Promise<void> {
-        if (this.ready) return;
-        return new Promise((resolve) => {
-            const check = () => {
-                if (this.ready) {
-                    resolve();
-                    return;
-                }
-                setTimeout(check, 10);
-            };
-            check();
-        });
+        if (this.closing) {
+            throw new Error("SqliteStorage is closed.");
+        }
+        if (this.ready) {
+            return;
+        }
+        if (this.initInFlight) {
+            await this.initInFlight;
+        } else {
+            await this.init();
+        }
     }
 }
 

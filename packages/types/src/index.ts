@@ -5,6 +5,8 @@
  */
 
 export {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
+    ACCOUNT_PASSWORD_MIN_LENGTH,
     accountEntitlementCapabilitiesForTier,
     AccountEntitlementCapabilitySchema,
     AccountEntitlementCapabilityValues,
@@ -55,12 +57,16 @@ export {
     MailSQLSchema,
     MailType,
     MailWSSchema,
+    MAX_FILE_UPLOAD_BASE64_LENGTH,
+    MAX_FILE_UPLOAD_BYTES,
+    MAX_FILE_UPLOAD_ENCODED_BODY_BYTES,
     NotifyMsgSchema,
     PasskeyAuthFinishPayloadSchema,
     PasskeyAuthStartPayloadSchema,
     PasskeyRegistrationFinishPayloadSchema,
     PasskeyRegistrationStartPayloadSchema,
     PasskeySchema,
+    PasswordUpdatePayloadSchema,
     PermissionSchema,
     PingMsgSchema,
     PongMsgSchema,
@@ -132,6 +138,7 @@ export type {
     Passkey,
     PasskeyAuthenticationOptions,
     PasskeyRegistrationOptions,
+    PasswordUpdatePayload,
     Permission,
     PingMsg,
     PongMsg,

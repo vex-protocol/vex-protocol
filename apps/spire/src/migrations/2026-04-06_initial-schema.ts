@@ -31,11 +31,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     await db.schema
         .createTable("users")
         .ifNotExists()
-        .addColumn("userID", "varchar(255)", (cb) => cb.primaryKey())
-        .addColumn("username", "varchar(255)", (cb) => cb.unique())
-        .addColumn("passwordHash", "text")
-        .addColumn("passwordSalt", "text")
-        .addColumn("lastSeen", "text")
+        .addColumn("userID", "varchar(255)", (cb) => cb.primaryKey().notNull())
+        .addColumn("username", "varchar(255)", (cb) => cb.unique().notNull())
+        .addColumn("passwordHash", "text", (cb) => cb.notNull())
+        .addColumn("lastSeen", "text", (cb) => cb.notNull())
         .execute();
 
     await db.schema

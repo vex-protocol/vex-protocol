@@ -607,7 +607,12 @@ function removedStoredDeviceError(ctx, username) {
     return err;
 }
 
-async function resolveRegistrationPassword(ctx, args, rl = null) {
+async function resolveRegistrationPassword(
+    ctx,
+    args,
+    rl = null,
+    missingMessage = "Password is required to register a new account. Usage: vex auth register <username> <password> or pass --password <password>.",
+) {
     const provided = args[1] ?? ctx.password;
     if (typeof provided === "string" && provided.trim().length > 0) {
         return provided;
@@ -626,9 +631,7 @@ async function resolveRegistrationPassword(ctx, args, rl = null) {
             }
         }
     }
-    throw new Error(
-        "Password is required to register a new account. Usage: vex auth register <username> <password> or pass --password <password>.",
-    );
+    throw new Error(missingMessage);
 }
 
 async function register(ctx, args) {
@@ -878,11 +881,20 @@ async function loginWithDeviceApproval(ctx, username) {
     }
 
     const { username: accountUsername } = accountRef;
+    const password = await resolveRegistrationPassword(
+        ctx,
+        [accountUsername],
+        null,
+        "Password is required to sign in on a new device. Pass it as the second argument or with --password.",
+    );
     const privateKey = Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
     attachDebugClientEvents(ctx, client, `login-request:${accountUsername}`);
     try {
-        const [, registerErr] = await client.register(accountUsername);
+        const [, registerErr] = await client.requestDeviceEnrollment(
+            accountUsername,
+            password,
+        );
         if (!registerErr) {
             await persistNewLocalAccount(
                 ctx,
@@ -956,9 +968,7 @@ async function waitForDeviceApproval(
     }
 
     const code = matchingCodeStringForSignKey(client.getKeys().public);
-    console.log(
-        `${color(ROOT_ACCENT, "device approval required")} ${color("dim", `request=${pending.requestID}`)}`,
-    );
+    console.log(color(ROOT_ACCENT, "device approval required"));
     console.log(
         `${color("dim", "matching code")} ${formatDeviceApprovalCode(code)}`,
     );
@@ -4591,12 +4601,7 @@ main()
     .then(() => {
         process.exit(0);
     })
-    .catch((err) => {
-        console.error(
-            color(
-                ROOT_ACCENT,
-                err instanceof Error ? err.message : String(err),
-            ),
-        );
+    .catch(() => {
+        console.error(color(ROOT_ACCENT, "Vex command failed."));
         process.exit(1);
     });

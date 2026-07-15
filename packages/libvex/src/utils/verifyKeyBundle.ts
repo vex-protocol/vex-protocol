@@ -9,13 +9,10 @@ import type { Device, KeyBundle, KeyBundleEntry } from "@vex-chat/types";
 
 import {
     fipsEcdhRawPublicKeyFromEcdsaSpkiAsync,
-    xConstants,
-    xEncode,
+    xPreKeySignaturePayload,
     xSignOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
-
-import { fipsP256PreKeySignPayload } from "./fipsMailExtra.js";
 
 export async function verifyKeyBundleSignatures(
     keyBundle: KeyBundle,
@@ -37,7 +34,7 @@ export async function verifyKeyBundleSignatures(
         device,
         deviceSignKey,
         cryptoProfile,
-        "signed prekey",
+        "signed",
     );
 
     if (keyBundle.otk) {
@@ -46,7 +43,7 @@ export async function verifyKeyBundleSignatures(
             device,
             deviceSignKey,
             cryptoProfile,
-            "one-time prekey",
+            "one-time",
         );
     }
 }
@@ -56,19 +53,22 @@ async function verifyKeyBundleEntrySignature(
     device: Device,
     deviceSignKey: Uint8Array,
     cryptoProfile: CryptoProfile,
-    label: string,
+    kind: "one-time" | "signed",
 ): Promise<void> {
     if (entry.deviceID !== device.deviceID) {
-        throw new Error(`Key bundle ${label} belongs to a different device.`);
+        throw new Error(
+            `Key bundle ${kind} prekey belongs to a different device.`,
+        );
     }
 
-    const payload =
-        cryptoProfile === "fips"
-            ? fipsP256PreKeySignPayload(entry.publicKey)
-            : xEncode(xConstants.CURVE, entry.publicKey);
+    const payload = xPreKeySignaturePayload(
+        entry.publicKey,
+        kind,
+        cryptoProfile,
+    );
     const opened = await xSignOpenAsync(entry.signature, deviceSignKey);
 
     if (!opened || !XUtils.bytesEqual(opened, payload)) {
-        throw new Error(`Key bundle ${label} signature is invalid.`);
+        throw new Error(`Key bundle ${kind} prekey signature is invalid.`);
     }
 }

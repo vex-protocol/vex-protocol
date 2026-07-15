@@ -7,8 +7,7 @@
 import {
     setCryptoProfile,
     xBoxKeyPairAsync,
-    xConstants,
-    xEncode,
+    xPreKeySignaturePayload,
     xSignAsync,
     xSignKeyPair,
     XUtils,
@@ -25,7 +24,7 @@ async function makeSignedPreKey() {
     const signKeys = xSignKeyPair();
     const preKey = await xBoxKeyPairAsync();
     const signature = await xSignAsync(
-        xEncode(xConstants.CURVE, preKey.publicKey),
+        xPreKeySignaturePayload(preKey.publicKey, "signed"),
         signKeys.secretKey,
     );
     return { preKey, signature, signKeys };
@@ -55,6 +54,7 @@ describe("prekey signature validation", () => {
                     signature,
                 },
                 XUtils.encodeHex(signKeys.publicKey),
+                "signed",
             ),
         ).resolves.toBe(true);
     });
@@ -69,6 +69,23 @@ describe("prekey signature validation", () => {
                 preKeySignature: XUtils.encodeHex(stale.signature),
                 signKey: XUtils.encodeHex(currentSignKeys.publicKey),
             }),
+        ).resolves.toBe(false);
+    });
+
+    it("does not accept a signed prekey as a one-time prekey", async () => {
+        const { preKey, signature, signKeys } = await makeSignedPreKey();
+
+        await expect(
+            verifyPreKeyWsSignature(
+                {
+                    deviceID: "device-a",
+                    index: 1,
+                    publicKey: preKey.publicKey,
+                    signature,
+                },
+                XUtils.encodeHex(signKeys.publicKey),
+                "one-time",
+            ),
         ).resolves.toBe(false);
     });
 });

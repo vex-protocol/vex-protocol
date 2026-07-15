@@ -86,6 +86,7 @@ export const getPasskeyDeviceRouter = (
             // "I lost my phone, sign in with the passkey, wipe the
             // old device, then recover onto a new one."
             await db.deleteDevice(deviceID);
+            disconnectDevices?.([deviceID]);
             // Tell whoever's online that the device-list shape
             // changed; clients use this to refresh the Settings →
             // Devices view in real time.

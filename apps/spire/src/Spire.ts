@@ -31,13 +31,13 @@ import {
     xSignKeyPairFromSecretAsync,
 } from "@vex-chat/crypto";
 import {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
     MailWSSchema,
     RegistrationPayloadSchema,
     TokenScopes,
     UserSchema,
 } from "@vex-chat/types";
 
-import jwt from "jsonwebtoken";
 import morgan from "morgan";
 import { stringify as uuidStringify } from "uuid";
 import { WebSocketServer } from "ws";
@@ -45,7 +45,13 @@ import { z } from "zod/v4";
 
 import { CallManager } from "./CallManager.ts";
 import { ClientManager } from "./ClientManager.ts";
-import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
+import {
+    Database,
+    hashPasswordArgon2,
+    MAX_ACTIVE_DEVICES_PER_USER,
+    validateAccountPassword,
+    verifyPassword,
+} from "./Database.ts";
 import { resolveIceServersFromEnv } from "./IceServers.ts";
 import { NotificationService } from "./NotificationService.ts";
 import { initApp, protect } from "./server/index.ts";
@@ -53,18 +59,23 @@ import {
     MailIngressValidationError,
     validateMailIngress,
 } from "./server/mailIngress.ts";
-import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
+import {
+    accountAuthLimiter,
+    authLimiter,
+    devApiKeySkipsRateLimits,
+} from "./server/rateLimit.ts";
 import { createPendingDeviceEnrollmentRequest } from "./server/user.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { resolveSpireListenPort } from "./spireListenPort.ts";
-import { getJwtSecret } from "./utils/jwtSecret.ts";
+import { signAuthJwt, verifyAuthJwt } from "./utils/authJwt.ts";
 import { msgpack } from "./utils/msgpack.ts";
+import { verifyDevicePayloadPreKeySignature } from "./utils/preKeySignature.ts";
 import { spireXSignOpenAsync } from "./utils/spireXSignOpenAsync.ts";
 
-// expiry of regkeys = 24hr
+// One-use action tokens expire after ten minutes.
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
-export const JWT_EXPIRY = "7d";
-export const DEVICE_AUTH_JWT_EXPIRY = "7d";
+export const JWT_EXPIRY = "1h";
+export const DEVICE_AUTH_JWT_EXPIRY = "1h";
 /**
  * Passkey-scoped JWTs grant destructive admin powers (delete a
  * device, recover a device enrollment) without further user
@@ -76,6 +87,8 @@ const DEVICE_CHALLENGE_EXPIRY = 1000 * 60; // 60 seconds
 
 // 3-19 chars long
 const usernameRegex = /^(\w{3,19})$/;
+const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ── Zod schemas for trust-boundary validation ──────────────────────────
 const wsAuthMsg = z.object({
@@ -86,26 +99,65 @@ const wsAuthMsg = z.object({
 const jwtPayload = z.object({
     bearerToken: z.string().optional(),
     exp: z.number().optional(),
+    scope: z.literal("user"),
     user: UserSchema,
 });
 
 const authPayload = z.object({
-    password: z.string().min(1),
-    username: z.string().min(1),
+    password: z.string().min(1).max(ACCOUNT_PASSWORD_MAX_LENGTH),
+    username: z.string().trim().min(3).max(19).regex(usernameRegex),
+});
+
+const boundedRegistrationPayload = z.object({
+    deviceName: z.string().trim().min(1).max(100),
+    intent: z.enum(["create-account", "enroll-device"]),
+    password: z.string().max(ACCOUNT_PASSWORD_MAX_LENGTH).optional(),
+    preKey: z
+        .string()
+        .min(2)
+        .max(8192)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
+    preKeyIndex: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    preKeySignature: z
+        .string()
+        .min(2)
+        .max(16_384)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
+    signed: z
+        .string()
+        .min(2)
+        .max(8192)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
+    signKey: z
+        .string()
+        .min(2)
+        .max(8192)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
+    username: z.string().trim().min(3).max(19).regex(usernameRegex).optional(),
 });
 
 const deviceAuthPayload = z.object({
-    deviceID: z.string().min(1),
-    signKey: z.string().min(1),
+    deviceID: z.string().regex(uuidRegex),
+    signKey: z
+        .string()
+        .min(64)
+        .max(8192)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
 });
 
 const deviceVerifyPayload = z.object({
-    challengeID: z.string().min(1),
-    signed: z.string().min(1),
+    challengeID: z.string().regex(uuidRegex),
+    signed: z
+        .string()
+        .min(2)
+        .max(16_384)
+        .regex(/^(?:[0-9a-fA-F]{2})+$/),
 });
 
 const mailPostPayload = z.object({
-    header: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
+    header: z.custom<Uint8Array>(
+        (val) => val instanceof Uint8Array && val.byteLength === 32,
+    ),
     mail: MailWSSchema,
 });
 const MAIL_BATCH_MAX_ITEMS = 256;
@@ -131,9 +183,9 @@ interface ValidatedMailBatchEntry {
 
 const notificationSubscribePayload = z.object({
     channel: z.literal("expo"),
-    events: z.array(z.string().min(1)).default(["mail"]),
+    events: z.array(z.string().min(1).max(64)).max(32).default(["mail"]),
     platform: z.enum(["android", "ios", "web"]).optional(),
-    token: z.string().min(1),
+    token: z.string().min(1).max(4096),
 });
 
 const directories = ["files", "avatars", "emoji"];
@@ -194,6 +246,19 @@ export interface SpireOptions {
     dbType?: "mysql" | "sqlite3" | "sqlite3mem" | "sqlite";
 }
 
+export function resolveTrustProxyHops(value: string | undefined): number {
+    if (value === undefined || value.trim() === "") {
+        return 0;
+    }
+    const hops = Number(value);
+    if (!Number.isInteger(hops) || hops < 0 || hops > 10) {
+        throw new Error(
+            "SPIRE_TRUST_PROXY_HOPS must be an integer from 0 to 10.",
+        );
+    }
+    return hops;
+}
+
 /**
  * Masks identifying material in the access-log URL: hyphenated UUIDs, and
  * `/device/...` path segments that hold public-key material (32B ed25519 hex, or
@@ -213,7 +278,7 @@ function redactAccessLogUrl(url: string): string {
 let pendingFipsKeyPair: KeyPair | null = null;
 
 export class Spire extends EventEmitter {
-    private actionTokens: ActionToken[] = [];
+    private actionTokens = new Map<string, ActionToken>();
     private api = express();
     private calls: CallManager;
     private clients: ClientManager[] = [];
@@ -258,12 +323,13 @@ export class Spire extends EventEmitter {
             this.signKeys = xSignKeyPairFromSecret(XUtils.decodeHex(SK));
         }
 
-        // Trust a single proxy hop (nginx / cloudflare / load balancer).
-        // Required so `req.ip` and `express-rate-limit`'s keyGenerator see
-        // the real client address via X-Forwarded-For. Never use `true` —
-        // that lets attackers spoof the header and bypass rate limiting.
-        // If spire is deployed without a proxy, set this to 0 instead.
-        this.api.set("trust proxy", 1);
+        // Proxy trust must match the deployment topology. Defaulting to zero
+        // prevents direct deployments from accepting attacker-supplied
+        // X-Forwarded-For values and bypassing IP rate limits.
+        this.api.set(
+            "trust proxy",
+            resolveTrustProxyHops(process.env["SPIRE_TRUST_PROXY_HOPS"]),
+        );
         this.api.disable("etag");
 
         this.db = new Database(options);
@@ -359,20 +425,18 @@ export class Spire extends EventEmitter {
     }
 
     private createActionToken(scope: TokenScopes): ActionToken {
+        this.pruneActionTokens();
         const token: ActionToken = {
             key: crypto.randomUUID(),
             scope,
             time: new Date().toISOString(),
         };
-        this.actionTokens.push(token);
+        this.actionTokens.set(token.key, token);
         return token;
     }
 
     private deleteActionToken(key: ActionToken) {
-        const idx = this.actionTokens.indexOf(key);
-        if (idx !== -1) {
-            this.actionTokens.splice(idx, 1);
-        }
+        this.actionTokens.delete(key.key);
     }
 
     private disconnectDevices(deviceIDs: string[]): void {
@@ -454,10 +518,7 @@ export class Spire extends EventEmitter {
                                 JSON.stringify(authResult.error.issues),
                         );
                     }
-                    const result = jwt.verify(
-                        authResult.data.token,
-                        getJwtSecret(),
-                    );
+                    const result = verifyAuthJwt(authResult.data.token);
                     const jwtResult = jwtPayload.safeParse(result);
                     if (!jwtResult.success) {
                         throw new Error(
@@ -689,9 +750,10 @@ export class Spire extends EventEmitter {
             }
         });
 
-        this.api.post("/goodbye", protect, (req, res) => {
-            jwt.sign({ user: req.user }, getJwtSecret(), { expiresIn: -1 });
-            res.sendStatus(200);
+        this.api.post("/goodbye", protect, (_req, res) => {
+            // Access tokens are stateless. Clients clear them locally; this
+            // endpoint exists only as a clean session boundary for callers.
+            res.sendStatus(204);
         });
 
         // ── Device-key auth ──────────────────────────────────────────
@@ -794,11 +856,10 @@ export class Spire extends EventEmitter {
                         .send({ error: "Device owner not found." });
                 }
 
-                // Issue short-lived JWT (1 hour, not 7 days)
-                const token = jwt.sign(
-                    { user: censorUser(user) },
-                    getJwtSecret(),
-                    { expiresIn: DEVICE_AUTH_JWT_EXPIRY },
+                // Device proof restores the same bounded account session as password login.
+                const token = signAuthJwt(
+                    { scope: "user", user: censorUser(user) },
+                    DEVICE_AUTH_JWT_EXPIRY,
                 );
                 return res.send(
                     msgpack.encode({ token, user: censorUser(user) }),
@@ -1058,263 +1119,336 @@ export class Spire extends EventEmitter {
             },
         );
 
-        this.api.post("/auth", authLimiter, async (req, res) => {
-            const parsed = authPayload.safeParse(req.body);
-            if (!parsed.success) {
-                res.status(400).json({
-                    error: "Invalid credentials format",
-                });
-                return;
-            }
-            const { password, username } = parsed.data;
-
-            try {
-                const userEntry = await this.db.retrieveUser(username);
-                if (!userEntry) {
-                    res.sendStatus(401);
-                    return;
-                }
-
-                const { needsRehash, valid } = await verifyPassword(
-                    password,
-                    userEntry,
-                );
-
-                if (!valid) {
-                    res.sendStatus(401);
-                    return;
-                }
-
-                if (needsRehash) {
-                    const newHash = await hashPasswordArgon2(password);
-                    await this.db.rehashPassword(userEntry.userID, newHash);
-                }
-
-                const token = jwt.sign(
-                    { user: censorUser(userEntry) },
-                    getJwtSecret(),
-                    { expiresIn: JWT_EXPIRY },
-                );
-
-                // just to make sure
-                jwt.verify(token, getJwtSecret());
-
-                res.send(
-                    msgpack.encode({ token, user: censorUser(userEntry) }),
-                );
-            } catch (_err: unknown) {
-                // debugger: auth error
-                res.sendStatus(500);
-            }
-        });
-
-        this.api.post("/register", authLimiter, async (req, res) => {
-            try {
-                const regParsed = RegistrationPayloadSchema.safeParse(req.body);
-                if (!regParsed.success) {
+        this.api.post(
+            "/auth",
+            authLimiter,
+            accountAuthLimiter,
+            async (req, res) => {
+                const parsed = authPayload.safeParse(req.body);
+                if (!parsed.success) {
                     res.status(400).json({
-                        error: "Invalid registration payload",
-                        issues: regParsed.error.issues,
+                        error: "Invalid credentials format",
                     });
                     return;
                 }
-                const regPayload = regParsed.data;
-                if (
-                    regPayload.username !== undefined &&
-                    !usernameRegex.test(regPayload.username)
-                ) {
-                    res.status(400).send({
-                        error: "Username must be between three and nineteen letters, digits, or underscores.",
-                    });
-                    return;
-                }
-                const normalizedPayload = {
-                    ...regPayload,
-                    username: normalizeRegistrationUsername(
-                        regPayload.username,
-                        regPayload.signKey,
-                    ),
-                };
+                const { password } = parsed.data;
+                const username = parsed.data.username.toLowerCase();
 
-                const regKey = await spireXSignOpenAsync(
-                    XUtils.decodeHex(normalizedPayload.signed),
-                    XUtils.decodeHex(normalizedPayload.signKey),
-                );
-
-                if (
-                    regKey &&
-                    regKey.length === 16 &&
-                    this.validateToken(
-                        uuidStringify(regKey),
-                        TokenScopes.Register,
-                    )
-                ) {
-                    const existingUser = await this.db.retrieveUser(
-                        normalizedPayload.username,
-                    );
-                    if (existingUser) {
-                        const existingBySignKey = await this.db.retrieveDevice(
-                            normalizedPayload.signKey,
-                        );
-                        if (existingBySignKey) {
-                            res.status(400).send({
-                                error: "Public key is already registered.",
-                            });
-                            return;
-                        }
-                        let requesterPasskeyID: string | undefined;
-                        if (req.passkey?.passkeyID) {
-                            const passkey =
-                                await this.db.retrievePasskeyInternal(
-                                    req.passkey.passkeyID,
-                                );
-                            if (
-                                !passkey ||
-                                passkey.userID !== existingUser.userID
-                            ) {
-                                res.status(403).send({
-                                    error: "Passkey verification does not match this account.",
-                                });
-                                return;
-                            }
-                            requesterPasskeyID = req.passkey.passkeyID;
-                        } else {
-                            if (
-                                typeof normalizedPayload.password !==
-                                    "string" ||
-                                normalizedPayload.password.trim().length === 0
-                            ) {
-                                res.status(401).send({
-                                    error: "Password is required to add this device.",
-                                });
-                                return;
-                            }
-                            const { needsRehash, valid } = await verifyPassword(
-                                normalizedPayload.password,
-                                existingUser,
-                            );
-                            if (!valid) {
-                                res.sendStatus(401);
-                                return;
-                            }
-                            if (needsRehash) {
-                                const newHash = await hashPasswordArgon2(
-                                    normalizedPayload.password,
-                                );
-                                await this.db.rehashPassword(
-                                    existingUser.userID,
-                                    newHash,
-                                );
-                            }
-                        }
-                        const pendingResponse =
-                            createPendingDeviceEnrollmentRequest(
-                                existingUser.userID,
-                                normalizedPayload,
-                                this.notify.bind(this),
-                                {
-                                    deferOwnerNotification: true,
-                                    ...(requesterPasskeyID
-                                        ? { requesterPasskeyID }
-                                        : {}),
-                                },
-                            );
-                        res.status(202).send(msgpack.encode(pendingResponse));
+                try {
+                    const userEntry = await this.db.retrieveUser(username);
+                    if (!userEntry) {
+                        await verifyPassword(password, null);
+                        res.sendStatus(401);
                         return;
                     }
-                    if (
-                        typeof normalizedPayload.password !== "string" ||
-                        normalizedPayload.password.trim().length === 0
-                    ) {
-                        res.status(400).send({
-                            error: "Password is required to register a new account.",
+
+                    const { needsRehash, valid } = await verifyPassword(
+                        password,
+                        userEntry,
+                    );
+
+                    if (!valid) {
+                        res.sendStatus(401);
+                        return;
+                    }
+
+                    if (needsRehash) {
+                        const newHash = await hashPasswordArgon2(password);
+                        await this.db.rehashPassword(userEntry.userID, newHash);
+                    }
+
+                    const token = signAuthJwt(
+                        { scope: "user", user: censorUser(userEntry) },
+                        JWT_EXPIRY,
+                    );
+
+                    res.send(
+                        msgpack.encode({ token, user: censorUser(userEntry) }),
+                    );
+                } catch (_err: unknown) {
+                    // debugger: auth error
+                    res.sendStatus(500);
+                }
+            },
+        );
+
+        this.api.post(
+            "/register",
+            authLimiter,
+            accountAuthLimiter,
+            async (req, res) => {
+                try {
+                    const regParsed = RegistrationPayloadSchema.safeParse(
+                        req.body,
+                    );
+                    if (!regParsed.success) {
+                        res.status(400).json({
+                            error: "Invalid registration payload",
+                            issues: regParsed.error.issues,
                         });
                         return;
                     }
-                    const [user, err] = await this.db.createUser(
-                        regKey,
-                        normalizedPayload,
-                    );
-                    if (err !== null) {
-                        const errCode =
-                            "code" in err && typeof err.code === "string"
-                                ? err.code
-                                : undefined;
-                        const errText = String(err);
-                        const usernameConflict =
-                            errText.includes("users_username_unique") ||
-                            errText.includes("users.username");
-                        const signKeyConflict =
-                            errText.includes("devices_signKey_unique") ||
-                            errText.includes("devices.signKey");
-                        const isUniqueConstraint =
-                            errCode === "ER_DUP_ENTRY" ||
-                            errCode === "SQLITE_CONSTRAINT_UNIQUE" ||
-                            errText.includes("UNIQUE constraint failed");
-                        if (isUniqueConstraint && usernameConflict) {
-                            res.status(400).send({
-                                error: "Username is already registered.",
-                            });
-                            return;
-                        }
-                        if (isUniqueConstraint && signKeyConflict) {
-                            res.status(400).send({
-                                error: "Public key is already registered.",
-                            });
-                            return;
-                        }
-                        res.sendStatus(500);
-                    } else {
-                        if (!user) {
-                            res.sendStatus(500);
-                            return;
-                        }
-                        const device = await this.db.retrieveDevice(
-                            normalizedPayload.signKey,
-                        );
-                        if (!device) {
-                            res.sendStatus(500);
-                            return;
-                        }
-                        const censored = censorUser(user);
-                        const token = jwt.sign(
-                            { user: censored },
-                            getJwtSecret(),
-                            { expiresIn: JWT_EXPIRY },
-                        );
-                        jwt.verify(token, getJwtSecret());
-                        res.send(
-                            msgpack.encode({
-                                device,
-                                token,
-                                user: censored,
-                            }),
-                        );
+                    const regPayload = regParsed.data;
+                    const bounded =
+                        boundedRegistrationPayload.safeParse(regPayload);
+                    if (!bounded.success) {
+                        res.status(400).json({
+                            error: "Invalid registration payload",
+                            issues: bounded.error.issues,
+                        });
+                        return;
                     }
-                } else if (regKey && regKey.length !== 16) {
-                    res.status(400).send({
-                        error: "Invalid registration token payload.",
-                    });
-                } else {
-                    res.status(400).send({
-                        error: "Invalid or no token supplied.",
+                    if (!usernameRegex.test(regPayload.username)) {
+                        res.status(400).send({
+                            error: "Username must be between three and nineteen letters, digits, or underscores.",
+                        });
+                        return;
+                    }
+                    const normalizedPayload = {
+                        ...regPayload,
+                        username: normalizeRegistrationUsername(
+                            regPayload.username,
+                        ),
+                    };
+
+                    const regKey = await spireXSignOpenAsync(
+                        XUtils.decodeHex(normalizedPayload.signed),
+                        XUtils.decodeHex(normalizedPayload.signKey),
+                    );
+
+                    if (
+                        regKey &&
+                        regKey.length === 16 &&
+                        this.validateToken(
+                            uuidStringify(regKey),
+                            TokenScopes.Register,
+                        )
+                    ) {
+                        if (
+                            !(await verifyDevicePayloadPreKeySignature(
+                                normalizedPayload,
+                            ))
+                        ) {
+                            res.status(400).send({
+                                error: "Signed prekey signature is invalid.",
+                            });
+                            return;
+                        }
+                        const existingUser = await this.db.retrieveUser(
+                            normalizedPayload.username,
+                        );
+                        if (
+                            normalizedPayload.intent === "create-account" &&
+                            existingUser
+                        ) {
+                            res.status(409).send({
+                                error: "Username is already registered. Sign in instead.",
+                            });
+                            return;
+                        }
+                        if (
+                            normalizedPayload.intent === "enroll-device" &&
+                            !existingUser
+                        ) {
+                            await verifyPassword(
+                                normalizedPayload.password ?? "",
+                                null,
+                            );
+                            res.status(401).send({
+                                error: "Invalid username or password.",
+                            });
+                            return;
+                        }
+                        if (existingUser) {
+                            const existingBySignKey =
+                                await this.db.retrieveDevice(
+                                    normalizedPayload.signKey,
+                                );
+                            if (existingBySignKey) {
+                                res.status(400).send({
+                                    error: "Public key is already registered.",
+                                });
+                                return;
+                            }
+                            let requesterPasskeyID: string | undefined;
+                            if (req.passkey?.passkeyID) {
+                                const passkey =
+                                    await this.db.retrievePasskeyInternal(
+                                        req.passkey.passkeyID,
+                                    );
+                                if (
+                                    !passkey ||
+                                    passkey.userID !== existingUser.userID
+                                ) {
+                                    res.status(403).send({
+                                        error: "Passkey verification does not match this account.",
+                                    });
+                                    return;
+                                }
+                                requesterPasskeyID = req.passkey.passkeyID;
+                            } else {
+                                if (
+                                    typeof normalizedPayload.password !==
+                                        "string" ||
+                                    normalizedPayload.password.trim().length ===
+                                        0
+                                ) {
+                                    res.status(401).send({
+                                        error: "Password is required to add this device.",
+                                    });
+                                    return;
+                                }
+                                const { needsRehash, valid } =
+                                    await verifyPassword(
+                                        normalizedPayload.password,
+                                        existingUser,
+                                    );
+                                if (!valid) {
+                                    res.sendStatus(401);
+                                    return;
+                                }
+                                if (needsRehash) {
+                                    const newHash = await hashPasswordArgon2(
+                                        normalizedPayload.password,
+                                    );
+                                    await this.db.rehashPassword(
+                                        existingUser.userID,
+                                        newHash,
+                                    );
+                                }
+                            }
+                            const activeDevices =
+                                await this.db.retrieveUserDeviceList([
+                                    existingUser.userID,
+                                ]);
+                            if (
+                                activeDevices.length >=
+                                MAX_ACTIVE_DEVICES_PER_USER
+                            ) {
+                                res.status(409).send({
+                                    error: `Each account is limited to ${String(MAX_ACTIVE_DEVICES_PER_USER)} active devices. Remove an old device before adding another.`,
+                                });
+                                return;
+                            }
+                            const pendingResponse =
+                                createPendingDeviceEnrollmentRequest(
+                                    existingUser.userID,
+                                    normalizedPayload,
+                                    this.notify.bind(this),
+                                    {
+                                        deferOwnerNotification: true,
+                                        ...(requesterPasskeyID
+                                            ? { requesterPasskeyID }
+                                            : {}),
+                                    },
+                                );
+                            res.status(202).send(
+                                msgpack.encode(pendingResponse),
+                            );
+                            return;
+                        }
+                        if (
+                            typeof normalizedPayload.password !== "string" ||
+                            normalizedPayload.password.trim().length === 0
+                        ) {
+                            res.status(400).send({
+                                error: "Password is required to register a new account.",
+                            });
+                            return;
+                        }
+                        const passwordError = validateAccountPassword(
+                            normalizedPayload.password,
+                            normalizedPayload.username,
+                        );
+                        if (passwordError) {
+                            res.status(400).send({
+                                error: passwordError,
+                            });
+                            return;
+                        }
+                        const [user, err] = await this.db.createUser(
+                            regKey,
+                            normalizedPayload,
+                        );
+                        if (err !== null) {
+                            const errCode =
+                                "code" in err && typeof err.code === "string"
+                                    ? err.code
+                                    : undefined;
+                            const errText = String(err);
+                            const usernameConflict =
+                                errText.includes("users_username_unique") ||
+                                errText.includes("users.username");
+                            const signKeyConflict =
+                                errText.includes("devices_signKey_unique") ||
+                                errText.includes("devices.signKey");
+                            const isUniqueConstraint =
+                                errCode === "ER_DUP_ENTRY" ||
+                                errCode === "SQLITE_CONSTRAINT_UNIQUE" ||
+                                errText.includes("UNIQUE constraint failed");
+                            if (isUniqueConstraint && usernameConflict) {
+                                res.status(400).send({
+                                    error: "Username is already registered.",
+                                });
+                                return;
+                            }
+                            if (isUniqueConstraint && signKeyConflict) {
+                                res.status(400).send({
+                                    error: "Public key is already registered.",
+                                });
+                                return;
+                            }
+                            res.sendStatus(500);
+                        } else {
+                            if (!user) {
+                                res.sendStatus(500);
+                                return;
+                            }
+                            const device = await this.db.retrieveDevice(
+                                normalizedPayload.signKey,
+                            );
+                            if (!device) {
+                                res.sendStatus(500);
+                                return;
+                            }
+                            const censored = censorUser(user);
+                            const token = signAuthJwt(
+                                { scope: "user", user: censored },
+                                JWT_EXPIRY,
+                            );
+                            res.send(
+                                msgpack.encode({
+                                    device,
+                                    token,
+                                    user: censored,
+                                }),
+                            );
+                        }
+                    } else if (regKey && regKey.length !== 16) {
+                        res.status(400).send({
+                            error: "Invalid registration token payload.",
+                        });
+                    } else {
+                        res.status(400).send({
+                            error: "Invalid or no token supplied.",
+                        });
+                    }
+                } catch (err: unknown) {
+                    const requestId = crypto.randomUUID();
+                    const message =
+                        err instanceof Error ? err.message : String(err);
+                    console.error(
+                        `[spire] /register failed requestId=${requestId} profile=${this.cryptoProfile} message=${message}`,
+                    );
+                    if (err instanceof Error && err.stack) {
+                        console.error(err.stack);
+                    }
+                    res.status(500).json({
+                        error: `Registration failed. requestId=${requestId}`,
                     });
                 }
-            } catch (err: unknown) {
-                const requestId = crypto.randomUUID();
-                const message =
-                    err instanceof Error ? err.message : String(err);
-                console.error(
-                    `[spire] /register failed requestId=${requestId} profile=${this.cryptoProfile} message=${message}`,
-                );
-                if (err instanceof Error && err.stack) {
-                    console.error(err.stack);
-                }
-                res.status(500).json({
-                    error: `Registration failed. requestId=${requestId}`,
-                });
-            }
-        });
+            },
+        );
 
         this.server = this.api.listen(apiPort);
 
@@ -1346,6 +1480,18 @@ export class Spire extends EventEmitter {
         });
     }
 
+    private pruneActionTokens(now = Date.now()): void {
+        for (const [key, token] of this.actionTokens) {
+            const createdAt = new Date(token.time).getTime();
+            if (
+                !Number.isFinite(createdAt) ||
+                now - createdAt >= TOKEN_EXPIRY
+            ) {
+                this.actionTokens.delete(key);
+            }
+        }
+    }
+
     private removeClient(client: ClientManager): void {
         const idx = this.clients.indexOf(client);
         if (idx !== -1) {
@@ -1354,20 +1500,13 @@ export class Spire extends EventEmitter {
     }
 
     private validateToken(key: string, scope: TokenScopes): boolean {
-        for (const rKey of this.actionTokens) {
-            if (rKey.key === key) {
-                if (rKey.scope !== scope) {
-                    continue;
-                }
-
-                const age = Date.now() - new Date(rKey.time).getTime();
-                if (age < TOKEN_EXPIRY) {
-                    this.deleteActionToken(rKey);
-                    return true;
-                }
-            }
+        this.pruneActionTokens();
+        const token = this.actionTokens.get(key);
+        if (!token || token.scope !== scope) {
+            return false;
         }
-        return false;
+        this.deleteActionToken(token);
+        return true;
     }
 }
 
@@ -1375,19 +1514,7 @@ export class Spire extends EventEmitter {
 // `user` must resolve to the same account. We canonicalize to
 // lowercase at the registration boundary so the persisted row, the
 // UNIQUE index, and every downstream lookup all agree on a single
-// representation. Lookups in `Database.retrieveUser` also fold case
-// at compare time so legacy mixed-case rows still resolve.
-function normalizeRegistrationUsername(
-    username: string | undefined,
-    signKeyHex: string,
-): string {
-    const trimmed = username?.trim().toLowerCase();
-    if (trimmed && trimmed.length > 0) {
-        return trimmed;
-    }
-    const seed = signKeyHex
-        .toLowerCase()
-        .replace(/[^a-f0-9]/g, "")
-        .slice(0, 12);
-    return `key_${seed}`;
+// representation. `Database.retrieveUser` applies the same normalization.
+function normalizeRegistrationUsername(username: string): string {
+    return username.trim().toLowerCase();
 }

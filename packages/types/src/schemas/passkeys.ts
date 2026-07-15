@@ -129,7 +129,7 @@ export const PasskeyAuthStartPayloadSchema: z.ZodType<{
     username: string;
 }> = z
     .object({
-        username: z.string().min(1).max(255),
+        username: z.string().trim().min(3).max(19).regex(/^\w+$/),
     })
     .describe("Begin passkey authentication");
 

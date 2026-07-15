@@ -7,6 +7,72 @@
 import { z } from 'zod/v4';
 
 // @public
+export const ACCOUNT_PASSWORD_MAX_LENGTH = 1024;
+
+// @public
+export const ACCOUNT_PASSWORD_MIN_LENGTH = 15;
+
+// @public (undocumented)
+export function accountEntitlementCapabilitiesForTier(tier: AccountTier): Record<AccountEntitlementCapability, boolean>;
+
+// @public (undocumented)
+export type AccountEntitlementCapability = (typeof AccountEntitlementCapabilityValues)[number];
+
+// @public (undocumented)
+export const AccountEntitlementCapabilitySchema: z.ZodType<AccountEntitlementCapability>;
+
+// @public (undocumented)
+export const AccountEntitlementCapabilityValues: readonly ["attachments.encrypted_uploads", "calls.relay_priority", "devices.additional_slots", "identity.profile_customization", "servers.custom_invites", "servers.custom_profile", "servers.extended_assets"];
+
+// @public (undocumented)
+export type AccountEntitlementLimit = (typeof AccountEntitlementLimitValues)[number];
+
+// @public (undocumented)
+export const AccountEntitlementLimitSchema: z.ZodType<AccountEntitlementLimit>;
+
+// @public (undocumented)
+export function accountEntitlementLimitsForTier(tier: AccountTier): Record<AccountEntitlementLimit, number>;
+
+// @public (undocumented)
+export const AccountEntitlementLimitValues: readonly ["attachments.max_encrypted_bytes", "devices.max_trusted_devices", "identity.max_profile_assets", "servers.max_custom_invites", "servers.max_emoji_slots", "servers.max_sticker_slots"];
+
+// @public (undocumented)
+export interface AccountEntitlements {
+    // (undocumented)
+    capabilities: Record<AccountEntitlementCapability, boolean>;
+    // (undocumented)
+    expiresAt: null | string;
+    // (undocumented)
+    limits: Record<AccountEntitlementLimit, number>;
+    // (undocumented)
+    refreshedAt: string;
+    // (undocumented)
+    source: AccountEntitlementSource;
+    // (undocumented)
+    tier: AccountTier;
+    // (undocumented)
+    userID: string;
+}
+
+// @public (undocumented)
+export type AccountEntitlementSource = "default" | "dev_override" | "store";
+
+// @public (undocumented)
+export const AccountEntitlementSourceSchema: z.ZodType<AccountEntitlementSource>;
+
+// @public (undocumented)
+export const AccountEntitlementsSchema: z.ZodType<AccountEntitlements>;
+
+// @public (undocumented)
+export type AccountTier = (typeof AccountTierValues)[number];
+
+// @public (undocumented)
+export const AccountTierSchema: z.ZodType<AccountTier>;
+
+// @public (undocumented)
+export const AccountTierValues: readonly ["free", "plus", "pro"];
+
+// @public
 export interface ActionToken {
     // (undocumented)
     key: string;
@@ -18,6 +84,28 @@ export interface ActionToken {
 
 // @public
 export const ActionTokenSchema: z.ZodType<ActionToken>;
+
+// @public (undocumented)
+export interface AppleServerNotificationRequest {
+    // (undocumented)
+    signedPayload: string;
+}
+
+// @public (undocumented)
+export const AppleServerNotificationRequestSchema: z.ZodType<AppleServerNotificationRequest>;
+
+// @public (undocumented)
+export interface AppleTransactionVerificationRequest {
+    // (undocumented)
+    environment?: BillingEnvironment | undefined;
+    // (undocumented)
+    signedTransactionInfo?: string | undefined;
+    // (undocumented)
+    transactionID?: string | undefined;
+}
+
+// @public (undocumented)
+export const AppleTransactionVerificationRequestSchema: z.ZodType<AppleTransactionVerificationRequest>;
 
 // @public
 export interface AuthorizedMsg extends BaseMsg {
@@ -38,6 +126,198 @@ export interface BaseMsg {
 
 // @public
 export const BaseMsgSchema: z.ZodType<BaseMsg>;
+
+// @public (undocumented)
+export interface BillingAccountState {
+    // (undocumented)
+    entitlements: AccountEntitlements;
+    // (undocumented)
+    subscriptions: BillingSubscription[];
+}
+
+// @public (undocumented)
+export const BillingAccountStateSchema: z.ZodType<BillingAccountState>;
+
+// @public (undocumented)
+export type BillingEnvironment = (typeof BillingEnvironmentValues)[number];
+
+// @public (undocumented)
+export const BillingEnvironmentSchema: z.ZodType<BillingEnvironment>;
+
+// @public (undocumented)
+export const BillingEnvironmentValues: readonly ["production", "sandbox"];
+
+// @public (undocumented)
+export type BillingPlatform = (typeof BillingPlatformValues)[number];
+
+// @public (undocumented)
+export const BillingPlatformSchema: z.ZodType<BillingPlatform>;
+
+// @public (undocumented)
+export const BillingPlatformValues: readonly ["apple_app_store", "google_play"];
+
+// @public (undocumented)
+export interface BillingProduct {
+    // (undocumented)
+    environment: BillingEnvironment;
+    // (undocumented)
+    platform: BillingPlatform;
+    // (undocumented)
+    productID: string;
+    // (undocumented)
+    storeProductID: string;
+    // (undocumented)
+    tier: AccountTier;
+}
+
+// @public (undocumented)
+export const BillingProductSchema: z.ZodType<BillingProduct>;
+
+// @public (undocumented)
+export interface BillingSubscription {
+    // (undocumented)
+    environment: BillingEnvironment;
+    // (undocumented)
+    expiresAt: null | string;
+    // (undocumented)
+    platform: BillingPlatform;
+    // (undocumented)
+    productID: string;
+    // (undocumented)
+    status: BillingSubscriptionStatus;
+    // (undocumented)
+    storeProductID: string;
+    // (undocumented)
+    subscriptionID: string;
+    // (undocumented)
+    tier: AccountTier;
+    // (undocumented)
+    updatedAt: string;
+}
+
+// @public (undocumented)
+export const BillingSubscriptionSchema: z.ZodType<BillingSubscription>;
+
+// @public (undocumented)
+export type BillingSubscriptionStatus = (typeof BillingSubscriptionStatusValues)[number];
+
+// @public (undocumented)
+export const BillingSubscriptionStatusSchema: z.ZodType<BillingSubscriptionStatus>;
+
+// @public (undocumented)
+export const BillingSubscriptionStatusValues: readonly ["active", "billing_retry", "expired", "grace_period", "pending", "revoked"];
+
+// @public (undocumented)
+export function buildAccountEntitlements(args: {
+    expiresAt?: null | string | undefined;
+    refreshedAt?: string | undefined;
+    source?: AccountEntitlementSource | undefined;
+    tier?: AccountTier | undefined;
+    userID: string;
+}): AccountEntitlements;
+
+// @public (undocumented)
+export type CallAction = "accept" | "cancel" | "end" | "hangup" | "ice" | "invite" | "reject" | "signal" | "timeout";
+
+// @public (undocumented)
+export const CallActionSchema: z.ZodType<CallAction>;
+
+// @public (undocumented)
+export type CallConversationType = "channel" | "dm";
+
+// @public (undocumented)
+export interface CallEvent {
+    // (undocumented)
+    action: CallAction;
+    // (undocumented)
+    call: CallSession;
+    // (undocumented)
+    fromDeviceID: string;
+    // (undocumented)
+    fromUserID: string;
+    // (undocumented)
+    signal?: CallSignalPayload | undefined;
+}
+
+// @public (undocumented)
+export const CallEventSchema: z.ZodType<CallEvent>;
+
+// @public (undocumented)
+export interface CallParticipant {
+    // (undocumented)
+    acceptedAt?: string | undefined;
+    // (undocumented)
+    deviceID?: string | undefined;
+    // (undocumented)
+    joinedAt?: string | undefined;
+    // (undocumented)
+    leftAt?: string | undefined;
+    // (undocumented)
+    state: "accepted" | "invited" | "left" | "rejected" | "ringing";
+    // (undocumented)
+    userID: string;
+}
+
+// @public (undocumented)
+export const CallParticipantSchema: z.ZodType<CallParticipant>;
+
+// @public (undocumented)
+export type CallResourceData = {
+    callID: string;
+    signal?: CallSignalPayload | undefined;
+} | {
+    conversationType: "dm";
+    recipientUserID: string;
+    signal?: CallSignalPayload | undefined;
+};
+
+// @public (undocumented)
+export const CallResourceDataSchema: z.ZodType<CallResourceData>;
+
+// @public (undocumented)
+export interface CallSession {
+    // (undocumented)
+    callID: string;
+    // (undocumented)
+    conversationID: string;
+    // (undocumented)
+    conversationType: CallConversationType;
+    // (undocumented)
+    createdAt: string;
+    // (undocumented)
+    createdBy: string;
+    // (undocumented)
+    createdByDeviceID: string;
+    // (undocumented)
+    endedAt?: string | undefined;
+    // (undocumented)
+    expiresAt: string;
+    // (undocumented)
+    media: "audio";
+    // (undocumented)
+    participants: CallParticipant[];
+    // (undocumented)
+    status: "active" | "ended" | "ringing";
+}
+
+// @public (undocumented)
+export const CallSessionSchema: z.ZodType<CallSession>;
+
+// @public (undocumented)
+export type CallSignalKind = "answer" | "ice" | "offer" | "renegotiate";
+
+// @public (undocumented)
+export interface CallSignalPayload {
+    // (undocumented)
+    candidate?: unknown;
+    // (undocumented)
+    description?: unknown;
+    // (undocumented)
+    kind: CallSignalKind;
+}
+
+// @public (undocumented)
+export const CallSignalPayloadSchema: z.ZodType<CallSignalPayload>;
 
 // @public
 export interface ChallMsg extends BaseMsg {
@@ -143,7 +423,6 @@ export interface FilePayload {
     nonce: string;
     // (undocumented)
     owner: string;
-    signed?: string | undefined;
 }
 
 // @public
@@ -172,6 +451,50 @@ export interface FileSQL {
 
 // @public
 export const FileSQLSchema: z.ZodType<FileSQL>;
+
+// @public (undocumented)
+export interface GooglePlayDeveloperNotificationRequest {
+    // (undocumented)
+    message?: undefined | {
+        data?: string | undefined;
+    };
+    // (undocumented)
+    subscriptionNotification?: undefined | {
+        purchaseToken: string;
+        subscriptionId?: string | undefined;
+    };
+}
+
+// @public (undocumented)
+export const GooglePlayDeveloperNotificationRequestSchema: z.ZodType<GooglePlayDeveloperNotificationRequest>;
+
+// @public (undocumented)
+export interface GooglePurchaseVerificationRequest {
+    // (undocumented)
+    environment?: BillingEnvironment | undefined;
+    // (undocumented)
+    packageName?: string | undefined;
+    // (undocumented)
+    productID?: string | undefined;
+    // (undocumented)
+    purchaseToken: string;
+}
+
+// @public (undocumented)
+export const GooglePurchaseVerificationRequestSchema: z.ZodType<GooglePurchaseVerificationRequest>;
+
+// @public (undocumented)
+export interface IceServerConfig {
+    // (undocumented)
+    credential?: string | undefined;
+    // (undocumented)
+    urls: string | string[];
+    // (undocumented)
+    username?: string | undefined;
+}
+
+// @public (undocumented)
+export const IceServerConfigSchema: z.ZodType<IceServerConfig>;
 
 // @public
 export interface IdentityKeys {
@@ -302,6 +625,15 @@ export interface MailWS {
 export const MailWSSchema: z.ZodType<MailWS>;
 
 // @public
+export const MAX_FILE_UPLOAD_BASE64_LENGTH: number;
+
+// @public
+export const MAX_FILE_UPLOAD_BYTES: number;
+
+// @public
+export const MAX_FILE_UPLOAD_ENCODED_BODY_BYTES: number;
+
+// @public
 export interface NotifyMsg extends BaseMsg {
     // (undocumented)
     data?: unknown;
@@ -370,6 +702,15 @@ export const PasskeyRegistrationStartPayloadSchema: z.ZodType<{
 
 // @public (undocumented)
 export const PasskeySchema: z.ZodType<Passkey>;
+
+// @public
+export interface PasswordUpdatePayload {
+    currentPassword?: string | undefined;
+    newPassword: string;
+}
+
+// @public
+export const PasswordUpdatePayloadSchema: z.ZodType<PasswordUpdatePayload>;
 
 // @public
 export interface Permission {
@@ -525,7 +866,10 @@ export const ReceiptMsgSchema: z.ZodType<ReceiptMsg>;
 // @public
 export interface RegistrationPayload extends DevicePayload {
     // (undocumented)
+    intent: "create-account" | "enroll-device";
     password?: string | undefined;
+    // (undocumented)
+    username: string;
 }
 
 // @public
@@ -686,8 +1030,6 @@ export interface User {
 export interface UserRecord extends User {
     // (undocumented)
     passwordHash: string;
-    // (undocumented)
-    passwordSalt: string;
 }
 
 // @public

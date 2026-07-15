@@ -32,10 +32,10 @@ import type {
     Server,
     UserRecord,
 } from "@vex-chat/types";
-import type { Migration, MigrationProvider } from "kysely";
+import type { Migration, MigrationProvider, Transaction } from "kysely";
 
 import { EventEmitter } from "events";
-import { createHash, pbkdf2Sync } from "node:crypto";
+import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -47,6 +47,8 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 import {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
+    ACCOUNT_PASSWORD_MIN_LENGTH,
     AccountEntitlementSourceSchema,
     AccountTierSchema,
     BillingEnvironmentSchema,
@@ -99,6 +101,8 @@ function parseMailType(n: number): MailType {
 import BetterSqlite3 from "better-sqlite3";
 import { Kysely, Migrator, sql, SqliteDialect } from "kysely";
 import { stringify as uuidStringify, validate as uuidValidate } from "uuid";
+
+export const MAX_ACTIVE_DEVICES_PER_USER = 20;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationFolder = path.join(__dirname, "migrations");
@@ -155,19 +159,30 @@ function isMigration(mod: unknown): mod is Migration {
     );
 }
 
-const pubkeyRegex = /[0-9a-f]{64}/;
+const pubkeyRegex = /^(?:[0-9a-fA-F]{2}){32,4096}$/;
+const DUMMY_PASSWORD_HASH =
+    "$argon2id$v=19$m=65536,t=3,p=1$SZlCYiWwt450ZWt2zRvDIw$QZdY/EtG81hEAXYRLVDvqtpJbajXL1/QRM91ZT9DQPk";
+const ARGON2_OPTIONS = {
+    memoryCost: 65_536,
+    parallelism: 1,
+    timeCost: 3,
+    type: argon2.argon2id,
+} as const;
 
-/** Legacy iteration count kept only for verifying old PBKDF2 hashes. */
-const PBKDF2_ITERATIONS = 1000;
+const COMMON_ACCOUNT_PASSWORDS = new Set([
+    "123456789012345",
+    "adminadminadminadmin",
+    "letmeinletmeinletmein",
+    "passwordpassword",
+    "passwordpasswordpassword",
+    "qwertyuiopasdfgh",
+]);
+
+export type InternalUserRecord = UserRecord;
 
 // ── Row-to-interface converters ─────────────────────────────────────────
 // SQLite stores booleans as integers and dates as strings, but the
 // @vex-chat/types interfaces expect boolean / Date.
-
-/** Internal record that includes the hash algorithm discriminator. */
-export interface InternalUserRecord extends UserRecord {
-    hashAlgo: string;
-}
 
 export interface NotificationSubscription {
     channel: "expo";
@@ -272,55 +287,11 @@ export class Database extends EventEmitter {
         payload: DevicePayload,
         passkeyApproval?: DevicePasskeyApprovalInput,
     ): Promise<Device> {
-        const now = new Date().toISOString();
-        const device = {
-            deleted: 0,
-            deviceID: crypto.randomUUID(),
-            lastLogin: now,
-            name: payload.deviceName,
-            owner,
-            signKey: payload.signKey,
-        };
-
-        const medPreKeys = {
-            deviceID: device.deviceID,
-            index: payload.preKeyIndex,
-            keyID: crypto.randomUUID(),
-            publicKey: payload.preKey,
-            signature: payload.preKeySignature,
-            userID: owner,
-        };
-
-        await this.db.transaction().execute(async (trx) => {
-            await trx.insertInto("devices").values(device).execute();
-            await trx.insertInto("preKeys").values(medPreKeys).execute();
-            if (passkeyApproval) {
-                await trx
-                    .insertInto("device_passkey_approvals")
-                    .values({
-                        approvedAt: now,
-                        approvedByDeviceID:
-                            passkeyApproval.approvedByDeviceID ?? null,
-                        approvedByPasskeyID:
-                            passkeyApproval.approvedByPasskeyID,
-                        deviceID: device.deviceID,
-                        userID: owner,
-                    })
-                    .onConflict((oc) =>
-                        oc.column("deviceID").doUpdateSet({
-                            approvedAt: now,
-                            approvedByDeviceID:
-                                passkeyApproval.approvedByDeviceID ?? null,
-                            approvedByPasskeyID:
-                                passkeyApproval.approvedByPasskeyID,
-                            userID: owner,
-                        }),
-                    )
-                    .execute();
-            }
-        });
-
-        return toDevice(device);
+        return this.db
+            .transaction()
+            .execute(async (trx) =>
+                this.insertDevice(trx, owner, payload, passkeyApproval),
+            );
     }
 
     public async createEmoji(emoji: Emoji): Promise<void> {
@@ -453,10 +424,7 @@ export class Database extends EventEmitter {
     ): Promise<[null | UserRecord, Error | null]> {
         try {
             const userID = uuidStringify(regKey);
-            const username = normalizeRegistrationUsername(
-                regPayload.username,
-                userID,
-            );
+            const username = normalizeRegistrationUsername(regPayload.username);
             if (
                 typeof regPayload.password !== "string" ||
                 regPayload.password.trim().length === 0
@@ -465,25 +433,32 @@ export class Database extends EventEmitter {
                     "Password is required to register a new account.",
                 );
             }
+            const passwordError = validateAccountPassword(
+                regPayload.password,
+                username,
+            );
+            if (passwordError) {
+                throw new Error(passwordError);
+            }
             const passwordHash = await hashPasswordArgon2(regPayload.password);
 
             const user: UserRecord = {
                 lastSeen: new Date().toISOString(),
                 passwordHash,
-                passwordSalt: "",
                 userID,
                 username,
             };
 
-            await this.db
-                .insertInto("users")
-                .values({
-                    ...user,
-                    hashAlgo: "argon2id",
-                    lastSeen: user.lastSeen,
-                })
-                .execute();
-            await this.createDevice(user.userID, regPayload);
+            await this.db.transaction().execute(async (trx) => {
+                await trx
+                    .insertInto("users")
+                    .values({
+                        ...user,
+                        lastSeen: user.lastSeen,
+                    })
+                    .execute();
+                await this.insertDevice(trx, user.userID, regPayload);
+            });
 
             return [user, null];
         } catch (err: unknown) {
@@ -504,31 +479,33 @@ export class Database extends EventEmitter {
     }
 
     public async deleteDevice(deviceID: string): Promise<void> {
-        await this.db
-            .deleteFrom("preKeys")
-            .where("deviceID", "=", deviceID)
-            .execute();
+        await this.db.transaction().execute(async (trx) => {
+            await trx
+                .deleteFrom("preKeys")
+                .where("deviceID", "=", deviceID)
+                .execute();
 
-        await this.db
-            .deleteFrom("oneTimeKeys")
-            .where("deviceID", "=", deviceID)
-            .execute();
+            await trx
+                .deleteFrom("oneTimeKeys")
+                .where("deviceID", "=", deviceID)
+                .execute();
 
-        await this.db
-            .deleteFrom("notification_subscriptions")
-            .where("deviceID", "=", deviceID)
-            .execute();
+            await trx
+                .deleteFrom("notification_subscriptions")
+                .where("deviceID", "=", deviceID)
+                .execute();
 
-        await this.db
-            .deleteFrom("device_passkey_approvals")
-            .where("deviceID", "=", deviceID)
-            .execute();
+            await trx
+                .deleteFrom("device_passkey_approvals")
+                .where("deviceID", "=", deviceID)
+                .execute();
 
-        await this.db
-            .updateTable("devices")
-            .set({ deleted: 1 })
-            .where("deviceID", "=", deviceID)
-            .execute();
+            await trx
+                .updateTable("devices")
+                .set({ deleted: 1 })
+                .where("deviceID", "=", deviceID)
+                .execute();
+        });
     }
 
     public async deleteEmoji(emojiID: string): Promise<void> {
@@ -815,16 +792,19 @@ export class Database extends EventEmitter {
      */
     public async markPasskeyUsed(
         passkeyID: string,
+        expectedSignCount: number,
         signCount: number,
-    ): Promise<void> {
-        await this.db
+    ): Promise<boolean> {
+        const result = await this.db
             .updateTable("passkeys")
             .set({
                 lastUsedAt: new Date().toISOString(),
                 signCount,
             })
             .where("passkeyID", "=", passkeyID)
-            .execute();
+            .where("signCount", "=", expectedSignCount)
+            .executeTakeFirst();
+        return Number(result.numUpdatedRows) > 0;
     }
 
     public async markUserSeen(user: UserRecord): Promise<void> {
@@ -1013,9 +993,7 @@ export class Database extends EventEmitter {
         await this.db
             .updateTable("users")
             .set({
-                hashAlgo: "argon2id",
                 passwordHash: newHash,
-                passwordSalt: "",
             })
             .where("userID", "=", userID)
             .execute();
@@ -1526,13 +1504,8 @@ export class Database extends EventEmitter {
         return row?.userID ?? null;
     }
 
-    // The identifier is matched as either a userID (UUID branch) or a
-    // username (string branch). Username comparison is case-folded so
-    // `User` and `user` resolve to the same row regardless of how the
-    // caller typed it — the canonical form on disk is lowercase
-    // (`normalizeRegistrationUsername`), but legacy mixed-case rows
-    // from before the canonicalization landed still resolve via the
-    // `lower(username) = lower(?)` predicate below.
+    // The identifier is matched as either a userID or the canonical lowercase
+    // username stored by `normalizeRegistrationUsername`.
     public async retrieveUser(
         userIdentifier: string,
     ): Promise<InternalUserRecord | null> {
@@ -1545,11 +1518,11 @@ export class Database extends EventEmitter {
                 .limit(1)
                 .execute();
         } else {
-            const normalized = userIdentifier.toLowerCase();
+            const normalized = userIdentifier.trim().toLowerCase();
             rows = await this.db
                 .selectFrom("users")
                 .selectAll()
-                .where(sql<string>`lower(username)`, "=", normalized)
+                .where("username", "=", normalized)
                 .limit(1)
                 .execute();
         }
@@ -1842,6 +1815,74 @@ export class Database extends EventEmitter {
         this.emit("ready");
     }
 
+    private async insertDevice(
+        trx: Transaction<ServerDatabase>,
+        owner: string,
+        payload: DevicePayload,
+        passkeyApproval?: DevicePasskeyApprovalInput,
+    ): Promise<Device> {
+        const activeDeviceCount = await trx
+            .selectFrom("devices")
+            .select((eb) => eb.fn.countAll().as("count"))
+            .where("owner", "=", owner)
+            .where("deleted", "=", 0)
+            .executeTakeFirst();
+        if (
+            Number(activeDeviceCount?.count ?? 0) >= MAX_ACTIVE_DEVICES_PER_USER
+        ) {
+            throw new Error(
+                `Each account is limited to ${String(MAX_ACTIVE_DEVICES_PER_USER)} active devices.`,
+            );
+        }
+
+        const now = new Date().toISOString();
+        const device = {
+            deleted: 0,
+            deviceID: crypto.randomUUID(),
+            lastLogin: now,
+            name: payload.deviceName,
+            owner,
+            signKey: payload.signKey,
+        };
+
+        const medPreKeys = {
+            deviceID: device.deviceID,
+            index: payload.preKeyIndex,
+            keyID: crypto.randomUUID(),
+            publicKey: payload.preKey,
+            signature: payload.preKeySignature,
+            userID: owner,
+        };
+
+        await trx.insertInto("devices").values(device).execute();
+        await trx.insertInto("preKeys").values(medPreKeys).execute();
+        if (passkeyApproval) {
+            await trx
+                .insertInto("device_passkey_approvals")
+                .values({
+                    approvedAt: now,
+                    approvedByDeviceID:
+                        passkeyApproval.approvedByDeviceID ?? null,
+                    approvedByPasskeyID: passkeyApproval.approvedByPasskeyID,
+                    deviceID: device.deviceID,
+                    userID: owner,
+                })
+                .onConflict((oc) =>
+                    oc.column("deviceID").doUpdateSet({
+                        approvedAt: now,
+                        approvedByDeviceID:
+                            passkeyApproval.approvedByDeviceID ?? null,
+                        approvedByPasskeyID:
+                            passkeyApproval.approvedByPasskeyID,
+                        userID: owner,
+                    }),
+                )
+                .execute();
+        }
+
+        return toDevice(device);
+    }
+
     private mailSqlEntry(
         mail: MailWS,
         header: Uint8Array,
@@ -1873,49 +1914,77 @@ export class Database extends EventEmitter {
  * Returns the encoded hash string which embeds salt, params, and digest.
  */
 export async function hashPasswordArgon2(password: string): Promise<string> {
-    return argon2.hash(password, {
-        memoryCost: 65536,
-        parallelism: 4,
-        timeCost: 3,
-        type: argon2.argon2id,
-    });
+    if (
+        password.length === 0 ||
+        password.length > ACCOUNT_PASSWORD_MAX_LENGTH
+    ) {
+        throw new Error("Password length is outside the supported range.");
+    }
+    return argon2.hash(password, ARGON2_OPTIONS);
 }
 
 /**
- * Verify a password against either Argon2id or legacy PBKDF2 storage.
- * Returns `{ valid, needsRehash }` — callers should rehash on success
- * when `needsRehash` is true.
+ * Validate new account passwords without imposing composition rules. Passwords
+ * are hashed exactly as supplied; normalization is used only for comparisons
+ * against account-specific and common-password deny lists.
+ */
+export function validateAccountPassword(
+    password: string,
+    username?: string,
+): null | string {
+    if (
+        password.trim().length === 0 ||
+        password.length < ACCOUNT_PASSWORD_MIN_LENGTH
+    ) {
+        return `Password must be at least ${String(ACCOUNT_PASSWORD_MIN_LENGTH)} characters.`;
+    }
+    if (password.length > ACCOUNT_PASSWORD_MAX_LENGTH) {
+        return `Password must be at most ${String(ACCOUNT_PASSWORD_MAX_LENGTH)} characters.`;
+    }
+
+    const comparable = password.normalize("NFKC").toLowerCase();
+    const comparableUsername = username?.trim().normalize("NFKC").toLowerCase();
+    const characters = Array.from(comparable);
+    const repeatedSingleCharacter = characters.every(
+        (character) => character === characters[0],
+    );
+    if (
+        COMMON_ACCOUNT_PASSWORDS.has(comparable) ||
+        repeatedSingleCharacter ||
+        (comparableUsername !== undefined && comparable === comparableUsername)
+    ) {
+        return "Choose a less common password.";
+    }
+
+    return null;
+}
+
+/**
+ * Verify an Argon2id password hash. Unknown hash formats fail closed.
  */
 export async function verifyPassword(
     password: string,
-    stored: { hashAlgo: string; passwordHash: string; passwordSalt: string },
+    stored: null | {
+        passwordHash: string;
+    },
 ): Promise<{ needsRehash: boolean; valid: boolean }> {
-    if (stored.hashAlgo === "keycluster") {
+    if (stored === null) {
+        await argon2.verify(DUMMY_PASSWORD_HASH, password);
         return { needsRehash: false, valid: false };
     }
-    if (stored.hashAlgo === "argon2id") {
+    try {
         const valid = await argon2.verify(stored.passwordHash, password);
-        return { needsRehash: false, valid };
-    }
-
-    // Legacy PBKDF2 path
-    const salt = XUtils.decodeHex(stored.passwordSalt);
-    const computed = pbkdf2Sync(
-        password,
-        salt,
-        PBKDF2_ITERATIONS,
-        32,
-        "sha512",
-    );
-    const storedBuf = XUtils.decodeHex(stored.passwordHash);
-
-    if (computed.length !== storedBuf.length) {
+        return {
+            needsRehash:
+                valid &&
+                argon2.needsRehash(stored.passwordHash, ARGON2_OPTIONS),
+            valid,
+        };
+    } catch {
+        // Keep malformed rows on the same expensive path as a missing user.
+        await argon2.verify(DUMMY_PASSWORD_HASH, password).catch(() => false);
         return { needsRehash: false, valid: false };
     }
-
-    const { timingSafeEqual } = await import("node:crypto");
-    const valid = timingSafeEqual(computed, storedBuf);
-    return { needsRehash: valid, valid };
 }
 
 function accountTierRank(tier: AccountTier): number {
@@ -2001,16 +2070,8 @@ function expiryRank(expiresAt: null | string): number {
 // flows) gets the same lowercase canonicalization the public
 // `POST /register` route applies. Usernames are case-insensitive at
 // the protocol level.
-function normalizeRegistrationUsername(
-    providedUsername: string | undefined,
-    userID: string,
-): string {
-    const trimmed = providedUsername?.trim().toLowerCase();
-    if (trimmed && trimmed.length > 0) {
-        return trimmed;
-    }
-    const seed = userID.replaceAll("-", "").slice(0, 12);
-    return `key_${seed}`;
+function normalizeRegistrationUsername(providedUsername: string): string {
+    return providedUsername.trim().toLowerCase();
 }
 
 function parseAccountEntitlementSource(
@@ -2131,10 +2192,8 @@ function toServer(row: {
 }
 
 function toUserRecord(row: {
-    hashAlgo: string;
     lastSeen: string;
     passwordHash: string;
-    passwordSalt: string;
     userID: string;
     username: string;
 }): InternalUserRecord {
