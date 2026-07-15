@@ -1,5 +1,16 @@
 # @vex-chat/spire
 
+## 5.0.0
+
+### Major Changes
+
+- [#282](https://github.com/vex-protocol/vex-protocol/pull/282) [`fa3fab0`](https://github.com/vex-protocol/vex-protocol/commit/fa3fab0a60d91996994cd9785a1faa0c8392947c) Thanks [@yuki111888](https://github.com/yuki111888)! - Remove the incomplete FIPS crypto profile and its P-256/AES-GCM wire paths. Vex now exposes a single TweetNaCl-based Ed25519, X25519, and XSalsa20-Poly1305 protocol mode.
+
+### Patch Changes
+
+- Updated dependencies [[`fa3fab0`](https://github.com/vex-protocol/vex-protocol/commit/fa3fab0a60d91996994cd9785a1faa0c8392947c)]:
+    - @vex-chat/crypto@12.0.0
+
 ## 4.1.1
 
 ### Patch Changes
