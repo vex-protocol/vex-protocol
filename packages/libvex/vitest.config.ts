@@ -32,7 +32,10 @@ export default defineConfig({
                     fileParallelism: false,
                     globals: true,
                     hookTimeout: 30_000,
-                    include: ["src/__tests__/platform-node.test.ts"],
+                    include: [
+                        "src/__tests__/node-keystore.test.ts",
+                        "src/__tests__/platform-node.test.ts",
+                    ],
                     name: "node",
                     testTimeout: 15_000,
                 },

@@ -1,7 +1,7 @@
 # Vex protocol threat model
 
-Audited revision: `cff197e` on branch `development`, before this document was
-added.
+Last code audit: 2026-07-14. This is a living description of the current
+`development` protocol rather than a compatibility promise for older clients.
 
 This document describes what the protocol and server actually do in the current
 codebase. It is intentionally conservative: when the code does not enforce a
@@ -48,8 +48,8 @@ Primary assets:
   public keys, and skipped message keys.
 - Session fingerprints and verification state.
 - Spire JWT secret.
-- Spire account credentials: Argon2id password hashes, legacy PBKDF2 hashes,
-  passkey credential public keys, and device records.
+- Spire account credentials: Argon2id password hashes, passkey credential public
+  keys, and device records.
 
 Metadata assets:
 
@@ -169,11 +169,36 @@ Spire verifies:
 - the prekey index shape, and
 - the username rules.
 
+Creating a new account requires a password. Spire stores an Argon2id encoded
+hash using 64 MiB of memory, three iterations, and one lane. Authentication also
+runs a dummy Argon2id verification for unknown usernames to reduce account
+enumeration through response timing, and account/IP rate limits bound attempts.
+New passwords must be 15 to 1024 characters, are checked against common and
+account-derived values, and do not have character-class composition rules or
+periodic rotation requirements. Password changes require both an authenticated,
+currently registered device and the current password. Reusing the current
+password is rejected.
+
+Passkeys are optional supplementary authenticators. A fresh, user-verified
+passkey ceremony can reset the password without the old password, but its
+five-minute bearer is scoped to passkey administration and recovery, and the
+credential is rechecked against the target account on every passkey-scoped
+request. There is no bearer-only, email, phone, security-question, or legacy
+password recovery path. An account that loses every approved device and every
+passkey cannot be recovered by Spire.
+
+The registration payload carries an explicit `create-account` or
+`enroll-device` intent: account creation fails when the username already exists,
+while enrollment fails when it does not. A mistyped sign-in identifier therefore
+cannot silently create a different account.
+
 For accounts that already have devices, new device enrollment becomes a pending
-request. It can be approved by an existing device signing a challenge based on
-`requestID` and the enrolling device signing key, or by a fresh passkey-scoped
-JWT. Pending requests are in memory, expire after 10 minutes, and resolved
-requests are retained in memory briefly for polling.
+request only after the password has been verified, or after a fresh
+passkey-scoped session has identified the account. It can then be approved by an
+existing device signing a challenge based on `requestID` and the enrolling
+device signing key. A passkey can instead recover the pending request. Pending
+requests are in memory, expire after 10 minutes, and resolved requests are
+retained in memory briefly for polling.
 
 Current caveats:
 
@@ -184,8 +209,14 @@ Current caveats:
   and HTTP device-token middleware re-checks the current non-deleted device row
   before hydrating `req.device`. A deleted device's old JWT no longer authorizes
   device-token HTTP paths.
-- `POST /goodbye` signs an expired token but does not revoke the caller's
-  existing token server-side.
+- Passkey middleware re-checks that the credential still exists and belongs to
+  the bearer account. Removing a passkey immediately invalidates its outstanding
+  passkey-scoped JWTs.
+- `POST /goodbye` is a local-session boundary; stateless bearer tokens are not
+  added to a server-side revocation list.
+- Changing or resetting a password does not revoke already issued device JWTs
+  or remove approved devices. Device removal immediately blocks that device on
+  routes that revalidate device state; other JWT revocation remains expiry-based.
 
 ## Prekeys and key bundles
 
@@ -211,22 +242,13 @@ The client verifies the returned bundle:
   signing key.
 - each key entry must belong to the requested device ID.
 
-The current registration and OTK-submission paths send the domain-separated V2
-prekey payload, and verification accepts it:
+Registration, OTK submission, and key-bundle verification require the
+domain-separated V2 prekey payload:
 
 - protocol string `vex:x3dh:prekey:v2`
 - crypto profile
 - key type
-- key index
-- device ID
 - public key
-
-Compatibility caveat:
-
-- Spire and `libvex` still accept the legacy V1 prekey signature payload. V1
-  signs only the prekey public bytes in `tweetnacl`; in FIPS it signs a one-byte
-  tag plus the public bytes. This is intentionally compatible, but it is weaker
-  domain separation than V2.
 
 ## X3DH initial message flow
 
@@ -243,10 +265,12 @@ The initial shared secret is:
 - `SK = xKDF(DH1 || DH2 || DH3 || DH4)` when an OTK was present
 - `SK = xKDF(DH1 || DH2 || DH3)` when no OTK was present
 
-The initial plaintext is encrypted with `xSecretboxAsync(message, nonce, SK)`.
-The websocket/header field is `xHMAC(mail, SK)`, where `mail` includes the
-ciphertext and protocol metadata. The sender then rotates its X3DH ephemeral key
-with `newEphemeralKeys()` and initializes a Double Ratchet session from `SK`.
+Independent payload-encryption and envelope-authentication keys are derived from
+`SK` with HMAC-SHA256 labels. The initial plaintext is encrypted with the
+encryption subkey, while the websocket/header field authenticates the mail and
+its protocol metadata with the authentication subkey. The sender then rotates
+its X3DH ephemeral key with `newEphemeralKeys()` and initializes a Double
+Ratchet session from `SK`.
 
 The initial `extra` field contains:
 
@@ -277,10 +301,6 @@ Current caveats:
 - When no one-time prekey is available, X3DH falls back to the signed prekey
   path. That is necessary for asynchronous delivery, but it has weaker
   one-time-key freshness than the OTK path.
-- Initial messages use `SK` both as the encryption key and as the HMAC key for
-  the mail envelope. Subsequent messages use the per-message key the same way.
-  The protocol should derive separate keys for payload encryption and envelope
-  authentication.
 - There is no persisted replay ledger for initial mail. In-memory
   `seenMailIDs` and local duplicate-nonce handling reduce normal duplicates, and
   the ratchet handles most subsequent replays by key evolution, but initial
@@ -306,8 +326,10 @@ Sending:
 - `takeSendMessageKey` derives `messageKey` and advances `CKs`,
 - the ratchet header carries version, sender DH public key, previous-chain
   message count `PN`, and message number `N`,
-- the payload is encrypted with the message key,
-- the mail envelope is HMACed with the same message key,
+- independent encryption and authentication subkeys are derived from the
+  message key,
+- the payload is encrypted with the encryption subkey,
+- the mail envelope is HMACed with the authentication subkey,
 - the advanced ratchet state is saved.
 
 Receiving:
@@ -417,8 +439,8 @@ Stored in plaintext:
   fingerprint, counters, mode, verification flag, and timestamps.
 
 The at-rest key is derived from the local ECDH identity secret using HKDF-SHA256
-with a profile-specific info string. Legacy TweetNaCl storage can be read using
-the first 32 bytes of the identity secret as a legacy at-rest key.
+with the profile-specific `vex:at-rest:3:<profile>` info string. Raw identity-key
+bytes are never used directly as a storage key.
 
 When sessions are saved, `SqliteStorage` seals `RK`, chain keys, `DHsPrivate`,
 and skipped keys. The old X3DH `SK` column is intentionally retired on write:
@@ -490,7 +512,7 @@ HTTP auth:
 - device JWTs are issued after a device signing-key challenge;
 - passkey JWTs are scoped to passkey admin/recovery routes and expire after 5
   minutes;
-- device auth JWTs and user JWTs expire after 7 days in current constants.
+- device auth JWTs and user JWTs expire after 1 hour.
 
 Websocket auth:
 
@@ -579,45 +601,35 @@ Security consequences:
    shorten device JWT TTLs if needed, add token versioning or revocation state,
    and purge pending mail for deleted devices when policy requires it.
 
-3. Split message keys into explicit subkeys.
-
-   Derive separate keys for payload encryption, envelope HMAC, and any future
-   header protection from the X3DH or ratchet message key.
-
-4. Replace process-wide crypto profile state.
+3. Replace process-wide crypto profile state.
 
    Pass providers explicitly or use async-local context. The current global
    profile stack is a compatibility bridge, not an ideal isolation boundary.
 
-5. Tighten prekey compatibility.
-
-   Keep V1 acceptance only behind a migration flag or sunset it after all active
-   clients publish V2 prekey signatures.
-
-6. Add a durable replay story.
+4. Add a durable replay story.
 
    Persist a compact replay/seen ledger for initial mail, define duplicate
    behavior explicitly, and avoid mutating ratchet state before authentication
    failures can be safely discarded.
 
-7. Add transport metadata hardening.
+5. Add transport metadata hardening.
 
    Start with message size buckets and optional padding. Later work could add
    batching, store-and-forward delay, or pluggable transports.
 
-8. Improve group cryptography.
+6. Improve group cryptography.
 
    Current group messaging is pairwise fan-out. For larger or higher-assurance
    groups, evaluate Sender Keys, MLS, or another group-ratchet design with
    cryptographic membership epochs.
 
-9. Make retention complete.
+7. Make retention complete.
 
    Server mail TTL is configurable by deployment policy, but files have no
    matching TTL, device deletion does not purge pending mail, and there is no
    per-group policy yet.
 
-10. Document FIPS status precisely.
+8. Document FIPS status precisely.
 
     Keep the FIPS profile described as "FIPS-compatible algorithm path" until a
     validated module and deployment documentation exist.

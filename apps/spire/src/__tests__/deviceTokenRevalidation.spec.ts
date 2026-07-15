@@ -4,13 +4,14 @@
  * Commercial licenses available at vex.wtf
  */
 
+import type { Database } from "../Database.ts";
 import type { Device, User } from "@vex-chat/types";
 import type express from "express";
 
-import jwt from "jsonwebtoken";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createCheckDevice } from "../server/index.ts";
+import { createCheckDevice, createCheckPasskey } from "../server/index.ts";
+import { signAuthJwt } from "../utils/authJwt.ts";
 
 const jwtSecret = "test-jwt-secret";
 
@@ -29,6 +30,8 @@ const device: Device = {
     signKey: "sign-key-a",
 };
 
+const passkeyID = "passkey-a";
+
 function makeReq(token: string, reqUser: undefined | User = user) {
     return {
         headers: { "x-device-token": token },
@@ -37,7 +40,7 @@ function makeReq(token: string, reqUser: undefined | User = user) {
 }
 
 function makeToken(tokenDevice: Device = device): string {
-    return jwt.sign({ device: tokenDevice }, jwtSecret);
+    return signAuthJwt({ device: tokenDevice, scope: "device" }, "5m");
 }
 
 describe("createCheckDevice", () => {
@@ -100,5 +103,56 @@ describe("createCheckDevice", () => {
         await createCheckDevice(db)(req, {} as express.Response, vi.fn());
 
         expect(req.device).toBeUndefined();
+    });
+});
+
+describe("createCheckPasskey", () => {
+    function makePasskeyReq(reqUser: User = user) {
+        return {
+            bearerToken: "passkey-token",
+            headers: {},
+            passkey: { passkeyID },
+            user: reqUser,
+        } as unknown as express.Request;
+    }
+
+    function makePasskeyDb(row: null | { userID: string }) {
+        return {
+            retrievePasskeyInternal: vi.fn(() => Promise.resolve(row)),
+        } as unknown as Pick<Database, "retrievePasskeyInternal">;
+    }
+
+    it("keeps a passkey session while its credential remains bound", async () => {
+        const db = makePasskeyDb({ userID: user.userID });
+        const req = makePasskeyReq();
+        const next = vi.fn();
+
+        await createCheckPasskey(db)(req, {} as express.Response, next);
+
+        expect(req.passkey).toEqual({ passkeyID });
+        expect(req.user).toEqual(user);
+        expect(db.retrievePasskeyInternal).toHaveBeenCalledWith(passkeyID);
+        expect(next).toHaveBeenCalledOnce();
+    });
+
+    it("revokes a passkey session as soon as its credential is removed", async () => {
+        const db = makePasskeyDb(null);
+        const req = makePasskeyReq();
+
+        await createCheckPasskey(db)(req, {} as express.Response, vi.fn());
+
+        expect(req.bearerToken).toBeUndefined();
+        expect(req.passkey).toBeUndefined();
+        expect(req.user).toBeUndefined();
+    });
+
+    it("rejects a passkey credential bound to a different account", async () => {
+        const db = makePasskeyDb({ userID: "user-b" });
+        const req = makePasskeyReq();
+
+        await createCheckPasskey(db)(req, {} as express.Response, vi.fn());
+
+        expect(req.passkey).toBeUndefined();
+        expect(req.user).toBeUndefined();
     });
 });

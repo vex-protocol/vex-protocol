@@ -6,13 +6,7 @@
 
 import type { DevicePayload, PreKeysWS } from "@vex-chat/types";
 
-import {
-    getCryptoProfile,
-    xConcat,
-    xConstants,
-    xEncode,
-    XUtils,
-} from "@vex-chat/crypto";
+import { xPreKeySignaturePayload, XUtils } from "@vex-chat/crypto";
 
 import { spireXSignOpenAsync } from "./spireXSignOpenAsync.ts";
 
@@ -24,6 +18,7 @@ export async function verifyDevicePayloadPreKeySignature(
             XUtils.decodeHex(payload.preKey),
             XUtils.decodeHex(payload.preKeySignature),
             payload.signKey,
+            "signed",
         );
     } catch {
         return false;
@@ -33,20 +28,21 @@ export async function verifyDevicePayloadPreKeySignature(
 export async function verifyPreKeyWsSignature(
     preKey: PreKeysWS,
     signKeyHex: string,
+    kind: "one-time" | "signed",
 ): Promise<boolean> {
-    return verifySignedPreKey(preKey.publicKey, preKey.signature, signKeyHex);
-}
-
-function preKeySignPayload(publicKey: Uint8Array): Uint8Array {
-    return getCryptoProfile() === "fips"
-        ? xConcat(new Uint8Array([0xa1]), publicKey)
-        : xEncode(xConstants.CURVE, publicKey);
+    return verifySignedPreKey(
+        preKey.publicKey,
+        preKey.signature,
+        signKeyHex,
+        kind,
+    );
 }
 
 async function verifySignedPreKey(
     publicKey: Uint8Array,
     signature: Uint8Array,
     signKeyHex: string,
+    kind: "one-time" | "signed",
 ): Promise<boolean> {
     try {
         const opened = await spireXSignOpenAsync(
@@ -54,7 +50,8 @@ async function verifySignedPreKey(
             XUtils.decodeHex(signKeyHex),
         );
         return Boolean(
-            opened && XUtils.bytesEqual(opened, preKeySignPayload(publicKey)),
+            opened &&
+            XUtils.bytesEqual(opened, xPreKeySignaturePayload(publicKey, kind)),
         );
     } catch {
         return false;

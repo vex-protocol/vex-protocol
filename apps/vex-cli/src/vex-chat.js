@@ -607,7 +607,12 @@ function removedStoredDeviceError(ctx, username) {
     return err;
 }
 
-async function resolveRegistrationPassword(ctx, args, rl = null) {
+async function resolveRegistrationPassword(
+    ctx,
+    args,
+    rl = null,
+    missingMessage = "Password is required to register a new account. Usage: vex auth register <username> <password> or pass --password <password>.",
+) {
     const provided = args[1] ?? ctx.password;
     if (typeof provided === "string" && provided.trim().length > 0) {
         return provided;
@@ -626,9 +631,7 @@ async function resolveRegistrationPassword(ctx, args, rl = null) {
             }
         }
     }
-    throw new Error(
-        "Password is required to register a new account. Usage: vex auth register <username> <password> or pass --password <password>.",
-    );
+    throw new Error(missingMessage);
 }
 
 async function register(ctx, args) {
@@ -878,11 +881,20 @@ async function loginWithDeviceApproval(ctx, username) {
     }
 
     const { username: accountUsername } = accountRef;
+    const password = await resolveRegistrationPassword(
+        ctx,
+        [accountUsername],
+        null,
+        "Password is required to sign in on a new device. Pass it as the second argument or with --password.",
+    );
     const privateKey = Client.generateSecretKey();
     const client = await Client.create(privateKey, ctx.clientOptions);
     attachDebugClientEvents(ctx, client, `login-request:${accountUsername}`);
     try {
-        const [, registerErr] = await client.register(accountUsername);
+        const [, registerErr] = await client.requestDeviceEnrollment(
+            accountUsername,
+            password,
+        );
         if (!registerErr) {
             await persistNewLocalAccount(
                 ctx,

@@ -10,10 +10,9 @@ import type { CryptoProfile, KeyPair } from "@vex-chat/crypto";
 import {
     setCryptoProfile,
     xBoxKeyPairAsync,
-    xConstants,
     xEcdhKeyPairFromEcdsaKeyPairAsync,
-    xEncode,
     XKeyConvert,
+    xPreKeySignaturePayload,
     xSignAsync,
     xSignKeyPair,
     xSignKeyPairAsync,
@@ -24,12 +23,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { Client } from "../Client.js";
-import { fipsP256PreKeySignPayload } from "../utils/fipsMailExtra.js";
 
 import { MemoryStorage } from "./harness/memory-storage.js";
 
 interface KeyRingHarness {
-    createPreKey: () => Promise<UnsavedPreKey>;
+    createPreKey: (kind: "one-time" | "signed") => Promise<UnsavedPreKey>;
     cryptoProfile: CryptoProfile;
     database: MemoryStorage;
     idKeys: KeyPair;
@@ -41,7 +39,7 @@ interface KeyRingHarness {
 }
 
 const clientMethods = Client.prototype as unknown as {
-    createPreKey: () => Promise<UnsavedPreKey>;
+    createPreKey: (kind: "one-time" | "signed") => Promise<UnsavedPreKey>;
     isPreKeySignedByCurrentDevice: (preKey: PreKeysCrypto) => Promise<boolean>;
     populateKeyRing: () => Promise<void>;
     runWithThisCryptoProfile: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -54,10 +52,11 @@ async function isValidFor(
 ): Promise<boolean> {
     setCryptoProfile(profile);
     const opened = await xSignOpenAsync(preKey.signature, signKeys.publicKey);
-    const payload =
-        profile === "fips"
-            ? fipsP256PreKeySignPayload(preKey.keyPair.publicKey)
-            : xEncode(xConstants.CURVE, preKey.keyPair.publicKey);
+    const payload = xPreKeySignaturePayload(
+        preKey.keyPair.publicKey,
+        "signed",
+        profile,
+    );
     return Boolean(opened && XUtils.bytesEqual(opened, payload));
 }
 
@@ -67,10 +66,11 @@ async function makeSignedPreKey(
 ): Promise<UnsavedPreKey> {
     setCryptoProfile(profile);
     const keyPair = await xBoxKeyPairAsync();
-    const payload =
-        profile === "fips"
-            ? fipsP256PreKeySignPayload(keyPair.publicKey)
-            : xEncode(xConstants.CURVE, keyPair.publicKey);
+    const payload = xPreKeySignaturePayload(
+        keyPair.publicKey,
+        "signed",
+        profile,
+    );
     return {
         keyPair,
         signature: await xSignAsync(payload, signKeys.secretKey),

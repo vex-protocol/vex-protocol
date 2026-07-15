@@ -35,6 +35,7 @@ import type { ErrorRequestHandler } from "express";
 
 import { randomUUID } from "node:crypto";
 
+import multer from "multer";
 import { ZodError } from "zod/v4";
 
 /**
@@ -92,6 +93,12 @@ export const errorHandler =
             status = 400;
             clientMessage = "Validation failed";
             details = err.issues;
+        } else if (err instanceof multer.MulterError) {
+            status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+            clientMessage =
+                err.code === "LIMIT_FILE_SIZE"
+                    ? "Uploaded file is too large"
+                    : "Invalid multipart upload";
         } else if (err instanceof AppError) {
             status = err.status;
             clientMessage = err.message;

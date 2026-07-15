@@ -68,6 +68,28 @@ describe("FetchHttpClient", () => {
         expect(err.response?.data).toBe("plain failure");
     });
 
+    it("redacts credentials from request metadata on errors", async () => {
+        globalThis.fetch = () =>
+            Promise.resolve(new Response(null, { status: 401 }));
+        const client = createFetchHttpClient();
+        client.defaults.headers.common.Authorization =
+            "Bearer secret-user-token";
+        client.defaults.headers.common["X-Device-Token"] =
+            "secret-device-token";
+
+        const err = await captureError(() =>
+            client.get("https://example.test/private"),
+        );
+        if (!isHttpError(err)) {
+            throw err;
+        }
+
+        expect(err.config.headers["authorization"]).toBe("[REDACTED]");
+        expect(err.config.headers["x-device-token"]).toBe("[REDACTED]");
+        expect(JSON.stringify(err)).not.toContain("secret-user-token");
+        expect(JSON.stringify(err)).not.toContain("secret-device-token");
+    });
+
     it("emits a final upload progress event for FormData payloads", async () => {
         globalThis.fetch = () =>
             Promise.resolve(new Response(new ArrayBuffer(0), { status: 200 }));

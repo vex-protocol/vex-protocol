@@ -74,15 +74,14 @@ function disableRateLimitsByEnv(): boolean {
  * versions silently collapsed all IPv4-mapped IPv6 addresses into
  * one bucket, which let attackers bypass the limiter).
  *
- * `trust proxy` must be set on the Express app (see Spire.ts) so
- * `req.ip` returns the real client address, not the immediate proxy.
+ * `trust proxy` must match the real deployment topology (see Spire.ts) so
+ * `req.ip` cannot be spoofed and does not collapse all traffic onto a proxy.
  */
 
 /**
  * Bucket requests by the real client IP, IPv6-safe.
  *
- * `req.ip` is already populated correctly because `trust proxy` is
- * set to `1` in Spire's constructor. We still run it through
+ * `req.ip` reflects the explicitly configured proxy hop count. We still run it through
  * `ipKeyGenerator` so IPv4-mapped IPv6 (`::ffff:1.2.3.4`) doesn't
  * collide with unrelated IPv6 addresses in the same /56.
  */
@@ -117,6 +116,50 @@ export const authLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 50,
+    skip: devApiKeySkipsRateLimits,
+    skipSuccessfulRequests: true,
+    standardHeaders: "draft-7",
+    windowMs: 15 * 60 * 1000,
+});
+
+/**
+ * Cross-IP password defense. This account bucket complements the IP bucket so
+ * a distributed password spray cannot make unlimited guesses at one account.
+ */
+export const accountAuthLimiter = rateLimit({
+    keyGenerator: (req) => {
+        const body: unknown = req.body;
+        const username =
+            typeof body === "object" &&
+            body !== null &&
+            "username" in body &&
+            typeof body.username === "string"
+                ? body.username.trim().toLowerCase().slice(0, 64)
+                : "";
+        return username.length > 0
+            ? `account:${username}`
+            : `invalid:${keyByIp(req)}`;
+    },
+    legacyHeaders: false,
+    limit: 100,
+    skip: devApiKeySkipsRateLimits,
+    skipSuccessfulRequests: true,
+    standardHeaders: "draft-7",
+    windowMs: 15 * 60 * 1000,
+});
+
+/**
+ * Limit repeated password replacement attempts per authenticated account.
+ * This is intentionally tighter than sign-in because each failed request has
+ * already passed bearer/device validation and still consumes an Argon2 check.
+ */
+export const passwordUpdateLimiter = rateLimit({
+    keyGenerator: (req) =>
+        req.user?.userID
+            ? `password:${req.user.userID}`
+            : `invalid:${keyByIp(req)}`,
+    legacyHeaders: false,
+    limit: 10,
     skip: devApiKeySkipsRateLimits,
     skipSuccessfulRequests: true,
     standardHeaders: "draft-7",

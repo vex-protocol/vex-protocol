@@ -5,7 +5,7 @@
  */
 
 import type { SpireOptions } from "../Spire.ts";
-import type { DevicePayload, MailWS, PreKeysWS } from "@vex-chat/types";
+import type { MailWS, PreKeysWS, RegistrationPayload } from "@vex-chat/types";
 
 import { XUtils } from "@vex-chat/crypto";
 import { MailType } from "@vex-chat/types";
@@ -13,7 +13,11 @@ import { MailType } from "@vex-chat/types";
 import * as uuid from "uuid";
 import { describe, expect, it, vi } from "vitest";
 
-import { Database } from "../Database.ts";
+import {
+    Database,
+    MAX_ACTIVE_DEVICES_PER_USER,
+    validateAccountPassword,
+} from "../Database.ts";
 
 // vi.mock is hoisted above all imports automatically.
 // Minimal stubs for uuid functions used by spire src: v4, parse, stringify.
@@ -67,8 +71,9 @@ describe("Database", () => {
     const devicePayload = (
         deviceName: string,
         signKey: string,
-    ): DevicePayload => ({
+    ): RegistrationPayload => ({
         deviceName,
+        intent: "create-account",
         preKey: testSQLPreKey.publicKey,
         preKeyIndex: 1,
         preKeySignature: testSQLPreKey.signature,
@@ -80,6 +85,32 @@ describe("Database", () => {
     const options: SpireOptions = {
         dbType: "sqlite3mem",
     };
+
+    describe("account password policy", () => {
+        it("accepts long passphrases without composition requirements", () => {
+            expect(
+                validateAccountPassword("four simple words make a password"),
+            ).toBeNull();
+        });
+
+        it("rejects short, common, repeated, and username-matching values", () => {
+            expect(validateAccountPassword("thirteen-char!")).toContain(
+                "at least 15",
+            );
+            expect(validateAccountPassword("passwordpassword")).toBe(
+                "Choose a less common password.",
+            );
+            expect(validateAccountPassword("z".repeat(20))).toBe(
+                "Choose a less common password.",
+            );
+            expect(
+                validateAccountPassword(
+                    "long-account-name",
+                    "Long-Account-Name",
+                ),
+            ).toBe("Choose a less common password.");
+        });
+    });
 
     describe("createUser", () => {
         it("requires a password for new accounts", async () => {
@@ -101,6 +132,98 @@ describe("Database", () => {
                             await provider.close();
                             resolve();
                         } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+
+        it("rolls back the user when initial device creation fails", async () => {
+            expect.assertions(5);
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            const signKey = "c".repeat(64);
+                            const [first, firstError] =
+                                await provider.createUser(
+                                    new Uint8Array(16).fill(1),
+                                    {
+                                        ...devicePayload("desktop", signKey),
+                                        password:
+                                            "correct horse battery staple",
+                                    },
+                                );
+                            expect(firstError).toBeNull();
+                            expect(first).not.toBeNull();
+
+                            const [second, secondError] =
+                                await provider.createUser(
+                                    new Uint8Array(16).fill(2),
+                                    {
+                                        ...devicePayload("mobile", signKey),
+                                        password:
+                                            "correct horse battery staple",
+                                        username: "bob",
+                                    },
+                                );
+                            expect(secondError).toBeInstanceOf(Error);
+                            expect(second).toBeNull();
+                            await expect(
+                                provider.retrieveUser("bob"),
+                            ).resolves.toBeNull();
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            await provider.close().catch(() => undefined);
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
+                        }
+                    })();
+                });
+            });
+        });
+    });
+
+    describe("createDevice", () => {
+        it("bounds active device clusters", async () => {
+            const provider = new Database(options);
+            await new Promise<void>((resolve, reject) => {
+                provider.once("ready", () => {
+                    void (async () => {
+                        try {
+                            for (
+                                let index = 0;
+                                index < MAX_ACTIVE_DEVICES_PER_USER;
+                                index += 1
+                            ) {
+                                await provider.createDevice(
+                                    userID,
+                                    devicePayload(
+                                        `device-${String(index)}`,
+                                        index.toString(16).padStart(64, "0"),
+                                    ),
+                                );
+                            }
+
+                            await expect(
+                                provider.createDevice(
+                                    userID,
+                                    devicePayload(
+                                        "one-too-many",
+                                        "f".repeat(64),
+                                    ),
+                                ),
+                            ).rejects.toThrow("limited to 20 active devices");
+                            await provider.close();
+                            resolve();
+                        } catch (e: unknown) {
+                            await provider.close().catch(() => undefined);
                             reject(
                                 e instanceof Error ? e : new Error(String(e)),
                             );

@@ -8,7 +8,7 @@ import { createHmac } from "crypto";
 
 import { Packr } from "msgpackr";
 
-import { xHMAC, XUtils } from "../index.js";
+import { xHMAC, xMessageKeySubkeys, XUtils } from "../index.js";
 
 test("xHMAC", () => {
     const message = {
@@ -29,4 +29,15 @@ test("xHMAC", () => {
 
     // Compare
     expect(hmac).toBe(expectedHMAC);
+});
+
+test("message encryption and authentication keys are separated", () => {
+    const messageKey = new Uint8Array(32).fill(9);
+    const first = xMessageKeySubkeys(messageKey);
+    const second = xMessageKeySubkeys(messageKey);
+
+    expect(first.encryptionKey).toHaveLength(32);
+    expect(first.authenticationKey).toHaveLength(32);
+    expect(first.encryptionKey).not.toEqual(first.authenticationKey);
+    expect(first).toEqual(second);
 });

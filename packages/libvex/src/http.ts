@@ -148,7 +148,7 @@ export class FetchHttpClient {
         maybeReportUploadProgress(data, config.onUploadProgress);
 
         const requestRecord: HttpRequestRecord = {
-            headers: headersToRecord(headers),
+            headers: headersToSafeRecord(headers),
             method,
             url,
         };
@@ -389,6 +389,21 @@ function headersToRecord(headers: Headers): Record<string, string> {
     const out: Record<string, string> = {};
     headers.forEach((value, key) => {
         out[key] = value;
+    });
+    return out;
+}
+
+function headersToSafeRecord(headers: Headers): Record<string, string> {
+    const sensitive = new Set([
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "x-device-token",
+    ]);
+    const out: Record<string, string> = {};
+    headers.forEach((value, key) => {
+        out[key] = sensitive.has(key.toLowerCase()) ? "[REDACTED]" : value;
     });
     return out;
 }

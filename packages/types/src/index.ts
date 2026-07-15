@@ -5,6 +5,8 @@
  */
 
 export {
+    ACCOUNT_PASSWORD_MAX_LENGTH,
+    ACCOUNT_PASSWORD_MIN_LENGTH,
     accountEntitlementCapabilitiesForTier,
     AccountEntitlementCapabilitySchema,
     AccountEntitlementCapabilityValues,
@@ -61,6 +63,7 @@ export {
     PasskeyRegistrationFinishPayloadSchema,
     PasskeyRegistrationStartPayloadSchema,
     PasskeySchema,
+    PasswordUpdatePayloadSchema,
     PermissionSchema,
     PingMsgSchema,
     PongMsgSchema,
@@ -132,6 +135,7 @@ export type {
     Passkey,
     PasskeyAuthenticationOptions,
     PasskeyRegistrationOptions,
+    PasswordUpdatePayload,
     Permission,
     PingMsg,
     PongMsg,

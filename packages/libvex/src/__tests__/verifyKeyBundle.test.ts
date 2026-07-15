@@ -10,9 +10,8 @@ import type { Device, KeyBundle, KeyBundleEntry } from "@vex-chat/types";
 import {
     setCryptoProfile,
     xBoxKeyPairAsync,
-    xConstants,
     xEcdhKeyPairFromEcdsaKeyPairAsync,
-    xEncode,
+    xPreKeySignaturePayload,
     xSignAsync,
     xSignKeyPairAsync,
     XUtils,
@@ -20,7 +19,6 @@ import {
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { fipsP256PreKeySignPayload } from "../utils/fipsMailExtra.js";
 import { verifyKeyBundleSignatures } from "../utils/verifyKeyBundle.js";
 
 describe.sequential("verifyKeyBundleSignatures", () => {
@@ -126,7 +124,13 @@ async function makeBundle(
     };
 
     const keyBundle: KeyBundle = {
-        preKey: await makeBundleEntry(signKeys, profile, device.deviceID, 1),
+        preKey: await makeBundleEntry(
+            signKeys,
+            profile,
+            device.deviceID,
+            1,
+            "signed",
+        ),
         signKey: identityPublic,
     };
     if (includeOtk) {
@@ -135,6 +139,7 @@ async function makeBundle(
             profile,
             device.deviceID,
             2,
+            "one-time",
         );
     }
 
@@ -146,12 +151,10 @@ async function makeBundleEntry(
     profile: CryptoProfile,
     deviceID: string,
     index: number,
+    kind: "one-time" | "signed",
 ): Promise<KeyBundleEntry> {
     const preKey = await xBoxKeyPairAsync();
-    const payload =
-        profile === "fips"
-            ? fipsP256PreKeySignPayload(preKey.publicKey)
-            : xEncode(xConstants.CURVE, preKey.publicKey);
+    const payload = xPreKeySignaturePayload(preKey.publicKey, kind, profile);
     return {
         deviceID,
         index,
