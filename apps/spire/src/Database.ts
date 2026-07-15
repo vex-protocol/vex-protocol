@@ -41,11 +41,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-    fipsEcdhRawPublicKeyFromEcdsaSpkiAsync,
-    getCryptoProfile,
-    XUtils,
-} from "@vex-chat/crypto";
+import { XUtils } from "@vex-chat/crypto";
 import {
     ACCOUNT_PASSWORD_MAX_LENGTH,
     ACCOUNT_PASSWORD_MIN_LENGTH,
@@ -677,15 +673,10 @@ export class Database extends EventEmitter {
         if (!preKey) {
             throw new Error("Failed to get prekey.");
         }
-        const signKeyBytes = XUtils.decodeHex(device.signKey);
-        const signKey =
-            getCryptoProfile() === "fips"
-                ? await fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(signKeyBytes)
-                : signKeyBytes;
         const keyBundle: KeyBundle = {
             otk,
             preKey,
-            signKey,
+            signKey: XUtils.decodeHex(device.signKey),
         };
         return keyBundle;
     }

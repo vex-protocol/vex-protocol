@@ -6,8 +6,6 @@
 
 import type { ClientOptions } from "../index.js";
 
-import { getCryptoProfile } from "@vex-chat/crypto";
-
 import { resolveAtRestAesKeyFromSignKeyHex } from "../utils/resolveAtRestAesKey.js";
 
 import { MemoryStorage } from "./harness/memory-storage.js";
@@ -18,10 +16,7 @@ import { MemoryStorage } from "./harness/memory-storage.js";
 import { platformSuite } from "./harness/shared-suite.js";
 
 platformSuite("browser", async (SK: string, _opts: ClientOptions) => {
-    const atRest = await resolveAtRestAesKeyFromSignKeyHex(
-        SK,
-        getCryptoProfile(),
-    );
+    const atRest = await resolveAtRestAesKeyFromSignKeyHex(SK);
     const storage = new MemoryStorage(atRest);
     await storage.init();
     return storage;

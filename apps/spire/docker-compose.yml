@@ -13,11 +13,7 @@ services:
         # Runtime config/secrets, including SPK, JWT_SECRET, and SPIRE_PASSKEY_*.
         # Keep them out of the image; the server validates them on startup.
         env_file: .env
-        # tweetnacl (default): SPIRE_FIPS unset / false, SPK from `pnpm --filter @vex-chat/spire gen-spk`
-        # fips: SPIRE_FIPS=true, SPK from `pnpm --filter @vex-chat/spire gen-spk-fips` (P-256 PKCS#8)
-        # Shell overrides .env: SPIRE_FIPS=true docker compose up
         environment:
-            - SPIRE_FIPS=${SPIRE_FIPS:-false}
             - API_PORT=${API_PORT:-}
         user: "1000:1000"
         security_opt:
@@ -38,7 +34,6 @@ services:
             test: ["CMD", "/bin/sh", "/app/deploy/spire-container-health.sh"]
             interval: 30s
             timeout: 5s
-            # FIPS path awaits async crypto init; keep grace before failed probes count
             start_period: 40s
             retries: 3
 
@@ -48,7 +43,6 @@ services:
             - "16777:16777"
         # Upstream to Spire must follow its listen port (see src/spireListenPort.ts, deploy/resolve-spire-listen-port.sh)
         environment:
-            - SPIRE_FIPS=${SPIRE_FIPS:-false}
             - API_PORT=${API_PORT:-}
         entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
         volumes:

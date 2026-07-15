@@ -6,13 +6,10 @@
  */
 
 /**
- * Generates cryptographic keys for Spire's .env in **tweetnacl** (default) mode:
+ * Generates cryptographic keys for Spire's .env:
  *
  *   SPK        — 64-byte Ed25519 secret (hex). NaCl / tweetnacl server signing.
  *   JWT_SECRET — 32-byte random secret (hex). Used as the HMAC key for JWTs.
- *
- * For **FIPS** (`SPIRE_FIPS=true`), use `node scripts/gen-spk-fips.js` instead
- * (P-256 PKCS#8 `SPK` — a different size and format).
  *
  * These MUST be separate keys so compromise of one doesn't affect the other.
  *

@@ -52,17 +52,11 @@ import type {
 import type { ClientMessage } from "@vex-chat/types";
 
 import {
-    type CryptoProfile,
-    enterCryptoProfileScope,
-    getCryptoProfile,
-    leaveCryptoProfileScope,
-    setCryptoProfile,
     xBoxKeyPairAsync,
     xBoxKeyPairFromSecretAsync,
     xConcat,
     xConstants,
     xDHAsync,
-    xEcdhKeyPairFromEcdsaKeyPairAsync,
     xEncode,
     xHMAC,
     xKDF,
@@ -78,7 +72,6 @@ import {
     xSignKeyPair,
     xSignKeyPairAsync,
     xSignKeyPairFromSecret,
-    xSignKeyPairFromSecretAsync,
     xSignOpenAsync,
     XUtils,
 } from "@vex-chat/crypto";
@@ -113,12 +106,6 @@ import {
     WebSocketAdapter,
     WebSocketNotOpenError,
 } from "./transport/websocket.js";
-import {
-    decodeFipsInitialExtraV1,
-    encodeFipsInitialExtraV1,
-    fipsP256AdFromIdentityPubs,
-    isFipsInitialExtraV1,
-} from "./utils/fipsMailExtra.js";
 import {
     decodeRatchetHeader,
     deriveBootstrapSendChain,
@@ -465,12 +452,6 @@ export interface Channels {
  * ClientOptions are the options you can pass into the client.
  */
 export interface ClientOptions {
-    /**
-     * Select crypto profile from `@vex-chat/crypto` (`setCryptoProfile`):
-     * `tweetnacl` (Ed25519 / X25519) or `fips` (P-256 + Web Crypto, separate wire
-     * layout). Deployments do not interop across profiles; pick one for all peers and server.
-     */
-    cryptoProfile?: "fips" | "tweetnacl";
     /** Folder path where the sqlite file is created. */
     dbFolder?: string;
     /**
@@ -1768,8 +1749,6 @@ export class Client {
 
     private autoReconnectEnabled = false;
 
-    private readonly cryptoProfile: CryptoProfile;
-
     private readonly database: Storage;
 
     private readonly dbPath: string;
@@ -1840,7 +1819,6 @@ export class Client {
 
     private constructor(
         material: {
-            cryptoProfile: CryptoProfile;
             idKeys: KeyPair;
             signKeys: KeyPair;
         },
@@ -1851,7 +1829,6 @@ export class Client {
         this.localMessageRetentionDays = clampLocalMessageRetentionDays(
             options?.localMessageRetentionDays,
         );
-        this.cryptoProfile = material.cryptoProfile;
         this.signKeys = material.signKeys;
         this.idKeys = material.idKeys;
 
@@ -1916,47 +1893,15 @@ export class Client {
         options?: ClientOptions,
         storage?: Storage,
     ): Promise<Client> => {
-        const profile = options?.cryptoProfile ?? "tweetnacl";
-        setCryptoProfile(profile);
-
-        if (
-            profile === "fips" &&
-            typeof globalThis.crypto.subtle !== "object"
-        ) {
-            throw new Error(
-                'cryptoProfile="fips" requires Web Crypto (globalThis.crypto.subtle).',
-            );
+        const signKeys = privateKey
+            ? xSignKeyPairFromSecret(XUtils.decodeHex(privateKey))
+            : xSignKeyPair();
+        const idKeys = XKeyConvert.convertKeyPair(signKeys);
+        if (!idKeys) {
+            throw new Error("Could not convert key to X25519!");
         }
 
-        let signKeys: KeyPair;
-        if (privateKey) {
-            const d = XUtils.decodeHex(privateKey);
-            signKeys =
-                profile === "tweetnacl"
-                    ? xSignKeyPairFromSecret(d)
-                    : await xSignKeyPairFromSecretAsync(d);
-        } else {
-            signKeys =
-                profile === "tweetnacl"
-                    ? xSignKeyPair()
-                    : await xSignKeyPairAsync();
-        }
-
-        const idKeys =
-            profile === "tweetnacl"
-                ? (() => {
-                      const c = XKeyConvert.convertKeyPair(signKeys);
-                      if (!c) {
-                          throw new Error("Could not convert key to X25519!");
-                      }
-                      return c;
-                  })()
-                : await xEcdhKeyPairFromEcdsaKeyPairAsync(signKeys);
-
-        const atRestAes = XUtils.deriveLocalAtRestAesKey(
-            idKeys.secretKey,
-            profile,
-        );
+        const atRestAes = XUtils.deriveLocalAtRestAesKey(idKeys.secretKey);
 
         let resolvedStorage = storage;
         if (!resolvedStorage) {
@@ -1992,7 +1937,6 @@ export class Client {
 
         const client = new Client(
             {
-                cryptoProfile: profile,
                 idKeys,
                 signKeys,
             },
@@ -2003,27 +1947,14 @@ export class Client {
         return client;
     };
 
-    /**
-     * Generates a signing secret key as a hex string (tweetnacl: Ed25519; fips: P-256 pkcs8).
-     * In `fips` mode, use `Client.generateSecretKeyAsync()` instead (Web Crypto is async).
-     */
+    /** Generates an Ed25519 signing secret key as a hex string. */
     public static generateSecretKey(): string {
-        if (getCryptoProfile() === "fips") {
-            throw new Error(
-                'Use await Client.generateSecretKeyAsync() when the active crypto profile is "fips".',
-            );
-        }
         return XUtils.encodeHex(xSignKeyPair().secretKey);
     }
 
-    /**
-     * Async key generation — required for `fips` profile; safe for `tweetnacl` as well.
-     */
+    /** Async Ed25519 key generation. */
     public static async generateSecretKeyAsync(): Promise<string> {
-        if (getCryptoProfile() === "fips") {
-            return XUtils.encodeHex((await xSignKeyPairAsync()).secretKey);
-        }
-        return XUtils.encodeHex(xSignKeyPair().secretKey);
+        return XUtils.encodeHex((await xSignKeyPairAsync()).secretKey);
     }
 
     /**
@@ -2054,11 +1985,7 @@ export class Client {
     ): Uint8Array[] {
         switch (type) {
             case MailType.initial: {
-                if (isFipsInitialExtraV1(extra)) {
-                    const [a, b, c, d] = decodeFipsInitialExtraV1(extra);
-                    return [a, b, c, d];
-                }
-                /* 32B sign | 32B eph | 32B PK | 68B AD | 6B index (tweetnacl) */
+                /* 32B sign | 32B eph | 32B PK | 68B AD | 6B index */
                 const signKey = extra.slice(0, 32);
                 const ephKey = extra.slice(32, 64);
                 const ad = extra.slice(96, 164);
@@ -2765,12 +2692,9 @@ export class Client {
 
     // returns the file details and the encryption key
     private async createFile(file: Uint8Array): Promise<[FileSQL, string]> {
-        return this.runWithThisCryptoProfile(async () => {
+        return this.runCrypto(async () => {
             const nonce = xMakeNonce();
-            const fileKey: Uint8Array =
-                this.cryptoProfile === "fips"
-                    ? xRandomBytes(32)
-                    : (await xBoxKeyPairAsync()).secretKey;
+            const fileKey = (await xBoxKeyPairAsync()).secretKey;
             const box = await xSecretboxAsync(
                 Uint8Array.from(file),
                 nonce,
@@ -2864,13 +2788,9 @@ export class Client {
     private async createPreKey(
         kind: "one-time" | "signed",
     ): Promise<UnsavedPreKey> {
-        return this.runWithThisCryptoProfile(async () => {
+        return this.runCrypto(async () => {
             const preKeyPair = await xBoxKeyPairAsync();
-            const toSign = xPreKeySignaturePayload(
-                preKeyPair.publicKey,
-                kind,
-                this.cryptoProfile,
-            );
+            const toSign = xPreKeySignaturePayload(preKeyPair.publicKey, kind);
             return {
                 keyPair: preKeyPair,
                 signature: await xSignAsync(toSign, this.signKeys.secretKey),
@@ -2902,16 +2822,12 @@ export class Client {
          */
         allowKeyBundleFailure = false,
     ): Promise<Message | null> {
-        return this.runWithThisCryptoProfile(async () => {
+        return this.runCrypto(async () => {
             let keyBundle: KeyBundle;
 
             try {
                 keyBundle = await this.retrieveKeyBundle(device.deviceID);
-                await verifyKeyBundleSignatures(
-                    keyBundle,
-                    device,
-                    this.cryptoProfile,
-                );
+                await verifyKeyBundleSignatures(keyBundle, device);
             } catch (e) {
                 if (allowKeyBundleFailure) {
                     return null;
@@ -2937,25 +2853,16 @@ export class Client {
             const ephemeralKeys = await xBoxKeyPairAsync();
             const EK_A = ephemeralKeys.secretKey;
 
-            const fips = this.cryptoProfile === "fips";
-            // their keys — FIPS: `signKey` in bundle is the peer P-256 ECDH identity (raw, typically 65B).
             const SPK_B = new Uint8Array(keyBundle.preKey.publicKey);
             const OPK_B = keyBundle.otk
                 ? new Uint8Array(keyBundle.otk.publicKey)
                 : null;
-            const IK_B = fips
-                ? new Uint8Array(keyBundle.signKey)
-                : (() => {
-                      const c = XKeyConvert.convertPublicKey(
-                          new Uint8Array(keyBundle.signKey),
-                      );
-                      if (!c) {
-                          throw new Error(
-                              "Could not convert sign key to X25519.",
-                          );
-                      }
-                      return c;
-                  })();
+            const IK_B = XKeyConvert.convertPublicKey(
+                new Uint8Array(keyBundle.signKey),
+            );
+            if (!IK_B) {
+                throw new Error("Could not convert sign key to X25519.");
+            }
 
             // diffie hellman functions
             const DH1 = await xDHAsync(new Uint8Array(IK_A), SPK_B);
@@ -2980,15 +2887,10 @@ export class Client {
             const initialSubkeys = xMessageKeySubkeys(SK);
             const PK = (await xBoxKeyPairFromSecretAsync(SK)).publicKey;
 
-            const AD = fips
-                ? fipsP256AdFromIdentityPubs(
-                      IK_AP,
-                      new Uint8Array(keyBundle.signKey),
-                  )
-                : xConcat(
-                      xEncode(xConstants.CURVE, IK_AP),
-                      xEncode(xConstants.CURVE, IK_B),
-                  );
+            const AD = xConcat(
+                xEncode(xConstants.CURVE, IK_AP),
+                xEncode(xConstants.CURVE, IK_B),
+            );
 
             const nonce = xMakeNonce();
             const cipher = await xSecretboxAsync(
@@ -2997,18 +2899,13 @@ export class Client {
                 initialSubkeys.encryptionKey,
             );
 
-            const signKeyWire = fips ? IK_AP : this.signKeys.publicKey;
-            const ephKeyWire = ephemeralKeys.publicKey;
-
-            const extra = fips
-                ? encodeFipsInitialExtraV1(signKeyWire, ephKeyWire, PK, AD, IDX)
-                : xConcat(
-                      this.signKeys.publicKey,
-                      ephemeralKeys.publicKey,
-                      PK,
-                      AD,
-                      IDX,
-                  );
+            const extra = xConcat(
+                this.signKeys.publicKey,
+                ephemeralKeys.publicKey,
+                PK,
+                AD,
+                IDX,
+            );
 
             const mail: MailWS = {
                 authorID: this.getUser().userID,
@@ -4100,11 +3997,10 @@ export class Client {
     private async isPreKeySignedByCurrentDevice(
         preKey: PreKeysCrypto,
     ): Promise<boolean> {
-        return this.runWithThisCryptoProfile(async () => {
+        return this.runCrypto(async () => {
             const payload = xPreKeySignaturePayload(
                 preKey.keyPair.publicKey,
                 "signed",
-                this.cryptoProfile,
             );
             const opened = await xSignOpenAsync(
                 preKey.signature,
@@ -4321,7 +4217,7 @@ export class Client {
     }
 
     private async populateKeyRing() {
-        await this.runWithThisCryptoProfile(async () => {
+        await this.runCrypto(async () => {
             // we've checked in the constructor that these exist
             if (!this.idKeys) {
                 throw new Error("Identity keys are missing.");
@@ -4500,7 +4396,7 @@ export class Client {
         this.reading = true;
 
         try {
-            await this.runWithThisCryptoProfile(async () => {
+            await this.runCrypto(async () => {
                 const healSession = () => {
                     if (this.manuallyClosing || !this.xKeyRing) {
                         return;
@@ -4613,19 +4509,7 @@ export class Client {
                         }
 
                         // their public keys
-                        const fipsRead = isFipsInitialExtraV1(
-                            new Uint8Array(mail.extra),
-                        );
-                        const IK_A = fipsRead
-                            ? signKey
-                            : (() => {
-                                  const c =
-                                      XKeyConvert.convertPublicKey(signKey);
-                                  if (!c) {
-                                      return null;
-                                  }
-                                  return c;
-                              })();
+                        const IK_A = XKeyConvert.convertPublicKey(signKey);
                         if (!IK_A) {
                             const failureCount =
                                 this.registerDecryptFailure(mail);
@@ -4635,7 +4519,6 @@ export class Client {
                                         "readMail initial: abort (IK_A null, Ed→X25519?)",
                                         {
                                             attempts: failureCount,
-                                            fips: String(fipsRead),
                                             mailID: mail.mailID,
                                             thisDevice:
                                                 this.getDevice().deviceID,
@@ -4705,12 +4588,10 @@ export class Client {
                         );
 
                         // associated data
-                        const AD = fipsRead
-                            ? fipsP256AdFromIdentityPubs(IK_A, IK_BP)
-                            : xConcat(
-                                  xEncode(xConstants.CURVE, IK_A),
-                                  xEncode(xConstants.CURVE, IK_BP),
-                              );
+                        const AD = xConcat(
+                            xEncode(xConstants.CURVE, IK_A),
+                            xEncode(xConstants.CURVE, IK_BP),
+                        );
 
                         if (!XUtils.bytesEqual(hmac, header)) {
                             const failureCount =
@@ -5311,9 +5192,7 @@ export class Client {
             throw new Error("Couldn't fetch token.");
         }
 
-        // Stored on Spire for signature verification: Ed25519 (hex) in tweetnacl;
-        // P-256 ECDSA SPKI (hex) in FIPS. The server maps this to a raw ECDH
-        // identity in `getKeyBundle` for X3DH; see spire `Database.getKeyBundle`.
+        // Stored on Spire for Ed25519 signature verification.
         const signKey = this.getKeys().public;
         const signed = XUtils.encodeHex(
             await xSignAsync(
@@ -5508,6 +5387,10 @@ export class Client {
         return device;
     }
 
+    private async runCrypto<T>(fn: () => Promise<T>): Promise<T> {
+        return fn();
+    }
+
     private async runLocalRetentionPurge(): Promise<void> {
         if (this.isManualCloseInFlight()) {
             return;
@@ -5518,23 +5401,6 @@ export class Client {
             );
         } catch {
             /* best-effort */
-        }
-    }
-
-    /**
-     * `xDHAsync` and other helpers in `@vex-chat/crypto` use the process-wide
-     * active profile. When several {@link Client} instances use different
-     * `cryptoProfile` values, scope the global to this instance for the duration
-     * of that crypto work.
-     */
-    private async runWithThisCryptoProfile<T>(
-        fn: () => Promise<T>,
-    ): Promise<T> {
-        enterCryptoProfileScope(this.cryptoProfile);
-        try {
-            return await fn();
-        } finally {
-            leaveCryptoProfileScope();
         }
     }
 

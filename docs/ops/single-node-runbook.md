@@ -26,12 +26,6 @@ pnpm install
 pnpm --filter @vex-chat/spire gen-spk
 ```
 
-For the FIPS-compatible profile:
-
-```sh
-pnpm --filter @vex-chat/spire gen-spk-fips
-```
-
 Copy the printed `SPK` and `JWT_SECRET` into `apps/spire/.env`.
 
 ## Example `.env`
@@ -41,7 +35,6 @@ SPK=replace-with-generated-spk
 JWT_SECRET=replace-with-generated-jwt-secret
 DB_TYPE=sqlite3
 NODE_ENV=production
-SPIRE_FIPS=false
 CORS_ORIGINS=
 SPIRE_TRUST_PROXY_HOPS=1
 SPIRE_MAIL_RETENTION_TTL=30d

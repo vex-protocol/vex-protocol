@@ -4,11 +4,9 @@
  * Commercial licenses available at vex.wtf
  */
 
-import type { CryptoProfile } from "@vex-chat/crypto";
 import type { Device, KeyBundle, KeyBundleEntry } from "@vex-chat/types";
 
 import {
-    fipsEcdhRawPublicKeyFromEcdsaSpkiAsync,
     xPreKeySignaturePayload,
     xSignOpenAsync,
     XUtils,
@@ -17,15 +15,10 @@ import {
 export async function verifyKeyBundleSignatures(
     keyBundle: KeyBundle,
     device: Device,
-    cryptoProfile: CryptoProfile,
 ): Promise<void> {
     const deviceSignKey = XUtils.decodeHex(device.signKey);
-    const expectedIdentity =
-        cryptoProfile === "fips"
-            ? await fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(deviceSignKey)
-            : deviceSignKey;
 
-    if (!XUtils.bytesEqual(expectedIdentity, keyBundle.signKey)) {
+    if (!XUtils.bytesEqual(deviceSignKey, keyBundle.signKey)) {
         throw new Error("Key bundle identity key does not match device.");
     }
 
@@ -33,7 +26,6 @@ export async function verifyKeyBundleSignatures(
         keyBundle.preKey,
         device,
         deviceSignKey,
-        cryptoProfile,
         "signed",
     );
 
@@ -42,7 +34,6 @@ export async function verifyKeyBundleSignatures(
             keyBundle.otk,
             device,
             deviceSignKey,
-            cryptoProfile,
             "one-time",
         );
     }
@@ -52,7 +43,6 @@ async function verifyKeyBundleEntrySignature(
     entry: KeyBundleEntry,
     device: Device,
     deviceSignKey: Uint8Array,
-    cryptoProfile: CryptoProfile,
     kind: "one-time" | "signed",
 ): Promise<void> {
     if (entry.deviceID !== device.deviceID) {
@@ -61,11 +51,7 @@ async function verifyKeyBundleEntrySignature(
         );
     }
 
-    const payload = xPreKeySignaturePayload(
-        entry.publicKey,
-        kind,
-        cryptoProfile,
-    );
+    const payload = xPreKeySignaturePayload(entry.publicKey, kind);
     const opened = await xSignOpenAsync(entry.signature, deviceSignKey);
 
     if (!opened || !XUtils.bytesEqual(opened, payload)) {

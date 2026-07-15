@@ -25,10 +25,8 @@ import express from "express";
 import { XUtils } from "@vex-chat/crypto";
 import {
     type KeyPair,
-    setCryptoProfile,
     xRandomBytes,
     xSignKeyPairFromSecret,
-    xSignKeyPairFromSecretAsync,
 } from "@vex-chat/crypto";
 import {
     ACCOUNT_PASSWORD_MAX_LENGTH,
@@ -238,44 +236,11 @@ const getCommitSha = (): string => {
 export interface SpireOptions {
     /**
      * TCP port for the HTTP/WS server. If omitted, `run.ts` + `resolveSpireListenPort`
-     * use the default (16777 for all profiles; crypto mode is in `GET /status`). Env: `API_PORT`.
+     * use the default (16777). Env: `API_PORT`.
      */
     apiPort?: number;
-    /** Default `tweetnacl`. For `fips`, use `Spire.createAsync` (FIPS key load is async). */
-    cryptoProfile?: "fips" | "tweetnacl";
     dbType?: "mysql" | "sqlite3" | "sqlite3mem" | "sqlite";
 }
-
-export function resolveTrustProxyHops(value: string | undefined): number {
-    if (value === undefined || value.trim() === "") {
-        return 0;
-    }
-    const hops = Number(value);
-    if (!Number.isInteger(hops) || hops < 0 || hops > 10) {
-        throw new Error(
-            "SPIRE_TRUST_PROXY_HOPS must be an integer from 0 to 10.",
-        );
-    }
-    return hops;
-}
-
-/**
- * Masks identifying material in the access-log URL: hyphenated UUIDs, and
- * `/device/...` path segments that hold public-key material (32B ed25519 hex, or
- * a longer P-256 SPKI hex in FIPS) — not the same pattern as a UUID.
- */
-function redactAccessLogUrl(url: string): string {
-    let s = url.replace(
-        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-        "[uuid]",
-    );
-    // Device id is a hex public key, not a UUID: strip the segment after /device/
-    s = s.replace(/(\/device\/)([0-9a-fA-F]{16,})(?=[/?#]|$)/g, "$1[device]");
-    return s;
-}
-
-/** FIPS: sign key loaded inside `Spire.createAsync` before the constructor runs. */
-let pendingFipsKeyPair: KeyPair | null = null;
 
 export class Spire extends EventEmitter {
     private actionTokens = new Map<string, ActionToken>();
@@ -283,7 +248,6 @@ export class Spire extends EventEmitter {
     private calls: CallManager;
     private clients: ClientManager[] = [];
     private readonly commitSha = getCommitSha();
-    private readonly cryptoProfile: "fips" | "tweetnacl";
     private db: Database;
     private dbReady = false;
     private deviceChallenges = new Map<
@@ -309,19 +273,7 @@ export class Spire extends EventEmitter {
 
     constructor(SK: string, options?: SpireOptions) {
         super();
-        this.cryptoProfile = options?.cryptoProfile ?? "tweetnacl";
-        if (pendingFipsKeyPair) {
-            this.signKeys = pendingFipsKeyPair;
-            pendingFipsKeyPair = null;
-        } else {
-            if (this.cryptoProfile === "fips") {
-                throw new Error(
-                    'FIPS: use `await Spire.createAsync(secretKeyHex, { ...options, cryptoProfile: "fips" })` instead of `new Spire()`.',
-                );
-            }
-            setCryptoProfile(this.cryptoProfile);
-            this.signKeys = xSignKeyPairFromSecret(XUtils.decodeHex(SK));
-        }
+        this.signKeys = xSignKeyPairFromSecret(XUtils.decodeHex(SK));
 
         // Proxy trust must match the deployment topology. Defaulting to zero
         // prevents direct deployments from accepting attacker-supplied
@@ -361,33 +313,6 @@ export class Spire extends EventEmitter {
         });
 
         this.init(resolveSpireListenPort(options?.apiPort));
-    }
-
-    /**
-     * Construct Spire when the crypto profile is `fips` (async sign-key derivation).
-     * For `tweetnacl` (default) you can use `new Spire()` directly.
-     */
-    public static async createAsync(
-        secretKeyHex: string,
-        options?: SpireOptions,
-    ): Promise<Spire> {
-        if ((options?.cryptoProfile ?? "tweetnacl") !== "fips") {
-            return new Spire(secretKeyHex, options);
-        }
-        if (typeof globalThis.crypto.subtle !== "object") {
-            throw new Error(
-                "FIPS: Spire requires `globalThis.crypto.subtle` (e.g. Node 20+ with global Web Crypto).",
-            );
-        }
-        setCryptoProfile("fips");
-        try {
-            pendingFipsKeyPair = await xSignKeyPairFromSecretAsync(
-                XUtils.decodeHex(secretKeyHex),
-            );
-            return new Spire(secretKeyHex, options);
-        } finally {
-            pendingFipsKeyPair = null;
-        }
     }
 
     public async close(): Promise<void> {
@@ -671,7 +596,7 @@ export class Spire extends EventEmitter {
 
             const ok = dbHealthy;
             if (!devApiKeySkipsRateLimits(req)) {
-                res.json({ cryptoProfile: this.cryptoProfile, ok });
+                res.json({ ok });
                 return;
             }
             const canaryEnv = process.env["CANARY"]?.trim().toLowerCase();
@@ -681,7 +606,6 @@ export class Spire extends EventEmitter {
                     canaryEnv === "true" ||
                     canaryEnv === "yes",
                 checkDurationMs,
-                cryptoProfile: this.cryptoProfile,
                 now: new Date(),
                 ok,
                 version: this.version,
@@ -1438,7 +1362,7 @@ export class Spire extends EventEmitter {
                     const message =
                         err instanceof Error ? err.message : String(err);
                     console.error(
-                        `[spire] /register failed requestId=${requestId} profile=${this.cryptoProfile} message=${message}`,
+                        `[spire] /register failed requestId=${requestId} message=${message}`,
                     );
                     if (err instanceof Error && err.stack) {
                         console.error(err.stack);
@@ -1510,6 +1434,19 @@ export class Spire extends EventEmitter {
     }
 }
 
+export function resolveTrustProxyHops(value: string | undefined): number {
+    if (value === undefined || value.trim() === "") {
+        return 0;
+    }
+    const hops = Number(value);
+    if (!Number.isInteger(hops) || hops < 0 || hops > 10) {
+        throw new Error(
+            "SPIRE_TRUST_PROXY_HOPS must be an integer from 0 to 10.",
+        );
+    }
+    return hops;
+}
+
 // Usernames are case-insensitive at the protocol level — `User` and
 // `user` must resolve to the same account. We canonicalize to
 // lowercase at the registration boundary so the persisted row, the
@@ -1517,4 +1454,18 @@ export class Spire extends EventEmitter {
 // representation. `Database.retrieveUser` applies the same normalization.
 function normalizeRegistrationUsername(username: string): string {
     return username.trim().toLowerCase();
+}
+
+/**
+ * Masks identifying material in the access-log URL: hyphenated UUIDs, and
+ * `/device/...` path segments that hold Ed25519 public-key material.
+ */
+function redactAccessLogUrl(url: string): string {
+    let s = url.replace(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+        "[uuid]",
+    );
+    // Device id is a hex public key, not a UUID: strip the segment after /device/
+    s = s.replace(/(\/device\/)([0-9a-fA-F]{16,})(?=[/?#]|$)/g, "$1[device]");
+    return s;
 }

@@ -5,7 +5,6 @@
  */
 
 import {
-    setCryptoProfile,
     xBoxKeyPairAsync,
     xPreKeySignaturePayload,
     xSignAsync,
@@ -13,7 +12,7 @@ import {
     XUtils,
 } from "@vex-chat/crypto";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
     verifyDevicePayloadPreKeySignature,
@@ -31,10 +30,6 @@ async function makeSignedPreKey() {
 }
 
 describe("prekey signature validation", () => {
-    beforeEach(() => {
-        setCryptoProfile("tweetnacl");
-    });
-
     it("accepts a prekey signed by the device signing key", async () => {
         const { preKey, signature, signKeys } = await makeSignedPreKey();
 

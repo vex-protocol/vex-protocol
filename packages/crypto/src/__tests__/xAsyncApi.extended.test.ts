@@ -8,7 +8,6 @@
  */
 
 import {
-    setCryptoProfile,
     xBoxKeyPairAsync,
     xBoxKeyPairFromSecretAsync,
     xSignKeyPairAsync,
@@ -16,14 +15,9 @@ import {
     XUtils,
 } from "../index.js";
 
-afterEach(() => {
-    setCryptoProfile("tweetnacl");
-});
-
 const fixedIterations = 5000;
 
-test("encryptKeyDataAsync / decryptKeyDataAsync (tweetnacl)", async () => {
-    setCryptoProfile("tweetnacl");
+test("encryptKeyDataAsync / decryptKeyDataAsync", async () => {
     const { publicKey, secretKey } = await xSignKeyPairAsync();
     void publicKey;
     const hex = XUtils.encodeHex(secretKey);
@@ -38,7 +32,6 @@ test("encryptKeyDataAsync / decryptKeyDataAsync (tweetnacl)", async () => {
 });
 
 test("native async PBKDF2 remains compatible with the portable sync format", async () => {
-    setCryptoProfile("tweetnacl");
     const secret = "00112233445566778899aabbccddeeff";
     const syncEnvelope = XUtils.encryptKeyData(
         "correct horse",
@@ -58,7 +51,6 @@ test("native async PBKDF2 remains compatible with the portable sync format", asy
 });
 
 test("decryptKeyDataAsync rejects malformed or hostile work factors", async () => {
-    setCryptoProfile("tweetnacl");
     await expect(
         XUtils.decryptKeyDataAsync(new Uint8Array(54), "password"),
     ).rejects.toThrow(/truncated/);
@@ -70,51 +62,18 @@ test("decryptKeyDataAsync rejects malformed or hostile work factors", async () =
 });
 
 test("encryptKeyDataAsync uses the hardened default work factor", async () => {
-    setCryptoProfile("tweetnacl");
     const enc = await XUtils.encryptKeyDataAsync("password", "00");
     expect(XUtils.uint8ArrToNumber(enc.slice(0, 6))).toBe(220_000);
 });
 
-test("encryptKeyDataAsync / decryptKeyDataAsync (FIPS)", async () => {
-    setCryptoProfile("fips");
-    const { publicKey, secretKey } = await xSignKeyPairAsync();
-    void publicKey;
-    const hex = XUtils.encodeHex(secretKey);
-    const enc = await XUtils.encryptKeyDataAsync(
-        "battery staple",
-        hex,
-        fixedIterations,
-    );
-    const out = await XUtils.decryptKeyDataAsync(enc, "battery staple");
-    expect(out).toBe(hex);
-});
-
-test("xBoxKeyPairFromSecretAsync roundtrip (tweetnacl)", async () => {
-    setCryptoProfile("tweetnacl");
+test("xBoxKeyPairFromSecretAsync roundtrip", async () => {
     const a = await xBoxKeyPairAsync();
     const b = await xBoxKeyPairFromSecretAsync(a.secretKey);
     expect(XUtils.bytesEqual(a.publicKey, b.publicKey)).toBe(true);
     expect(XUtils.bytesEqual(a.secretKey, b.secretKey)).toBe(true);
 });
 
-test("xBoxKeyPairFromSecretAsync roundtrip (FIPS)", async () => {
-    setCryptoProfile("fips");
-    const a = await xBoxKeyPairAsync();
-    const b = await xBoxKeyPairFromSecretAsync(a.secretKey);
-    expect(XUtils.bytesEqual(a.publicKey, b.publicKey)).toBe(true);
-    expect(XUtils.bytesEqual(a.secretKey, b.secretKey)).toBe(true);
-});
-
-test("xSignKeyPairFromSecretAsync roundtrip (tweetnacl)", async () => {
-    setCryptoProfile("tweetnacl");
-    const a = await xSignKeyPairAsync();
-    const b = await xSignKeyPairFromSecretAsync(a.secretKey);
-    expect(XUtils.bytesEqual(a.publicKey, b.publicKey)).toBe(true);
-    expect(XUtils.bytesEqual(a.secretKey, b.secretKey)).toBe(true);
-});
-
-test("xSignKeyPairFromSecretAsync roundtrip (FIPS)", async () => {
-    setCryptoProfile("fips");
+test("xSignKeyPairFromSecretAsync roundtrip", async () => {
     const a = await xSignKeyPairAsync();
     const b = await xSignKeyPairFromSecretAsync(a.secretKey);
     expect(XUtils.bytesEqual(a.publicKey, b.publicKey)).toBe(true);

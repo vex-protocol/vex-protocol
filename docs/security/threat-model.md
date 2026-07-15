@@ -13,7 +13,7 @@ could support it later.
 In scope:
 
 - `packages/crypto`: crypto providers, key conversion, KDFs, signing, symmetric
-  encryption, FIPS-profile helpers, and utility encodings.
+  encryption and utility encodings.
 - `packages/libvex`: client protocol flow, X3DH setup, Double Ratchet,
   local SQLite storage, message/file encryption, device enrollment client flows,
   and out-of-band session verification helpers.
@@ -107,11 +107,9 @@ band. Before that, the client verifies that a prekey bundle is signed by the
 device signing key returned by Spire, but it does not independently prove that
 Spire returned the intended device for a user.
 
-## Crypto profiles
+## Cryptographic primitives
 
-### `tweetnacl`
-
-The default profile uses TweetNaCl primitives:
+Vex uses TweetNaCl primitives:
 
 - X25519-style DH through `nacl.box.before`.
 - XSalsa20-Poly1305 through `nacl.secretbox`.
@@ -120,35 +118,10 @@ The default profile uses TweetNaCl primitives:
 - HKDF-SHA512 for `xKDF`.
 - HMAC-SHA256 over msgpack-encoded objects for `xHMAC`.
 
-### `fips`
-
-The FIPS profile is implemented through async Web Crypto paths:
-
-- P-256 ECDH for DH.
-- P-256 ECDSA with SHA-256 for signatures.
-- AES-GCM for `xSecretboxAsync` and `xSecretboxOpenAsync`.
-- Random bytes from Web Crypto.
-
-Important limitations:
-
-- The repository does not contain a FIPS 140-2 or FIPS 140-3 validated module
-  certificate. The code has FIPS-compatible algorithm paths, not a formal FIPS
-  validation.
-- The sync provider methods for FIPS intentionally throw for most primitives.
-  FIPS callers must use async helpers.
-- The FIPS AES-GCM path uses the first 12 bytes of the 24-byte Vex nonce as the
-  AES-GCM IV.
-- `setCryptoProfile` is process-wide. `libvex` wraps some crypto work in a
-  profile stack, but the stack is still global state, not async-local state. Two
-  clients using different profiles can still be a residual risk if profile
-  scopes overlap and exit out of LIFO order.
-
 ## Registration and device enrollment
 
-Registration creates or uses a device signing key. In the default profile, the
-X25519 identity key is derived from the Ed25519 signing key through `ed2curve`.
-In the FIPS profile, the P-256 ECDH identity is derived from the P-256 ECDSA key
-pair.
+Registration creates or uses an Ed25519 device signing key. The X25519 identity
+key is derived from it through `ed2curve`.
 
 The client registers a device payload containing:
 
@@ -232,12 +205,11 @@ When a sender requests `/device/:id/keyBundle`, Spire:
   available,
 - returns the device signed prekey,
 - returns the consumed one-time prekey when available, and
-- returns an identity public key appropriate for the active crypto profile.
+- returns the device identity public key.
 
 The client verifies the returned bundle:
 
-- `keyBundle.signKey` must match the device signing key in `tweetnacl`, or the
-  P-256 ECDH identity derived from the device ECDSA key in `fips`.
+- `keyBundle.signKey` must match the device signing key.
 - signed prekey and one-time prekey signatures must open under the device
   signing key.
 - each key entry must belong to the requested device ID.
@@ -246,7 +218,7 @@ Registration, OTK submission, and key-bundle verification require the
 domain-separated V2 prekey payload:
 
 - protocol string `vex:x3dh:prekey:v2`
-- crypto profile
+- the literal `tweetnacl` protocol domain
 - key type
 - public key
 
@@ -280,8 +252,7 @@ The initial `extra` field contains:
 - associated identity data, and
 - the one-time prekey index, or zero when no OTK was used.
 
-FIPS initial `extra` is length-prefixed. TweetNaCl initial `extra` is a fixed
-layout.
+The initial `extra` uses a fixed layout.
 
 The recipient:
 
@@ -583,7 +554,6 @@ Security consequences:
 | Replay                                                   | Partially covered by ratchet key evolution, local duplicate handling, and receipts. No explicit durable replay ledger exists for initial mail.                  |
 | Traffic analysis                                         | Not covered. Timing, sizes, parties, and group fan-out are visible to Spire and network metadata observers.                                                     |
 | Transport metadata privacy                               | Not covered. There is no padding, cover traffic, batching, or transport obfuscation.                                                                            |
-| FIPS procurement requirement                             | Not fully covered. FIPS-compatible paths exist, but no formal FIPS validation is present.                                                                       |
 | JS memory extraction after key deletion                  | Not covered as a hard guarantee. The code can overwrite some arrays, but JS memory zeroing is not reliable.                                                     |
 
 ## Highest-impact hardening work
@@ -629,11 +599,6 @@ Security consequences:
    matching TTL, device deletion does not purge pending mail, and there is no
    per-group policy yet.
 
-8. Document FIPS status precisely.
-
-    Keep the FIPS profile described as "FIPS-compatible algorithm path" until a
-    validated module and deployment documentation exist.
-
 ## Current security posture summary
 
 Vex currently has a real end-to-end encrypted messaging core:
@@ -656,7 +621,6 @@ Signal-like adversarial-server model.
 
 Related MVP docs:
 
-- [FIPS status](./fips-status.md)
 - [Release gates](../readiness/mvp-release-gates.md)
 - [Distributed edge-node boundary memo](../ops/edge-node-boundaries.md)
 - [Admin and provisioning model](../ops/admin-provisioning-model.md)

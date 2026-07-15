@@ -1,9 +1,7 @@
 name: Spire integration CLI
 
 # Headless Spire integration tests (`integration:cli`): one Docker Compose stack
-# per crypto profile; stable scenarios run in series on that instance (fresh
-# 4-client harness each scenario — lighter on GHA runners). FIPS integration is tracked
-# separately in VEX-113 while that profile's realtime path is unstable.
+# with stable scenarios run in series on one instance.
 
 on:
     pull_request:
@@ -17,16 +15,12 @@ permissions:
 
 jobs:
     integration-cli:
-        name: integration:cli (${{ matrix.crypto }}, stable scenarios, Docker :16777)
+        name: integration:cli (stable scenarios, Docker :16777)
         runs-on: ubuntu-latest
         timeout-minutes: 90
         concurrency:
-            group: spire-integration-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.crypto }}
+            group: spire-integration-cli-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
             cancel-in-progress: true
-        strategy:
-            fail-fast: false
-            matrix:
-                crypto: [tweetnacl]
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
@@ -69,19 +63,12 @@ jobs:
               working-directory: apps/spire
               run: |
                   set -euo pipefail
-                  if [[ "${{ matrix.crypto }}" == "fips" ]]; then
-                      mapfile -t lines < <(node scripts/gen-spk-fips.js --raw)
-                      fips_flag=true
-                  else
-                      mapfile -t lines < <(node scripts/gen-spk.js --raw)
-                      fips_flag=false
-                  fi
+                  mapfile -t lines < <(node scripts/gen-spk.js --raw)
                   dev_key="$(openssl rand -hex 16)"
                   {
                       echo "SPK=${lines[0]}"
                       echo "JWT_SECRET=${lines[1]}"
                       echo "DEV_API_KEY=${dev_key}"
-                      echo "SPIRE_FIPS=${fips_flag}"
                       echo "DB_TYPE=sqlite3mem"
                   } > .env
                   chmod 600 .env
@@ -126,16 +113,7 @@ jobs:
                   SPIRE_STRESS_WS_SAMPLES: "3"
               run: |
                   set -euo pipefail
-                  if [[ "${{ matrix.crypto }}" == "fips" ]]; then
-                    # FIPS P-256 work is much more sensitive to shared-runner CPU
-                    # jitter. Keep CI at the minimum concurrency so the job tests
-                    # durability without manufacturing WebSocket witness flakes.
-                    stress_conc=1
-                  else
-                    # Local M4 Pro Max survived chat conc=2048 in tweetnacl mode.
-                    # Use a much lower CI value to preserve headroom on GHA.
-                    stress_conc=16
-                  fi
+                  stress_conc=16
                   scenarios=(chat mixed whoami servers)
                   for s in "${scenarios[@]}"; do
                     echo "::group::integration:cli --scenario ${s} (4 clients, 10 walls, conc ${stress_conc})"
