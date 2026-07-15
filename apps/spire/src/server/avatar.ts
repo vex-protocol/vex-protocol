@@ -54,6 +54,7 @@ export const getAvatarRouter = () => {
         }
         res.set("Content-type", typeDetails.mime);
         res.set("Cache-control", "public, max-age=31536000");
+        res.set("Cross-Origin-Resource-Policy", "cross-origin");
 
         const stream = fs.createReadStream(filePath);
         stream.on("error", (_err) => {
@@ -100,7 +101,7 @@ export const getAvatarRouter = () => {
         if (!ALLOWED_IMAGE_TYPES.includes(mimeType?.mime || "no/type")) {
             res.status(400).send({
                 error:
-                    "Unsupported file type. Expected jpeg, png, gif, apng, avif, or svg but received " +
+                    "Unsupported file type. Expected jpeg, png, gif, apng, avif, or webp but received " +
                     String(mimeType?.ext),
             });
             return;
@@ -143,7 +144,7 @@ export const getAvatarRouter = () => {
             if (!ALLOWED_IMAGE_TYPES.includes(mimeType?.mime || "no/type")) {
                 res.status(400).send({
                     error:
-                        "Unsupported file type. Expected jpeg, png, gif, apng, avif, or svg but received " +
+                        "Unsupported file type. Expected jpeg, png, gif, apng, avif, or webp but received " +
                         String(mimeType?.ext),
                 });
                 return;
