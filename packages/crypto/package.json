@@ -54,7 +54,7 @@
         }
     },
     "dependencies": {
-        "@noble/hashes": "2.2.0",
+        "@noble/hashes": "2.4.0",
         "@stablelib/base64": "2.0.1",
         "@stablelib/utf8": "2.1.0",
         "bip39": "3.1.0",
@@ -83,7 +83,7 @@
         "type-coverage": "2.29.7",
         "typedoc": "0.28.18",
         "typescript": "catalog:",
-        "typescript-eslint": "8.58.1",
+        "typescript-eslint": "8.70.1",
         "vitest": "catalog:"
     },
     "directories": {

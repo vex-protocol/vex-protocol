@@ -70,7 +70,7 @@
         "tsx": "catalog:",
         "type-coverage": "2.29.7",
         "typescript": "catalog:",
-        "typescript-eslint": "8.58.1"
+        "typescript-eslint": "8.70.1"
     },
     "typeCoverage": {
         "atLeast": 100,
