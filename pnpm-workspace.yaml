@@ -13,7 +13,7 @@ catalog:
     typescript: 6.0.2
     uuid: ^14.0.0
     vitest: 4.1.4
-    zod: ^4.3.6
+    zod: ^4.6.6
 
 catalogMode: strict
 
